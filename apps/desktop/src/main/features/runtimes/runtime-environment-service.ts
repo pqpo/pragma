@@ -23,10 +23,7 @@ import { createPiRuntime } from "@pragma/runtime-pi";
 import type { QoderCliRuntimePermissionMode } from "@pragma/runtime-qodercli";
 import { createQoderCliRuntime } from "@pragma/runtime-qodercli";
 
-import type {
-  DesktopToolPermissionMode,
-  RuntimeEnvironmentDefinition,
-} from "../../../shared/contracts/index.ts";
+import type { RuntimeEnvironmentDefinition } from "../../../shared/contracts/index.ts";
 import type { ModelProviderStore } from "@pragma/local-host/deployment";
 import {
   assertEmptyBuiltInRuntimeConfig,
@@ -37,8 +34,6 @@ export interface CreateBuiltInRuntimeFactoriesOptions {
   readonly modelProviders: ModelProviderStore;
   readonly modelCatalogCacheRoot?: string | undefined;
   readonly getAgentContextWindow?: (() => number | Promise<number>) | undefined;
-  readonly getToolPermissionMode?:
-    (() => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>) | undefined;
   readonly getRuntimeProcessEnvironment?:
     ((runtimeAdapterId: string) => Promise<NodeJS.ProcessEnv>) | undefined;
   readonly onModelCatalogUpdated?: ((runtimeId: string) => void) | undefined;
@@ -49,7 +44,6 @@ export interface CreateBuiltInRuntimeFactoriesOptions {
 export function createBuiltInRuntimeFactories(
   options: CreateBuiltInRuntimeFactoriesOptions,
 ): readonly RuntimeEnvironmentAdapterFactory[] {
-  const getToolPermissionMode = options.getToolPermissionMode ?? (() => "request-approval");
   const getRuntimeProcessEnvironment =
     options.getRuntimeProcessEnvironment ??
     (async (runtimeAdapterId: string) =>
@@ -59,11 +53,9 @@ export function createBuiltInRuntimeFactories(
   async function createPiAdapter(
     environment: RuntimeEnvironmentDefinition,
     agentContextWindow: number | undefined,
-    permissionMode: DesktopToolPermissionMode,
   ): Promise<RuntimeAdapter> {
     assertEmptyBuiltInRuntimeConfig(environment);
     return createPiRuntime({
-      permissionMode,
       descriptor: { id: environment.id, displayName: BUILT_IN_RUNTIME_DISPLAY_NAME },
       modelProviders: options.modelProviders,
       env: await getRuntimeProcessEnvironment("pragma.runtime.pi"),
@@ -82,7 +74,7 @@ export function createBuiltInRuntimeFactories(
       create: async (environment, context) => {
         assertEmptyBuiltInRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
-          context?.toolPermissionMode ?? getToolPermissionMode(),
+          context?.permissionModeId ?? "full-access",
           getRuntimeProcessEnvironment("pragma.runtime.opencode"),
         ]);
         return createOpenCodeRuntime({
@@ -90,7 +82,7 @@ export function createBuiltInRuntimeFactories(
           ...(onModelCatalogUpdated === undefined
             ? {}
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
-          permissionMode,
+          permissionMode: permissionMode as "request-approval" | "auto-approve" | "full-access",
           env,
           modelCatalogCacheRoot: options.modelCatalogCacheRoot,
           tokenCounter: options.tokenCounter,
@@ -106,7 +98,7 @@ export function createBuiltInRuntimeFactories(
       create: async (environment, context) => {
         assertEmptyBuiltInRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
-          context?.toolPermissionMode ?? getToolPermissionMode(),
+          context?.permissionModeId ?? "full-access",
           getRuntimeProcessEnvironment("pragma.runtime.codex"),
         ]);
         const permissions = codexRuntimePermissionsForMode(permissionMode);
@@ -130,21 +122,14 @@ export function createBuiltInRuntimeFactories(
       version: "v1",
       create: async (environment, context) => {
         assertEmptyBuiltInRuntimeConfig(environment);
-        const [permissionMode, env] = await Promise.all([
-          context?.toolPermissionMode ?? getToolPermissionMode(),
-          getRuntimeProcessEnvironment("pragma.runtime.claude-code"),
-        ]);
+        const env = await getRuntimeProcessEnvironment("pragma.runtime.claude-code");
         return createClaudeCodeRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
           ...(onModelCatalogUpdated === undefined
             ? {}
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
-          permissionMode:
-            permissionMode === "request-approval"
-              ? "default"
-              : permissionMode === "auto-approve"
-                ? "auto"
-                : "bypassPermissions",
+          permissionMode: (context?.permissionModeId ?? "bypassPermissions") as
+            "default" | "auto" | "bypassPermissions",
           env,
           modelCatalogCacheRoot: options.modelCatalogCacheRoot,
           tokenCounter: options.tokenCounter,
@@ -160,7 +145,7 @@ export function createBuiltInRuntimeFactories(
       create: async (environment, context) => {
         assertEmptyBuiltInRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
-          context?.toolPermissionMode ?? getToolPermissionMode(),
+          context?.permissionModeId ?? "full-access",
           getRuntimeProcessEnvironment("pragma.runtime.antigravity"),
         ]);
         return createAntigravityRuntime({
@@ -168,7 +153,7 @@ export function createBuiltInRuntimeFactories(
           ...(onModelCatalogUpdated === undefined
             ? {}
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
-          permissionMode: antigravityRuntimePermissionForMode(permissionMode),
+          permissionMode: permissionMode as AntigravityRuntimePermissionMode,
           authenticationMode: "auto",
           env,
           modelCatalogCacheRoot: options.modelCatalogCacheRoot,
@@ -184,16 +169,14 @@ export function createBuiltInRuntimeFactories(
       version: "v1",
       create: async (environment, context) => {
         assertEmptyBuiltInRuntimeConfig(environment);
-        const [permissionMode, env] = await Promise.all([
-          context?.toolPermissionMode ?? getToolPermissionMode(),
-          getRuntimeProcessEnvironment("pragma.runtime.qodercli"),
-        ]);
+        const env = await getRuntimeProcessEnvironment("pragma.runtime.qodercli");
         return createQoderCliRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
           ...(onModelCatalogUpdated === undefined
             ? {}
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
-          permissionMode: qoderRuntimePermissionForMode(permissionMode),
+          permissionMode: (context?.permissionModeId ??
+            "bypassPermissions") as QoderCliRuntimePermissionMode,
           env,
           modelCatalogCacheRoot: options.modelCatalogCacheRoot,
           tokenCounter: options.tokenCounter,
@@ -206,47 +189,31 @@ export function createBuiltInRuntimeFactories(
     {
       id: "pragma.runtime.pi",
       version: "v1",
-      create: async (environment, context) =>
-        await createPiAdapter(
-          environment,
-          await options.getAgentContextWindow?.(),
-          context?.toolPermissionMode ?? (await getToolPermissionMode()),
-        ),
-      prepare: async (environment, context) => {
+      create: async (environment) =>
+        await createPiAdapter(environment, await options.getAgentContextWindow?.()),
+      prepare: async (environment) => {
         assertEmptyBuiltInRuntimeConfig(environment);
         const agentContextWindow = await options.getAgentContextWindow?.();
-        const permissionMode = context?.toolPermissionMode ?? (await getToolPermissionMode());
         return {
-          cacheKey: `agent-context-window=${agentContextWindow ?? "default"};permission-mode=${permissionMode}`,
-          create: async () =>
-            await createPiAdapter(environment, agentContextWindow, permissionMode),
+          cacheKey: `agent-context-window=${agentContextWindow ?? "default"}`,
+          create: async () => await createPiAdapter(environment, agentContextWindow),
         };
       },
     },
   ];
 }
 
-export function codexRuntimePermissionsForMode(mode: DesktopToolPermissionMode): {
+export function codexRuntimePermissionsForMode(mode: string): {
   readonly sandboxMode: CodexRuntimeSandboxMode;
   readonly approvalPolicy: CodexRuntimeApprovalPolicy;
 } {
-  return mode === "full-access"
-    ? { sandboxMode: "danger-full-access", approvalPolicy: "never" }
-    : { sandboxMode: "workspace-write", approvalPolicy: "on-request" };
-}
-
-export function qoderRuntimePermissionForMode(
-  mode: DesktopToolPermissionMode,
-): QoderCliRuntimePermissionMode {
-  return mode === "request-approval"
-    ? "default"
-    : mode === "auto-approve"
-      ? "auto"
-      : "bypassPermissions";
-}
-
-export function antigravityRuntimePermissionForMode(
-  mode: DesktopToolPermissionMode,
-): AntigravityRuntimePermissionMode {
-  return mode;
+  return mode === "read-only"
+    ? { sandboxMode: "read-only", approvalPolicy: "never" }
+    : mode === "full-access"
+      ? { sandboxMode: "danger-full-access", approvalPolicy: "never" }
+      : mode === "request-approval"
+        ? { sandboxMode: "workspace-write", approvalPolicy: "on-request" }
+        : (() => {
+            throw new Error(`Unsupported Codex permission mode: ${mode}`);
+          })();
 }

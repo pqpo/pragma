@@ -578,7 +578,6 @@ export function createAutomationService(options: {
               executionIdentity(resource, {
                 ...previousBinding,
                 workspace,
-                toolPermissionMode: input.binding.toolPermissionMode,
                 modelOverride: input.binding.modelOverride,
                 contextMounts: input.binding.contextMounts,
               });
@@ -589,7 +588,6 @@ export function createAutomationService(options: {
             previous: previousBinding,
             rotateGeneration,
             workspace,
-            toolPermissionMode: input.binding.toolPermissionMode,
             modelOverride: input.binding.modelOverride,
             contextMounts: input.binding.contextMounts,
           });
@@ -726,7 +724,6 @@ export function createAutomationService(options: {
             previous: previousBinding,
             rotateGeneration: true,
             workspace: previousBinding.workspace,
-            toolPermissionMode: previousBinding.toolPermissionMode,
             modelOverride: previousBinding.modelOverride,
             contextMounts: previousBinding.contextMounts,
           });
@@ -780,7 +777,6 @@ export function automationMissionCreationInput(
     workspace: binding.workspace.path,
     executorRef: resource.spec.route.executor.ref,
     missionInput: automationMissionInput(resource),
-    toolPermissionMode: binding.toolPermissionMode,
     origin: { type: "automation", automationRef: canonicalPragmaResourceRef(resource) },
     contextMounts: binding.contextMounts,
     ...(binding.modelOverride === undefined ? {} : { modelOverride: binding.modelOverride }),
@@ -800,7 +796,6 @@ function executionIdentity(resource: PragmaAutomationResource, binding: Automati
     input: resource.spec.route.input,
     interaction: resource.spec.interaction,
     workspace: binding.workspace.path,
-    permission: binding.toolPermissionMode,
     model: binding.modelOverride,
     contextMounts: binding.contextMounts,
   });

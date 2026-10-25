@@ -25,7 +25,20 @@ describe("Node stop-only Runtime permissions", () => {
         executions: executionStore,
       });
       const adapter = defineRuntimeTestDriver<never, { id: string }>({
-        descriptor: { id: "owned-runtime", kind: "test", displayName: "Owned Runtime" },
+        descriptor: {
+          id: "owned-runtime",
+          kind: "test",
+          displayName: "Owned Runtime",
+          permissionModes: {
+            defaultModeId: "full-access",
+            modes: ["full-access", "request-approval"].map((id) => ({
+              id,
+              label: id,
+              description: id,
+              available: true,
+            })),
+          },
+        },
         createSession: () => ({ id: "unused" }),
         readSession: (session) => ({ runtimeSessionId: session.id }),
         startTurn: async () => {
@@ -37,14 +50,11 @@ describe("Node stop-only Runtime permissions", () => {
         runtimes: [adapter],
         defaultRuntimeId: adapter.descriptor.id,
       });
-      const binding = (await selected.bind()).binding;
+      const binding = (await selected.bind({ permissionModeId: mode })).binding;
       const base = {
         ...selected,
-        resolve: vi.fn(async () => {
-          throw new Error("Base Runtime permissions must not be used");
-        }),
+        resolve: vi.fn(selected.resolve),
       };
-      const modes = vi.fn(() => selected);
       const unavailable = new Proxy(
         {},
         {
@@ -56,7 +66,6 @@ describe("Node stop-only Runtime permissions", () => {
       const ports = createLocalHostNodeExecutionResourcePorts({
         pragmaHome: home,
         runtimes: base,
-        runtimesForToolPermissionMode: modes,
         compiler: unavailable as Parameters<
           typeof createLocalHostNodeExecutionResourcePorts
         >[0]["compiler"],
@@ -73,7 +82,6 @@ describe("Node stop-only Runtime permissions", () => {
           flowInput: {},
           project: { id: "studio", revision: 1 },
           executor: { kind: "flow", ref: "flow:0000000000000400", name: "Stop fixture" },
-          toolPermissionMode: mode,
         });
         const mission = await createMissionStore({ missionsPath: paths.missionsRoot() }).get(
           created.id,
@@ -86,9 +94,9 @@ describe("Node stop-only Runtime permissions", () => {
         });
         expect((await resources.runtimes.resolve({ binding })).binding).toEqual(binding);
         expect(resources.appOptions.runtimes).toBe(resources.runtimes);
-        expect(modes).toHaveBeenCalledWith(mode);
-        expect(base.resolve).not.toHaveBeenCalled();
-        expect(() => resources.setToolPermissionMode("auto-approve")).toThrow("stop-only");
+        expect(base.resolve).toHaveBeenCalledWith({ binding });
+        expect(binding.permissionModeId).toBe(mode);
+        expect(resources).not.toHaveProperty("setToolPermissionMode");
         expect(resources.appOptions.hostContextBindings).toBeUndefined();
       } finally {
         await executionStore.close();

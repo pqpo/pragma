@@ -3560,13 +3560,12 @@ describe("Mission human answers", () => {
 
 function missionFixture(kind: "expert" | "team"): Mission {
   return {
-    schemaVersion: "pragma.mission/v11",
+    schemaVersion: "pragma.mission/v12",
     origin: { type: "user" },
     id: "00000000-0000-4000-8000-000000000000",
     title: "Missions page design",
     goal: "Design the Missions page.",
     initialMessageId: "00000000-0000-4000-8000-000000000001",
-    toolPermissionMode: "request-approval",
     workspace: { path: "/workspace/expert-mesh", basename: "expert-mesh" },
     project: { id: "studio", revision: 1 },
     contextMounts: [],

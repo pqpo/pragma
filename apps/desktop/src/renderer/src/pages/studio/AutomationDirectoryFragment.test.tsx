@@ -61,7 +61,6 @@ describe("AutomationDirectoryFragment", () => {
         workspace: { path: "/work/review", basename: "review" },
         recentWorkspaces: [],
         executorRef: "expert:3sfd30h5017wd17d",
-        toolPermissionMode: "request-approval",
       },
       Date.parse("2026-07-24T08:00:00.000Z"),
     );
@@ -73,7 +72,6 @@ describe("AutomationDirectoryFragment", () => {
       flowInput: {},
       contextStoreIds: [],
       workspace: "/work/review",
-      toolPermissionMode: "request-approval",
     });
     expect(validateAutomationEditor(editor, undefined)).toMatchObject({
       valid: false,
@@ -196,7 +194,6 @@ describe("AutomationDirectoryFragment", () => {
       flowInput: {},
       interaction: "reuse-session" as const,
       workspace: "/work/review",
-      toolPermissionMode: "request-approval" as const,
       contextStoreIds: [],
       triggerKind: "calendar" as const,
       onceAt: "2026-07-24T09:00",
@@ -247,7 +244,6 @@ describe("AutomationDirectoryFragment", () => {
       flowInput: {},
       interaction: "reuse-session" as const,
       workspace: "/work/review",
-      toolPermissionMode: "request-approval" as const,
       contextStoreIds: [],
       triggerKind: "calendar" as const,
       onceAt: "2026-07-24T09:00",
@@ -297,7 +293,6 @@ describe("AutomationDirectoryFragment", () => {
         workspace: { path: "/work/review", basename: "review" },
         recentWorkspaces: [],
         executorRef: "expert:3sfd30h5017wd17d",
-        toolPermissionMode: "request-approval" as const,
       }),
       name: "Flow review",
       description: "Runs the review Flow",

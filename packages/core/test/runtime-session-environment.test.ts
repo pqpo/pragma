@@ -407,3 +407,33 @@ async function temporaryRoot(): Promise<string> {
   roots.push(root);
   return root;
 }
+
+it("refuses to label a fixed native adapter with a different permission mode", async () => {
+  const { createStaticRuntimeResolver } = await import("../src/runtime-resolver.ts");
+  const { defineRuntimeTestDriver } = await import("../src/testing/index.ts");
+  const runtime = defineRuntimeTestDriver({
+    descriptor: {
+      id: "fixed",
+      kind: "test",
+      displayName: "Fixed",
+      configuredPermissionModeId: "full-access",
+      permissionModes: {
+        defaultModeId: "full-access",
+        modes: ["full-access", "read-only"].map((id) => ({
+          id,
+          label: id,
+          description: id,
+          available: true,
+        })),
+      },
+    },
+    createSession: () => ({}),
+    startTurn: () => ({ outputText: "" }),
+    mapEvent: () => ({ events: [] }),
+  });
+  const resolver = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fixed" });
+  expect((await resolver.bind()).binding.permissionModeId).toBe("full-access");
+  await expect(resolver.bind({ permissionModeId: "read-only" })).rejects.toThrow(
+    "configured for full-access",
+  );
+});

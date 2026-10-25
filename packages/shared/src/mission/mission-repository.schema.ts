@@ -12,7 +12,6 @@ import {
 import { PragmaAvatarIdSchema } from "../avatar.ts";
 import { CapabilityIdSchema } from "../resources/capability.schema.ts";
 import { ContextStoreIdSchema } from "../resources/context-store.schema.ts";
-import { ToolPermissionModeSchema } from "../tool-permission.schema.ts";
 import { MissionExecutorSchema, MissionExecutorRefSchema } from "./mission-executor.schema.ts";
 import {
   MissionWorkspaceSchema,
@@ -57,7 +56,6 @@ export const MissionBaseSchema = z.object({
   title: z.string().trim().min(1).max(120),
   goal: z.string().trim().min(1).max(100_000),
   initialMessageId: z.string().uuid(),
-  toolPermissionMode: ToolPermissionModeSchema.default("request-approval"),
   workspace: MissionWorkspaceSchema,
   project: z.object({
     id: z.string().trim().min(1),
@@ -130,7 +128,7 @@ export const MissionBranchSourceSchema = z.object({
 });
 
 export const MissionSchema = MissionBaseSchema.extend({
-  schemaVersion: z.literal("pragma.mission/v11"),
+  schemaVersion: z.literal("pragma.mission/v12"),
   flowInput: z.record(z.string(), z.unknown()).optional(),
   origin: MissionOriginSchema.default({ type: "user" }),
   contextMounts: MissionContextMountsSchema,
@@ -423,7 +421,6 @@ export type RenameMission = z.infer<typeof RenameMissionSchema>;
 
 export const UpdateMissionOptionsSchema = z.object({
   id: MissionIdSchema,
-  toolPermissionMode: ToolPermissionModeSchema,
   modelOverride: MissionModelOverrideSchema.nullable(),
 });
 

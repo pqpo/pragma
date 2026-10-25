@@ -202,7 +202,6 @@ function fixture(projects: readonly HomeProject[] = [project]) {
           executorRef,
           workspace,
           recentWorkspaces: [],
-          toolPermissionMode: "request-approval",
         },
       }),
       validateWorkspace: async () => ({ ok: true }),
@@ -412,7 +411,6 @@ it("uses the workspace passed from a Mission tab ahead of the Home draft and sub
     workspaceOverride: { path: "/workspace/old-draft", basename: "old-draft" },
     goal: "Retain the existing draft message",
     flowInput: {},
-    toolPermissionMode: "request-approval",
   });
   const view = renderer(() =>
     HomePage({ initialWorkspace: selectedWorkspace, onCreated: () => undefined }),
@@ -559,13 +557,12 @@ it("opens a submitted Mission workspace immediately and saves tab edits even whe
   );
   expect(writeMissionWorkspaceTabs(storage, saved)).toBe(true);
   const created = MissionSchema.parse({
-    schemaVersion: "pragma.mission/v11",
+    schemaVersion: "pragma.mission/v12",
     origin: { type: "user" },
     id: "00000000-0000-4000-8000-000000000001",
     title: "New task",
     goal: "Test workspace tabs",
     initialMessageId: "00000000-0000-4000-8000-000000000002",
-    toolPermissionMode: "request-approval",
     workspace,
     project: { id: "studio", revision: 1 },
     contextMounts: [],

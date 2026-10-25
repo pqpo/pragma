@@ -16,6 +16,7 @@ import {
   readRuntimeSessionRecord,
   recoverAtomicStateMigration,
   StateVersionTooNewError,
+  writeStateMigrationBackup,
 } from "../src/index.ts";
 import {
   commitRuntimeSessionCatalogDeletion,
@@ -525,3 +526,18 @@ async function writeJson(file: string, value: unknown): Promise<void> {
 async function readJson(file: string): Promise<unknown> {
   return JSON.parse(await readFile(file, "utf8")) as unknown;
 }
+
+it("retains complete original backups and refuses conflicting or interrupted backup data", async () => {
+  const root = await temporaryRoot("pragma-permission-backup-");
+  const path = join(root, "original.backup.json");
+  const original = '{"schemaVersion":1,"mode":"request-approval"}\n';
+  await writeFile(`${path}.interrupted.tmp`, '{"schemaVersion":');
+  await writeStateMigrationBackup(path, original);
+  await writeStateMigrationBackup(path, original);
+  expect(await readFile(path, "utf8")).toBe(original);
+  await expect(writeStateMigrationBackup(path, "{}")).rejects.toThrow("conflicts");
+  expect(await readFile(path, "utf8")).toBe(original);
+  await writeFile(path, '{"schemaVersion":');
+  await expect(writeStateMigrationBackup(path, original)).rejects.toThrow("conflicts");
+  expect(await readFile(path, "utf8")).toBe('{"schemaVersion":');
+});

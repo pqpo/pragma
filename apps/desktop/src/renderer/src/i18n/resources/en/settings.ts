@@ -183,23 +183,6 @@ export const settings = {
     languageDescription: "Choose the language used throughout Pragma.",
     followSystem: "Follow system",
     resolvedAs: "Currently using {{language}}",
-    toolPermissions: "Tool permissions",
-    toolPermissionsDescription:
-      "Default for new missions. Reading never needs approval; the Home form can override it per mission.",
-    toolPermissionModes: {
-      "request-approval": {
-        label: "Request approval",
-        description: "Ask before write, command, network, or other mutating actions.",
-      },
-      "auto-approve": {
-        label: "Approve for me",
-        description: "Allow actions automatically within the selected workspace.",
-      },
-      "full-access": {
-        label: "Full access",
-        description: "Allow actions anywhere on this device without approval.",
-      },
-    },
     agentContextWindow: "Agent context window",
     agentContextWindowDescription:
       "Default working-context budget for the built-in runtime. If the model's hard limit is lower, that limit applies. Takes effect when a session is created or resumed.",

@@ -547,6 +547,7 @@ function desktopModel(
     providerId?: unknown;
     model?: unknown;
     thinkingLevel?: unknown;
+    permissionModeId?: unknown;
   };
   const runtimeId = typeof config.runtimeId === "string" ? config.runtimeId : undefined;
   const model = typeof config.model === "string" ? config.model : undefined;
@@ -560,6 +561,9 @@ function desktopModel(
       runtimeId,
       providerId,
       modelId: model,
+      ...(typeof config.permissionModeId === "string"
+        ? { permissionModeId: config.permissionModeId }
+        : {}),
       ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
     };
   }

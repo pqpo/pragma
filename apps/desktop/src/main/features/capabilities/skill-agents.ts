@@ -96,7 +96,6 @@ export function createDesktopSkillAgents(options: {
         jobId: input.jobId,
         capabilityId: input.capabilityId!,
       },
-      toolPermissionMode: "request-approval",
       contextMounts: [
         {
           kind: "skill-revision-draft",

@@ -3,6 +3,8 @@
 `@pragma/runtime-antigravity` 是独立 Node-only Runtime Adapter，由 Desktop 或 CLI composition root 装配。
 Runtime id 为 `antigravity`，kind 为 `antigravity-local`，最低支持 **agy 1.2.13**。
 
+当前 Expert 设置公开 full-access 与 request-approval；原生 Auto 显示为未接入。下文 auto-approve 指既有 Adapter 兼容策略，不是公开的原生 Auto 模式。参见 [ADR 078](../adr/078-expert-native-harness-permissions.md)。
+
 ## 原生接入与配置边界
 
 System prompt 使用官方 custom Agent；Skills 与 MCP 使用官方 plugin discovery；多轮输入输出使用

@@ -44,6 +44,7 @@ interface OwnerRecord<TExecutionContext, TRun, TCompaction, TActive> {
   compilationSecrets?: readonly LocalHostResolvedSecretEnvironment[];
   compilationPlugins?: readonly LocalHostResolvedPluginEnvironment[];
   definitionFingerprint?: string;
+  executionProfilesFingerprint?: string;
   successorRequired?: boolean;
   contextBindingChanges?: number;
   memoryBindingsChanged?: boolean;
@@ -178,6 +179,15 @@ export class MissionExecutionOwner<
   setDefinitionFingerprint(missionId: string, fingerprint: string): void {
     this.#record(missionId).definitionFingerprint = fingerprint;
   }
+  executionProfilesFingerprint(missionId: string): string | undefined {
+    return this.#owners.get(missionId)?.executionProfilesFingerprint;
+  }
+  setExecutionProfilesFingerprint(missionId: string, fingerprint: string | undefined): void {
+    const record = this.#record(missionId);
+    if (fingerprint === undefined) delete record.executionProfilesFingerprint;
+    else record.executionProfilesFingerprint = fingerprint;
+    this.#prune(missionId, record);
+  }
   clearCompilation(missionId: string): void {
     const record = this.#owners.get(missionId);
     if (record === undefined) return;
@@ -185,6 +195,7 @@ export class MissionExecutionOwner<
     delete record.compilationSecrets;
     delete record.compilationPlugins;
     delete record.definitionFingerprint;
+    delete record.executionProfilesFingerprint;
     this.#prune(missionId, record);
   }
   requireSuccessor(missionId: string): void {

@@ -520,6 +520,66 @@ describe("ExpertDirectoryFragment", () => {
 describe("ExpertEditorFragment", () => {
   const draft = { ...expert, tagInput: "" };
 
+  it.each([
+    [undefined, "Full access"],
+    ["read-only", "Read only"],
+  ] as const)(
+    "shows the Harness default or saved mode (%s) next to the model",
+    (permissionModeId, label) => {
+      const html = renderToStaticMarkup(
+        <ExpertEditorFragment
+          mode="edit"
+          initialStep="capabilities"
+          initialValue={{
+            ...draft,
+            model: {
+              ...draft.model!,
+              ...(permissionModeId === undefined ? {} : { permissionModeId }),
+            },
+          }}
+          runtimes={[
+            {
+              id: "test",
+              kind: "test",
+              displayName: "Harness",
+              isDefault: true,
+              status: "available",
+              models: [],
+              permissionModes: {
+                defaultModeId: "full-access",
+                modes: [
+                  {
+                    id: "full-access",
+                    label: "Full access",
+                    description: "Native full access",
+                    available: true,
+                  },
+                  {
+                    id: "read-only",
+                    label: "Read only",
+                    description: "Native sandbox",
+                    available: true,
+                  },
+                ],
+              },
+            },
+          ]}
+          contextStores={[]}
+          capabilities={[]}
+          experts={[]}
+          resources={[]}
+          memoryEnabled={true}
+          onCancel={() => undefined}
+          onCreated={async () => undefined}
+        />,
+      );
+      expect(html).toContain('aria-label="Permission mode"');
+      expect(html).toContain(label);
+      expect(html).toContain("Managed tools keep their separate policies");
+      expect(html).not.toContain("Plan mode");
+    },
+  );
+
   it("does not expose semantic identity fields during an ordinary edit", () => {
     const html = renderToStaticMarkup(
       <ExpertEditorFragment

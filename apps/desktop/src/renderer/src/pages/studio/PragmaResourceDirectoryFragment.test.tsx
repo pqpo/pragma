@@ -331,7 +331,7 @@ describe("expert team editor", () => {
     expect(html).not.toContain("canonical Pragma YAML");
   });
 
-  it("preserves the pragma/v5 editing ceiling for existing over-limit Team instructions", () => {
+  it("preserves the pragma/v6 editing ceiling for existing over-limit Team instructions", () => {
     const instructions = "x".repeat(2_001);
     const initial = PragmaExpertTeamResourceSchema.parse({
       apiVersion: PRAGMA_DSL_WRITE_API_VERSION,

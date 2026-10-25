@@ -24,6 +24,8 @@ import { missionV8ToV9Step } from "./steps/v8-to-v9.ts";
 import { missionV9ToV10Step } from "./steps/v9-to-v10.ts";
 import { missionV10ToV11Step } from "./steps/v10-to-v11.ts";
 
+import { missionV11ToV12Step } from "./steps/v11-to-v12.ts";
+
 export const MISSION_STORAGE_MIGRATIONS = [
   missionV3ToV4Step,
   missionV4ToV5Step,
@@ -33,4 +35,8 @@ export const MISSION_STORAGE_MIGRATIONS = [
   missionV8ToV9Step,
   missionV9ToV10Step,
   missionV10ToV11Step,
+  missionV11ToV12Step,
 ] as const;
+
+export { MissionV11Schema } from "./schemas/v11.ts";
+export { missionV11ToV12Step } from "./steps/v11-to-v12.ts";

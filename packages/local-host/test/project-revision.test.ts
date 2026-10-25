@@ -61,7 +61,7 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
         ...manifest,
         snapshotHash: snapshot.root.hash,
         projectFingerprint: migrated.derivedProjectFingerprint,
-        compilerVersion: "pragma.dsl/v9",
+        compilerVersion: "pragma.dsl/v10",
       }),
     );
     const current = await reader.getRevision(HISTORICAL_V8_PROJECT_ID, 1);
@@ -109,7 +109,7 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
       projectFingerprint: HISTORICAL_V8_PROJECT_FINGERPRINT,
       sourceProjectFingerprint: HISTORICAL_V8_PROJECT_FINGERPRINT,
       sourceCompilerVersion: "pragma.dsl/v8",
-      compilerVersion: "pragma.dsl/v9",
+      compilerVersion: "pragma.dsl/v10",
     });
     expect(location?.compilerViewKey).toMatch(/^[a-f0-9]{64}$/u);
     expect(location?.derivedProjectFingerprint).toMatch(/^[a-f0-9]{64}$/u);
@@ -118,7 +118,7 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
 
     if (location === undefined) throw new Error("Expected the historical revision.");
     const files = await reader.readFiles(location);
-    expect(files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v9");
+    expect(files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v10");
     expect(files.has(".pragma-compiler-view")).toBe(false);
     const project = await reader.openRevision(location);
     try {
@@ -165,7 +165,7 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
         policy: { ...DEFAULT_STORAGE_POLICY, cacheTtlMs: 0, cacheLimitBytes: 0 },
       });
       await expect(readFile(join(location.rootDir, "pragma.lock.yaml"), "utf8")).resolves.toContain(
-        "pragma.dsl/v9",
+        "pragma.dsl/v10",
       );
     });
   });
@@ -211,7 +211,7 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
     expect(recovered?.compilerViewKey).toBe(first.compilerViewKey);
     expect(recovered?.derivedProjectFingerprint).toMatch(/^[a-f0-9]{64}$/u);
     await expect(readFile(join(recovered!.rootDir, "pragma.lock.yaml"), "utf8")).resolves.toContain(
-      "compilerVersion: pragma.dsl/v9",
+      "compilerVersion: pragma.dsl/v10",
     );
     await expect(readRevisionManifest(paths)).resolves.toEqual(before);
     await expect(readFile(join(temporary, ".pragma-compiler-view"))).rejects.toMatchObject({
@@ -229,7 +229,7 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
       "1.json",
     );
     const revision = JSON.parse(await readFile(revisionPath, "utf8")) as Record<string, unknown>;
-    revision.compilerVersion = "pragma.dsl/v10";
+    revision.compilerVersion = "pragma.dsl/v999";
     await writeFile(revisionPath, `${JSON.stringify(revision)}\n`);
     const reader = createReader(paths);
 

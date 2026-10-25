@@ -281,8 +281,7 @@
   margin-inline-start: auto;
 }
 
-.mission-chat-options .mission-model-control-trigger > svg:last-child,
-.mission-chat-options .tool-permission-select .ui-select-caret {
+.mission-chat-options .mission-model-control-trigger > svg:last-child {
   margin-inline-start: -4px;
 }
 

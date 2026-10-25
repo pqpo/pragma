@@ -831,13 +831,18 @@ it(
     const f = await fixture();
     const old = await installHistoricalFlow(f);
     expect((await f.port.getFlowDraft(old.draft.draftId)).draftRevision).toBe(1);
+    const upgradedBytes = await readFile(old.draftPath);
+    expect(JSON.parse(upgradedBytes.toString()).resource.apiVersion).toBe(
+      PRAGMA_DSL_WRITE_API_VERSION,
+    );
+    expect(await readFile(`${old.draftPath}.dsl-v5.backup.json`)).toEqual(old.draftBytes);
     const missing = await f.invoke("flow.draft.get", { draftId: old.draft.draftId });
     expect(missing.error?.code).toBe("PERMISSION_DENIED");
     expect(missing.error).toMatchObject({
       details: { reason: "unowned_target", recovery: { command: "flow.draft.recover" } },
     });
     expect((await f.invoke("flow.draft.recover", { draftId: old.draft.draftId })).exitCode).toBe(6);
-    expect(await readFile(old.draftPath)).toEqual(old.draftBytes);
+    expect(await readFile(old.draftPath)).toEqual(upgradedBytes);
     const request = ManagementCommandRequestSchema.parse({
       protocol: MANAGEMENT_COMMAND_PROTOCOL,
       requestId: randomUUID(),
@@ -858,7 +863,7 @@ it(
       result: { draftId: old.draft.draftId, recovered: true },
     });
     expect(await f.app.execute(request, f.context)).toEqual(recovered);
-    expect(await readFile(old.draftPath)).toEqual(old.draftBytes);
+    expect(await readFile(old.draftPath)).toEqual(upgradedBytes);
     expect((await f.invoke("flow.draft.get", { draftId: old.draft.draftId })).exitCode).toBe(0);
     const updated = await f.invoke("flow.draft.update", {
       draftId: old.draft.draftId,
@@ -887,7 +892,10 @@ it(
     expect((await f.invoke("dsl.changes.recover", { changeSetId: old.changeSetId })).exitCode).toBe(
       0,
     );
-    expect(await readFile(old.changePath)).toEqual(old.changeBytes);
+    expect(await readFile(`${old.changePath}.dsl-v5.backup.json`)).toEqual(old.changeBytes);
+    expect(JSON.parse(await readFile(old.changePath, "utf8")).resources[0].apiVersion).toBe(
+      PRAGMA_DSL_WRITE_API_VERSION,
+    );
     expect((await f.project.get()).revision).toBe(0);
     expect(
       (
@@ -957,7 +965,7 @@ it(
       }),
     );
     expect((await f.invoke("flow.draft.get", { draftId: old.draft.draftId })).exitCode).toBe(0);
-    expect(await readFile(old.draftPath)).toEqual(old.draftBytes);
+    expect(await readFile(`${old.draftPath}.dsl-v5.backup.json`)).toEqual(old.draftBytes);
   },
 );
 
@@ -1221,6 +1229,43 @@ describe("DSL and Evaluation CLI real process", { timeout: 60_000 }, () => {
     expect((await f.invoke("dsl.draft.inspect", { draftId: provenance.dslDraftId })).exitCode).toBe(
       0,
     );
+    // Keep the historical authoring bytes/hash intact until the user explicitly edits the file.
+    const legacyRecord = JSON.parse(before);
+    const authoredTarget = legacyRecord.resources[0] as {
+      filePath: string;
+      relativePath: string;
+      ref: string;
+    };
+    const legacySource = await readFile(authoredTarget.filePath, "utf8");
+    expect(legacySource).toContain("apiVersion: pragma/v5");
+    const completedSource = cliExpert(authoredTarget.ref.slice(7)).replace(
+      `apiVersion: ${PRAGMA_DSL_WRITE_API_VERSION}`,
+      "apiVersion: pragma/v5",
+    );
+    await writeFile(authoredTarget.filePath, completedSource);
+    const prepared = await f.invoke("dsl.draft.prepare", { draftId: provenance.dslDraftId });
+    expect(prepared.exitCode).toBe(0);
+    const preparedRecord = JSON.parse(await readFile(join(directory, "draft.json"), "utf8"));
+    expect(
+      await readFile(
+        join(directory, "submissions", preparedRecord.submissionHash, authoredTarget.relativePath),
+        "utf8",
+      ),
+    ).toBe(completedSource);
+    const changeSetId = (prepared.result["changeSet"] as { changeSetId: string }).changeSetId;
+    const reviewed = await f.port.getChangeSet(changeSetId, provenance.missionId);
+    expect(
+      reviewed.changes.some((change) =>
+        change.source.includes(`apiVersion: ${PRAGMA_DSL_WRITE_API_VERSION}`),
+      ),
+    ).toBe(true);
+    expect((await f.invoke("dsl.changes.commit", { changeSetId })).exitCode).toBe(0);
+    expect(
+      (await f.project.get()).resources.find(
+        (resource) =>
+          resource.kind === "Expert" && `expert:${resource.metadata.id}` === authoredTarget.ref,
+      )?.apiVersion,
+    ).toBe(PRAGMA_DSL_WRITE_API_VERSION);
     const evaluationPath = join(
       f.root,
       "state",
@@ -1238,7 +1283,10 @@ describe("DSL and Evaluation CLI real process", { timeout: 60_000 }, () => {
       (await f.invoke("evaluation.draft.recover", { draftId: provenance.evaluationDraftId }))
         .exitCode,
     ).toBe(0);
-    expect(await readFile(evaluationPath)).toEqual(evaluationBytes);
+    expect(await readFile(`${evaluationPath}.dsl-v5.backup.json`)).toEqual(evaluationBytes);
+    expect(JSON.parse(await readFile(evaluationPath, "utf8")).resource.apiVersion).toBe(
+      PRAGMA_DSL_WRITE_API_VERSION,
+    );
     f.context.runContext.attributes["execution.contextId"] = "other";
     expect(
       (await f.invoke("evaluation.draft.recover", { draftId: provenance.evaluationDraftId }))
@@ -1504,7 +1552,6 @@ describe(
           expectedProjectRevision: 1,
           source: JSON.stringify(resource),
           workspaceId: f.root,
-          toolPermissionMode: "request-approval" as const,
           operationId: randomUUID(),
         };
         const saveBinding = h.store.saveBinding.bind(h.store);
@@ -1560,7 +1607,6 @@ describe(
           expectedProjectRevision: 1,
           source: JSON.stringify(resource),
           workspaceId: f.root,
-          toolPermissionMode: "request-approval",
           operationId: randomUUID(),
         });
         const operationId = randomUUID();
@@ -1746,7 +1792,6 @@ describe(
         expectedProjectRevision: 1,
         source: JSON.stringify(resource),
         workspaceId: f.root,
-        toolPermissionMode: "request-approval",
       });
       expect((await f.invoke("automation.save", input())).status).toBe("failed");
       expect((await h.project.get()).revision).toBe(1);

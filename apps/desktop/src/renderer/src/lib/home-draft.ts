@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  DesktopToolPermissionModeSchema,
-  MissionModelOverrideSchema,
-} from "../../../shared/contracts/index.ts";
+import { MissionModelOverrideSchema } from "../../../shared/contracts/index.ts";
 
 const homeDraftStorageKey = "pragma.desktop.home.draft.v1";
 
@@ -18,7 +15,6 @@ const HomeDraftSchema = z.object({
   contextStoreIds: z.array(z.string().uuid()).optional(),
   goal: z.string().max(100_000),
   flowInput: z.record(z.string(), z.unknown()),
-  toolPermissionMode: DesktopToolPermissionModeSchema,
   modelOverride: MissionModelOverrideSchema.optional(),
 });
 

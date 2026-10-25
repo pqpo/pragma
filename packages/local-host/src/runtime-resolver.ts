@@ -29,6 +29,9 @@ export function createLocalHostRuntimeResolver(options: {
       const resolved = await delegate.bind({
         ...(runtimeId === undefined ? {} : { runtimeId: resolveRuntimeId(runtimeId) }),
         ...(request.modelSelection === undefined ? {} : { modelSelection: request.modelSelection }),
+        ...(request.permissionModeId === undefined
+          ? {}
+          : { permissionModeId: request.permissionModeId }),
       });
       return runtimeId === undefined
         ? resolved

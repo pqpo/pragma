@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "pragma.automation-binding/v2",
+  "automationRef": "automation:0123456789abcdef",
+  "revision": 1,
+  "generation": "fe2853d3-03ea-4638-bab0-f04b35757909",
+  "workspace": {
+    "path": "/fixture/workspace",
+    "basename": "workspace"
+  },
+  "placement": "desktop",
+  "toolPermissionMode": "auto-approve",
+  "contextMounts": [],
+  "createdAt": "2026-10-24T04:44:24.377Z",
+  "updatedAt": "2026-10-24T04:44:24.377Z"
+}

@@ -1,3 +1,8 @@
+import {
+  discardAuthoringRecord,
+  migrateAuthoringSourceToCurrent,
+  readAuthoringRecord,
+} from "./migrations/authoring/index.ts";
 import { normalizeHostBoundResources } from "./deployment/projects/resource-normalization.ts";
 import { classifyHostCapabilityResource } from "./deployment/bindings.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -14,7 +19,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { type PragmaFlowRunDrySuiteResult } from "@pragma/evaluation/ast";
@@ -378,7 +383,9 @@ export function createLocalHostPragmaProjectPort(options: {
       | undefined;
   }): Promise<PragmaAgentPrepareResult> => {
     if (input.operationId !== undefined) {
-      const previous = await readJson(candidatePath(managementCommandTargetId(input.operationId)));
+      const previous = await readOptionalCandidate(
+        candidatePath(managementCommandTargetId(input.operationId)),
+      );
       if (previous !== undefined)
         return PragmaAgentPrepareResultSchema.parse({
           status: "prepared",
@@ -785,7 +792,7 @@ export function createLocalHostPragmaProjectPort(options: {
       "pragma.dsl-command-prepare/v1",
     );
     if (journal === undefined) return draft;
-    const previous = await readJson(candidatePath(journal.changeSetId));
+    const previous = await readOptionalCandidate(candidatePath(journal.changeSetId));
     if (previous === undefined) {
       await rm(journalPath, { force: true });
       return draft;
@@ -1495,7 +1502,7 @@ export function createLocalHostPragmaProjectPort(options: {
       return await withFileLock(dslDraftMutationLockPath(input.draftId), async () => {
         // Recover the candidate/submission pair before ordinary editing-state recovery can restore it.
         if (input.operationId !== undefined) {
-          const previous = await readJson(
+          const previous = await readOptionalCandidate(
             candidatePath(managementCommandTargetId(input.operationId)),
           );
           if (previous !== undefined) {
@@ -1858,7 +1865,14 @@ export function createLocalHostPragmaProjectPort(options: {
           ? randomUUID()
           : managementCommandTargetId(input.operationId);
       const recovered =
-        input.operationId === undefined ? undefined : await readJson(draftPath(draftId));
+        input.operationId === undefined
+          ? undefined
+          : await readAuthoringRecord(
+              draftPath(draftId),
+              "flow",
+              PragmaAgentFlowDraftSchema,
+              draftId,
+            );
       if (recovered !== undefined) return PragmaAgentFlowDraftSchema.parse(recovered);
       const snapshot = await options.project.get();
       if (snapshot.revision !== input.expectedProjectRevision) {
@@ -1908,7 +1922,16 @@ export function createLocalHostPragmaProjectPort(options: {
                 input.commandResultsRoot ?? join(options.stateRoot, "flow-command-results"),
                 `${encodePragmaPathSegment(input.operationId)}.json`,
               );
-        const replay = commandPath === undefined ? undefined : await readJson(commandPath);
+        const replay =
+          commandPath === undefined
+            ? undefined
+            : await readAuthoringRecord(
+                commandPath,
+                "flow-mutation",
+                FlowCommandMutationSchema,
+                input.draftId,
+                input.expectedDraftRevision,
+              );
         const current = await readFlowDraft(path);
         if (replay !== undefined) {
           const result = FlowCommandMutationSchema.parse(replay);
@@ -1973,7 +1996,14 @@ export function createLocalHostPragmaProjectPort(options: {
           ? randomUUID()
           : managementCommandTargetId(input.operationId);
       const recovered =
-        input.operationId === undefined ? undefined : await readJson(evaluationDraftPath(draftId));
+        input.operationId === undefined
+          ? undefined
+          : await readAuthoringRecord(
+              evaluationDraftPath(draftId),
+              "evaluation",
+              PragmaAgentEvaluationDraftSchema,
+              draftId,
+            );
       if (recovered !== undefined) return PragmaAgentEvaluationDraftSchema.parse(recovered);
       const snapshot = await options.project.get();
       if (snapshot.revision !== input.expectedProjectRevision) {
@@ -2042,10 +2072,12 @@ export function createLocalHostPragmaProjectPort(options: {
         const replay =
           commandPath === undefined
             ? undefined
-            : await readCommandState(
+            : await readAuthoringRecord(
                 commandPath,
+                "evaluation-mutation",
                 EvaluationCommandMutationSchema,
-                "pragma.evaluation-command-mutation/v1",
+                input.draftId,
+                input.expectedDraftRevision,
               );
         const current = await readEvaluationDraft(path);
         if (replay !== undefined) {
@@ -2142,7 +2174,7 @@ export function createLocalHostPragmaProjectPort(options: {
     },
     async prepareEvaluationDraft(input) {
       if (input.operationId !== undefined) {
-        const previous = await readJson(
+        const previous = await readOptionalCandidate(
           candidatePath(managementCommandTargetId(input.operationId)),
         );
         if (previous !== undefined)
@@ -2172,11 +2204,11 @@ export function createLocalHostPragmaProjectPort(options: {
     },
     async discardEvaluationDraft(draftId) {
       const path = evaluationDraftPath(draftId);
-      await withFileLock(`${path}.lock`, async () => await rm(path, { force: true }));
+      await withFileLock(`${path}.lock`, async () => await discardAuthoringRecord(path));
     },
     async prepareFlowDraft(input) {
       if (input.operationId !== undefined) {
-        const previous = await readJson(
+        const previous = await readOptionalCandidate(
           candidatePath(managementCommandTargetId(input.operationId)),
         );
         if (previous !== undefined)
@@ -2238,10 +2270,10 @@ export function createLocalHostPragmaProjectPort(options: {
     },
     async discardFlowDraft(draftId) {
       const path = draftPath(draftId);
-      await withFileLock(`${path}.lock`, async () => await rm(path, { force: true }));
+      await withFileLock(`${path}.lock`, async () => await discardAuthoringRecord(path));
     },
     async getChangeSet(changeSetId, missionId) {
-      const candidate = await readCandidate(candidatePath(changeSetId));
+      const candidate = await readCandidate(candidatePath(changeSetId), missionId ?? null);
       if (candidate.dslDraftId !== undefined) {
         if (candidate.dslDraftMissionId !== missionId) {
           throw new Error("DSL draft is owned by another Mission.");
@@ -2253,7 +2285,10 @@ export function createLocalHostPragmaProjectPort(options: {
     async commit(input) {
       const path = operationPath(input.operationId);
       return await withFileLock(`${path}.lock`, async () => {
-        const candidate = await readCandidate(candidatePath(input.changeSetId));
+        const candidate = await readCandidate(
+          candidatePath(input.changeSetId),
+          input.missionId ?? null,
+        );
         if (candidate.changeSet.diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
           throw new Error("The prepared DSL change-set contains validation errors.");
         }
@@ -2913,7 +2948,9 @@ function runtimeModelIdentity(runtimeId: string, providerId: string, modelId: st
 }
 
 function parsePragmaAgentResource(source: string): PragmaResource {
-  const resource = PragmaForwardCompatibleResourceSchema.parse(parsePragmaYaml(source));
+  const resource = PragmaForwardCompatibleResourceSchema.parse(
+    migrateAuthoringSourceToCurrent(source),
+  );
   if (
     resource.kind !== "Expert" &&
     resource.kind !== "ExpertTeam" &&
@@ -3645,21 +3682,44 @@ function applyEvaluationDraftOperation(
 }
 
 async function readFlowDraft(path: string): Promise<PragmaAgentFlowDraft> {
-  const value = await readJson(path);
+  const value = await readAuthoringRecord(
+    path,
+    "flow",
+    PragmaAgentFlowDraftSchema,
+    decodePragmaPathSegment(basename(path, ".json")),
+  );
   if (value === undefined) throw new Error("Flow draft not found.");
-  return PragmaAgentFlowDraftSchema.parse(value);
+  return value;
 }
 
 async function readEvaluationDraft(path: string): Promise<PragmaAgentEvaluationDraft> {
-  const value = await readJson(path);
+  const value = await readAuthoringRecord(
+    path,
+    "evaluation",
+    PragmaAgentEvaluationDraftSchema,
+    decodePragmaPathSegment(basename(path, ".json")),
+  );
   if (value === undefined) throw new Error("Evaluation draft not found.");
-  return PragmaAgentEvaluationDraftSchema.parse(value);
+  return value;
 }
 
-async function readCandidate(path: string): Promise<z.infer<typeof CandidateRecordSchema>> {
-  const value = await readJson(path);
+async function readOptionalCandidate(
+  path: string,
+  missionId?: string | null,
+): Promise<CandidateRecord | undefined> {
+  return await readAuthoringRecord(
+    path,
+    "candidate",
+    CandidateRecordSchema,
+    decodePragmaPathSegment(basename(path, ".json")),
+    undefined,
+    missionId,
+  );
+}
+async function readCandidate(path: string, missionId?: string | null): Promise<CandidateRecord> {
+  const value = await readOptionalCandidate(path, missionId);
   if (value === undefined) throw new Error("Prepared DSL change-set not found.");
-  return CandidateRecordSchema.parse(value);
+  return value;
 }
 
 async function readJson(path: string): Promise<unknown | undefined> {

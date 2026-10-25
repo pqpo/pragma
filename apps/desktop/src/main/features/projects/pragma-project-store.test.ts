@@ -424,7 +424,7 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
     expect(compilerViews).toHaveLength(1);
     await expect(
       readFile(join(directory, ".cache", "views", compilerViews[0]!, "pragma.lock.yaml"), "utf8"),
-    ).resolves.toContain("compilerVersion: pragma.dsl/v9");
+    ).resolves.toContain("compilerVersion: pragma.dsl/v10");
     expect((await readdir(directory)).some((name) => name.startsWith("studio.v4-backup-"))).toBe(
       false,
     );
@@ -506,7 +506,7 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
     expect(migrated).toMatchObject({ revision: 1 });
     expect(await readFile(projectManifestPath, "utf8")).toContain("pragma.desktop-project/v4");
     expect(await projectRevisionFile(directory, 1, "pragma.lock.yaml")).toContain(
-      "compilerVersion: pragma.dsl/v9",
+      "compilerVersion: pragma.dsl/v10",
     );
   });
 
@@ -691,7 +691,7 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
     >;
     await writeFile(
       firstManifestPath,
-      `${JSON.stringify({ ...firstManifest, compilerVersion: "pragma.dsl/v999" })}\n`,
+      `${JSON.stringify({ ...firstManifest, compilerVersion: "pragma.dsl/v1099" })}\n`,
     );
 
     await expect(project.get()).resolves.toMatchObject({ revision: 2 });
@@ -700,7 +700,7 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
       projectId: "studio",
       revision: 1,
       stage: "compiler-migration",
-      sourceCompilerVersion: "pragma.dsl/v999",
+      sourceCompilerVersion: "pragma.dsl/v1099",
     });
     await expect(project.openRevision(2)).resolves.toBeDefined();
   });

@@ -1,0 +1,22 @@
+id: 0f8a6380-2b80-4cb4-9f27-d4775de57d2a
+title: Historical permission migration
+goal: Historical permission migration
+initialMessageId: 22222222-2222-4222-8222-222222222222
+toolPermissionMode: auto-approve
+workspace:
+  path: /fixture/workspace
+  basename: workspace
+project:
+  id: studio
+  revision: 1
+executor:
+  ref: expert:v2vt1v01vzz6j24q
+  name: Historical expert
+  kind: expert
+lifecycleStatus: active
+createdAt: 2026-10-24T04:17:18.051Z
+updatedAt: 2026-10-24T04:17:18.051Z
+schemaVersion: pragma.mission/v11
+origin:
+  type: user
+contextMounts: []

@@ -218,11 +218,10 @@ describe("Mission workspace categories", () => {
       missionToSummary(
         MissionSchema.parse({
           ...value,
-          schemaVersion: "pragma.mission/v11",
+          schemaVersion: "pragma.mission/v12",
           origin: { type: "user" },
           goal: "Inspect workspace grouping",
           initialMessageId: "00000000-0000-4000-8000-000000000002",
-          toolPermissionMode: "request-approval",
           project: { id: "studio", revision: 1 },
           contextMounts: [],
           executor: { kind: "expert", name: "Pragma", ref: "expert:v2vt1v01vzz6j24q" },

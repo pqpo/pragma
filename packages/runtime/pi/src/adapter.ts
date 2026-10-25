@@ -1,3 +1,4 @@
+import { permissionModes } from "./permission-modes.ts";
 import {
   SettingsManager,
   createAgentSession,
@@ -81,6 +82,11 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
   });
   const mcpToolRegistries = options.mcpToolRegistryPool ?? createMcpToolRegistryPool();
   const descriptor = {
+    // Explicit legacy policies remain available only for restoring old adapter bindings.
+    // Product factories use the native full-access catalog.
+    ...(options.permissionMode === undefined || options.permissionMode === "full-access"
+      ? { permissionModes, configuredPermissionModeId: "full-access" }
+      : {}),
     ...CLOUD_PI_RUNTIME_DESCRIPTOR,
     ...options.descriptor,
     kind: options.descriptor?.kind ?? CLOUD_PI_RUNTIME_DESCRIPTOR.kind,
@@ -113,7 +119,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       return {
         streamState,
         nativeApproval: {
-          permissionMode: options.permissionMode ?? "request-approval",
+          permissionMode: options.permissionMode ?? "full-access",
           humanInteractionHandler: ctx.request.humanInteractionHandler,
         },
         resolvedTools: createResolvedPiTools({

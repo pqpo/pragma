@@ -1,4 +1,5 @@
-import { PragmaResourceSchema } from "../../ast/pragma-dsl.schema.ts";
+import { PragmaResourceSchema } from "../schemas/v5.ts";
+import { migratePragmaV5ResourceToCurrent } from "./v5-to-v6.ts";
 import { PragmaV4SemanticResourceSchema } from "../schemas/v4.ts";
 import { PragmaDslMigrationError, type PragmaDslMigrationStep } from "../types.ts";
 
@@ -6,11 +7,15 @@ export const pragmaDslV4ToV5Step = {
   fromApiVersion: "pragma/v4",
   toApiVersion: "pragma/v5",
   migrate(project) {
-    return { ...project, resources: project.resources.map(migratePragmaV4ResourceToCurrent) };
+    return { ...project, resources: project.resources.map(migratePragmaV4ResourceToV5) };
   },
 } satisfies PragmaDslMigrationStep;
 
 export function migratePragmaV4ResourceToCurrent(resource: unknown) {
+  return migratePragmaV5ResourceToCurrent(migratePragmaV4ResourceToV5(resource));
+}
+
+function migratePragmaV4ResourceToV5(resource: unknown) {
   const historical = PragmaV4SemanticResourceSchema.safeParse(resource);
   if (!historical.success) {
     throw new PragmaDslMigrationError(

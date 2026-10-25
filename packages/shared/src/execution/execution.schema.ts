@@ -20,6 +20,7 @@ export const RuntimeSessionRefSchema = z.object({
 });
 
 export const RuntimeEnvironmentBindingSchema = z.object({
+  permissionModeId: z.string().min(1).max(100).optional(),
   runtimeId: z.string().min(1),
   revision: z.number().int().positive(),
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),

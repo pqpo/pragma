@@ -172,6 +172,11 @@ export class ToolAdapterRegistry {
 }
 
 export interface PragmaCompileHost {
+  readonly expertExecutionProfiles?:
+    | Readonly<
+        Record<string, import("./resource-adapters.ts").PragmaRuntimeProfileContribution | null>
+      >
+    | undefined;
   /** Stop-only definitions preserve recovery metadata and cannot be executed. */
   readonly compilationPurpose?: "execute" | "stop" | undefined;
   readonly workspace: string;
@@ -183,6 +188,7 @@ export interface PragmaCompileHost {
   readonly rootExecutionOverride?:
     | {
         readonly runtimeId: string;
+        readonly permissionModeId?: string | undefined;
         readonly modelSelection?: RuntimeModelSelection | undefined;
       }
     | undefined;

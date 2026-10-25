@@ -1,4 +1,4 @@
-apiVersion: pragma/v5
+apiVersion: pragma/v6
 kind: Bundle
 imports:
   - ./capabilities/0000000000memt00.pragma.yaml

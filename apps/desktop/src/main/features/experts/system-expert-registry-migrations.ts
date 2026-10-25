@@ -1,3 +1,5 @@
+import { SystemExpertCustomizationConfigV9Schema } from "./migrations/system-expert-customization/schemas/v9.ts";
+import { migrateV9ToV10 } from "./migrations/system-expert-customization/steps/v9-to-v10.ts";
 import {
   SystemExpertCustomizationConfigV8Schema,
   type SystemExpertCustomizationConfigV8,
@@ -13,7 +15,7 @@ import { z } from "zod";
 
 import { UpdateBuiltInExpertDefinitionSchema } from "../../../shared/contracts/index.ts";
 
-export const SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION = 9;
+export const SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION = 10;
 const LEGACY_BUILT_IN_PRAGMA_REF = "expert:pragma@1.0.0";
 
 const LegacyExpertCapabilityReferenceSchema = z.discriminatedUnion("kind", [
@@ -181,11 +183,17 @@ export function migrateSystemExpertCustomizationConfig(
   source: unknown,
   defaultPragmaTools: PragmaExpertResource["spec"]["tools"],
 ): {
-  readonly sourceVersion: 3 | 4 | 5 | 6 | 7 | 8;
+  readonly sourceVersion: 3 | 4 | 5 | 6 | 7 | 8 | 9;
   readonly config: SystemExpertCustomizationConfig;
 } {
   const upgrade = (config: SystemExpertCustomizationConfigV8) =>
-    SystemExpertCustomizationConfigSchema.parse(migrateV8ToV9(config));
+    SystemExpertCustomizationConfigSchema.parse(migrateV9ToV10(migrateV8ToV9(config)));
+  const parsedV9 = SystemExpertCustomizationConfigV9Schema.safeParse(source);
+  if (parsedV9.success)
+    return {
+      sourceVersion: 9,
+      config: SystemExpertCustomizationConfigSchema.parse(migrateV9ToV10(parsedV9.data)),
+    };
   const parsedV8 = SystemExpertCustomizationConfigV8Schema.safeParse(source);
   if (parsedV8.success) return { sourceVersion: 8, config: upgrade(parsedV8.data) };
   const parsedV7 = V7SystemExpertCustomizationConfigSchema.safeParse(source);

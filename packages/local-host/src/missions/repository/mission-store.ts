@@ -1,3 +1,4 @@
+import { MissionV11Schema, missionV11ToV12Step } from "./migrations/index.ts";
 import type { ContextStoreRevisionRequest } from "@pragma/built-in-agents/contracts";
 import {
   missionRepositoryLockPath,
@@ -42,7 +43,6 @@ import {
   type MissionBranchHistory,
   type MissionUserMessage,
   type MissionAttachmentsManifest,
-  type ToolPermissionMode,
 } from "@pragma/shared";
 import {
   MissionV6Schema,
@@ -128,7 +128,6 @@ export interface MissionStore {
     readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
     /** Snapshot file inputs into Mission storage; external file references remain the default. */
     readonly copyFileAttachments?: boolean | undefined;
-    readonly toolPermissionMode?: ToolPermissionMode | undefined;
     readonly modelOverride?: MissionModelOverride | undefined;
     readonly origin?: Mission["origin"] | undefined;
     readonly contextMounts?: readonly MissionContextMount[] | undefined;
@@ -137,7 +136,6 @@ export interface MissionStore {
   updateOptions(
     id: string,
     input: {
-      readonly toolPermissionMode: ToolPermissionMode;
       readonly modelOverride?: MissionModelOverride | undefined;
     },
   ): Promise<Mission>;
@@ -281,14 +279,24 @@ const MissionV10MigrationTransactionSchema = z.object({
 const MissionV11MigrationTransactionSchema = z.object({
   schemaVersion: z.literal("pragma.mission-v11-migration/v1"),
   missionId: MissionIdSchema,
-  target: MissionSchema,
+  target: MissionV11Schema,
 });
 
 const EarlyMissionMigrationTransactionSchema = z.object({
   schemaVersion: z.literal("pragma.mission-schema-migration/v1"),
   missionId: MissionIdSchema,
-  fromVersion: z.enum(["pragma.mission/v3", "pragma.mission/v4", "pragma.mission/v5"]),
-  toVersion: z.enum(["pragma.mission/v4", "pragma.mission/v5", "pragma.mission/v6"]),
+  fromVersion: z.enum([
+    "pragma.mission/v3",
+    "pragma.mission/v4",
+    "pragma.mission/v5",
+    "pragma.mission/v11",
+  ]),
+  toVersion: z.enum([
+    "pragma.mission/v4",
+    "pragma.mission/v5",
+    "pragma.mission/v6",
+    "pragma.mission/v12",
+  ]),
   target: z.record(z.string(), z.unknown()),
 });
 
@@ -540,8 +548,10 @@ export function createMissionStore(options: {
 
   const applyEarlyMigration = async (input: {
     readonly id: string;
-    readonly fromVersion: "pragma.mission/v3" | "pragma.mission/v4" | "pragma.mission/v5";
-    readonly toVersion: "pragma.mission/v4" | "pragma.mission/v5" | "pragma.mission/v6";
+    readonly fromVersion:
+      "pragma.mission/v3" | "pragma.mission/v4" | "pragma.mission/v5" | "pragma.mission/v11";
+    readonly toVersion:
+      "pragma.mission/v4" | "pragma.mission/v5" | "pragma.mission/v6" | "pragma.mission/v12";
     readonly source: unknown;
     readonly target: Record<string, unknown>;
   }): Promise<Record<string, unknown>> => {
@@ -563,6 +573,17 @@ export function createMissionStore(options: {
     await rm(earlyMigrationTransactionPath(input.id), { force: true });
     return input.target;
   };
+
+  const migrateV11ToV12 = async (id: string, source: unknown): Promise<Mission> =>
+    MissionSchema.parse(
+      await applyEarlyMigration({
+        id,
+        fromVersion: "pragma.mission/v11",
+        toVersion: "pragma.mission/v12",
+        source,
+        target: missionV11ToV12Step.migrate(source),
+      }),
+    );
 
   const recoverV7Migration = async (
     id: string,
@@ -740,7 +761,9 @@ export function createMissionStore(options: {
     return target;
   };
 
-  const recoverV11Migration = async (id: string): Promise<Mission | undefined> => {
+  const recoverV11Migration = async (
+    id: string,
+  ): Promise<z.infer<typeof MissionV11Schema> | undefined> => {
     const value = await readJsonIfExists(v11MigrationTransactionPath(id));
     if (value === undefined) return undefined;
     const transaction = MissionV11MigrationTransactionSchema.parse(value);
@@ -766,7 +789,7 @@ export function createMissionStore(options: {
   const migrateV10ToV11 = async (
     id: string,
     legacy: z.infer<typeof MissionV10Schema>,
-  ): Promise<Mission> => {
+  ): Promise<z.infer<typeof MissionV11Schema>> => {
     const target = missionV10ToV11Step.migrate(legacy);
     await writeTextIfAbsent(v10BackupPath(id), formatPragmaYaml(legacy));
     await writeJsonAtomically(
@@ -785,7 +808,8 @@ export function createMissionStore(options: {
   const migrateV9ToCurrent = async (
     id: string,
     legacy: z.infer<typeof MissionV9Schema>,
-  ): Promise<Mission> => await migrateV10ToV11(id, await migrateV9ToV10(id, legacy));
+  ): Promise<Mission> =>
+    await migrateV11ToV12(id, await migrateV10ToV11(id, await migrateV9ToV10(id, legacy)));
 
   const readRecords = async (
     id: string,
@@ -815,17 +839,21 @@ export function createMissionStore(options: {
   const readMissionUnlocked = async (id: string): Promise<Mission> => {
     try {
       const recoveredV11 = await recoverV11Migration(id);
-      if (recoveredV11 !== undefined) return recoveredV11;
+      if (recoveredV11 !== undefined) return await migrateV11ToV12(id, recoveredV11);
       const recoveredV10 = await recoverV10Migration(id);
-      if (recoveredV10 !== undefined) return await migrateV10ToV11(id, recoveredV10);
+      if (recoveredV10 !== undefined)
+        return await migrateV11ToV12(id, await migrateV10ToV11(id, recoveredV10));
       const recoveredV9 = await recoverV9Migration(id);
       if (recoveredV9 !== undefined)
-        return await migrateV10ToV11(id, await migrateV9ToV10(id, recoveredV9));
+        return await migrateV11ToV12(
+          id,
+          await migrateV10ToV11(id, await migrateV9ToV10(id, recoveredV9)),
+        );
       const recoveredV8 = await recoverV8Migration(id);
       if (recoveredV8 !== undefined)
-        return await migrateV10ToV11(
+        return await migrateV11ToV12(
           id,
-          await migrateV9ToV10(id, await migrateV8ToV9(id, recoveredV8)),
+          await migrateV10ToV11(id, await migrateV9ToV10(id, await migrateV8ToV9(id, recoveredV8))),
         );
       const recoveredV7 = await recoverV7Migration(id);
       const recoveredEarly = await recoverEarlyMigration(id);
@@ -892,9 +920,14 @@ export function createMissionStore(options: {
         return await migrateV9ToCurrent(id, MissionV9Schema.parse(current));
       }
       if (versionAfterRefMigration === "pragma.mission/v10") {
-        return await migrateV10ToV11(id, MissionV10Schema.parse(current));
+        return await migrateV11ToV12(
+          id,
+          await migrateV10ToV11(id, MissionV10Schema.parse(current)),
+        );
       }
-      if (versionAfterRefMigration !== "pragma.mission/v11") {
+      if (versionAfterRefMigration === "pragma.mission/v11")
+        return await migrateV11ToV12(id, current);
+      if (versionAfterRefMigration !== "pragma.mission/v12") {
         throw new MissionStoreError(
           "unsupported_schema",
           `Mission ${id} uses a schema this Pragma version cannot read safely. Update Pragma or use compatible recovery tooling. The Mission data was preserved.`,
@@ -1465,12 +1498,11 @@ export function createMissionStore(options: {
           createdAt: timestamp,
         };
         const mission = MissionSchema.parse({
-          schemaVersion: "pragma.mission/v11",
+          schemaVersion: "pragma.mission/v12",
           id,
           title: normalizeBranchTitle(source.title),
           goal: source.goal,
           initialMessageId: source.initialMessageId,
-          toolPermissionMode: source.toolPermissionMode,
           workspace: source.workspace,
           project: input.project,
           executor: input.executor,
@@ -1759,12 +1791,11 @@ export function createMissionStore(options: {
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
       const mission = MissionSchema.parse({
-        schemaVersion: "pragma.mission/v11",
+        schemaVersion: "pragma.mission/v12",
         id,
         title: input.title === undefined ? titleFromGoal(goal) : normalizeMissionTitle(input.title),
         goal,
         initialMessageId,
-        toolPermissionMode: input.toolPermissionMode ?? "request-approval",
         workspace: input.workspace,
         project: input.project,
         executor: input.executor,
@@ -1867,19 +1898,8 @@ export function createMissionStore(options: {
     },
     async updateOptions(id, input) {
       return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
-        if (
-          input.toolPermissionMode !== current.toolPermissionMode &&
-          current.execution !== undefined &&
-          ["queued", "running", "waiting"].includes(current.execution.status)
-        ) {
-          throw new MissionStoreError(
-            "mission_active",
-            "Wait for the current execution before changing mission permissions.",
-          );
-        }
         const next = {
           ...current,
-          toolPermissionMode: input.toolPermissionMode,
           updatedAt: timestamp,
         };
         if (input.modelOverride === undefined) delete next.modelOverride;

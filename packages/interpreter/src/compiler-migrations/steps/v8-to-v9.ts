@@ -118,6 +118,7 @@ export function migratePragmaCompilerV8Project(input: {
 
 function migrateResource(historical: PragmaCompilerV8Resource): PragmaResource {
   const migrated = structuredClone(historical) as unknown as Record<string, unknown>;
+  migrated["apiVersion"] = "pragma/v6";
   const spec = migrated["spec"] as Record<string, unknown>;
   if (migrated["kind"] === "ExpertTeam") {
     const delegation = spec["delegation"] as Record<string, unknown>;

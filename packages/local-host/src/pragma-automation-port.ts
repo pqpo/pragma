@@ -34,7 +34,6 @@ export interface PragmaAutomationHostPort {
       resource: PragmaAutomationResource;
       binding: {
         workspace: string;
-        toolPermissionMode: "request-approval" | "auto-approve" | "full-access";
         contextMounts: [];
       };
     },
@@ -118,7 +117,6 @@ export function createLocalHostPragmaAutomationPort(options: {
                 resource,
                 binding: {
                   workspace: input.workspaceId,
-                  toolPermissionMode: input.toolPermissionMode,
                   contextMounts: [],
                 },
               },

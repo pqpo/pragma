@@ -588,7 +588,6 @@ async function runCuratorMission(input: {
           project: { id: project.projectId, revision: project.revision },
           executor: { kind: "expert", ref: MEMORY_CURATOR_REF, name: "Memory Curator" },
           origin: { type: "system-memory", jobId: input.jobId },
-          toolPermissionMode: "request-approval",
           ...(input.runtime.modelSelection === undefined
             ? {}
             : {

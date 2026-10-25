@@ -1,4 +1,18 @@
 export const studio = {
+  permissionMode: "权限模式",
+  permissionModeHint: "使用此 Harness 的执行权限。受管工具继续遵守各自的审批策略。",
+  permissionModeLabels: {
+    "full-access": "完全访问",
+    "request-approval": "请求审批",
+    "read-only": "只读",
+    "auto-review": "替我审批",
+    bypassPermissions: "跳过审批",
+    default: "默认审批",
+    auto: "自动审批",
+    "native-auto": "原生自动审批",
+    "auto-approve": "自动接受编辑（禁用命令）",
+  },
+
   skillSettings: "技能设置",
   knowledgeBaseSettings: "知识库设置",
   writeApproval: "写入审批",

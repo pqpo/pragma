@@ -107,7 +107,6 @@ export async function createPhaseThreeCommandTestFixture(
     project,
     executors: catalog,
     contextStores: knowledge,
-    getDefaultToolPermissionMode: () => "request-approval",
   });
   const lifecycle = createLocalHostMissionController({
     missionsPath: paths.missionsRoot(),

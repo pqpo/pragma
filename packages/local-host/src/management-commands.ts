@@ -533,7 +533,7 @@ export function createManagementCommandApplication(options: {
                 );
               await assertTarget(input, true);
               const id = "draftId" in input ? input.draftId : input.changeSetId;
-              // Existing parser/business reads validate historical data without rewriting it.
+              // Owner-local storage upgrades run before current business validation; originals stay in backups.
               try {
                 if (command === "dsl.draft.recover" && "draftId" in input) {
                   await project.inspectDslDraft({

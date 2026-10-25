@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   createNoopLoggerProvider,
@@ -23,6 +23,7 @@ import {
   canonicalPragmaResourceRef,
   formatPragmaYaml,
   loadPragmaProject,
+  PragmaProjectService,
   type CompiledResource,
   type InvocableResource,
   type PragmaAdapterHost,
@@ -97,7 +98,6 @@ async function fixture(
       name: expert.metadata.name,
     },
     workspace: { path: "/isolated/mission-a" },
-    toolPermissionMode: "request-approval",
     contextMounts: [],
   };
   const definition = await defineExpert({
@@ -378,8 +378,8 @@ describe("Local Host Mission compile orchestration", () => {
       executor: f.request.executor,
       contextMounts: hash([]),
       systemExecutorFingerprints: [],
-      toolPermissionMode: "request-approval",
       modelOverride: null,
+      expertExecutionProfiles: {},
       capabilities: active,
     });
     expect(await f.service.identity(scope, active)).toBe(expected);
@@ -436,8 +436,8 @@ describe("Local Host Mission compile orchestration", () => {
         executor: f.request.executor,
         contextMounts: hash([]),
         systemExecutorFingerprints: [[systemRef, "system-version-1"]],
-        toolPermissionMode: "request-approval",
         modelOverride: null,
+        expertExecutionProfiles: {},
         capabilities: initial.capabilities,
       }),
     );
@@ -485,7 +485,6 @@ describe("Local Host Mission compile orchestration", () => {
         ...f.request,
         modelOverride: { providerId: "test", modelId: "model-a", thinkingLevel: "high" },
       },
-      { ...f.request, toolPermissionMode: "full-access" },
       { ...f.request, contextMounts: [{ kind: "context-store", storeId: "j35188zs37g69g0n" }] },
     ];
     for (const request of changes) {
@@ -1035,3 +1034,205 @@ async function systemFixture(explicitRuntime = false) {
     dispose: () => rm(home, { recursive: true, force: true }),
   };
 }
+
+it("compiles current expert permissions independently from pinned resources and refreshes on retry", async () => {
+  const home = await mkdtemp(join(tmpdir(), "pragma-expert-permissions-"));
+  const resources = createPublishedProjectResources();
+  const expert = resources.find((resource) => resource.kind === "Expert")!;
+  const profile = resources.find((resource) => resource.kind === "RuntimeProfile")!;
+  if (expert.kind !== "Expert" || profile.kind !== "RuntimeProfile")
+    throw new Error("Missing fixture");
+  let current = structuredClone(resources);
+  const service = new PragmaProjectService({
+    repository: { getHead: async () => undefined, getRevision: async () => undefined } as never,
+  });
+  const files = await service.renderProjectFiles({ resources });
+  for (const [path, contents] of files) {
+    await mkdir(dirname(join(home, path)), { recursive: true });
+    await writeFile(join(home, path), contents);
+  }
+  const project = await loadPragmaProject(join(home, "pragma.yaml"));
+  const adapter = defineRuntimeTestDriver({
+    descriptor: {
+      id: "codex",
+      kind: "test",
+      displayName: "Codex",
+      permissionModes: {
+        defaultModeId: "full-access",
+        modes: ["full-access", "read-only"].map((id) => ({
+          id,
+          label: id,
+          description: id,
+          available: true,
+        })),
+      },
+    },
+    createSession: () => ({}),
+    startTurn: () => ({ outputText: "done" }),
+    mapEvent: () => ({ events: [] }),
+  });
+  const runtimes = createStaticRuntimeResolver({ defaultRuntimeId: "codex", runtimes: [adapter] });
+  const compiler = createLocalHostMissionCompileService({
+    environmentId: "test",
+    pragmaHome: home,
+    adapterHost: () => ({
+      environmentId: "test",
+      projectRoot: home,
+      resolveBinding: async () => undefined,
+      resolveSecret: async () => undefined,
+      resolveArtifact: async () => {
+        throw new Error("Unexpected artifact");
+      },
+    }),
+    revisionSource: {
+      getCurrentResources: async () => current,
+      getRevision: async () => ({ projectId: "studio", revision: 1, resources }),
+      withProject: async (_pin, run) => await run(project),
+    },
+  });
+  const request: LocalHostMissionCompileRequest = {
+    id: "permission-mission",
+    project: { id: "studio", revision: 1 },
+    executor: {
+      kind: "expert",
+      ref: canonicalPragmaResourceRef(expert),
+      name: expert.metadata.name,
+    },
+    workspace: { path: home },
+    contextMounts: [],
+  };
+  try {
+    const first = await compiler.compileStable(compiler.createRequestScope(request), runtimes);
+    expect((first.compiled.value as { permissionModeId?: string }).permissionModeId).toBe(
+      "full-access",
+    );
+    current = structuredClone(resources);
+    const changed = current.find((resource) => resource.kind === "RuntimeProfile")!;
+    if (changed.kind !== "RuntimeProfile") throw new Error("Missing profile");
+    changed.spec.config = { runtimeId: "codex", permissionModeId: "read-only" };
+    const retry = await compiler.compileStable(compiler.createRequestScope(request), runtimes);
+    expect((retry.compiled.value as { permissionModeId?: string }).permissionModeId).toBe(
+      "read-only",
+    );
+    expect(retry.identity).not.toBe(first.identity);
+    expect(compiler.allowsExecutionProfileSuccessor(retry.compiled)).toBe(true);
+    expect((retry.compiled.value as { instructions?: string }).instructions).toBe(
+      expert.spec.instructions,
+    );
+    const member = current.filter((resource) => resource.kind === "Expert")[1]!;
+    const memberProfile = {
+      ...structuredClone(changed),
+      metadata: { ...changed.metadata, id: "0123456789abcdef" },
+      spec: { ...changed.spec, config: { runtimeId: "codex", permissionModeId: "full-access" } },
+    };
+    member.spec.runtime = { ref: "runtime-profile:0123456789abcdef" };
+    current = [...current, memberProfile];
+    const team = current.find((resource) => resource.kind === "ExpertTeam")!;
+    const teamCompilation = await compiler.compileStable(
+      compiler.createRequestScope({
+        ...request,
+        id: "team-permissions",
+        executor: { kind: "team", ref: canonicalPragmaResourceRef(team), name: team.metadata.name },
+      }),
+      runtimes,
+    );
+    expect(teamCompilation.compiled.value).toMatchObject({
+      coordinator: { permissionModeId: "read-only" },
+      members: [{ permissionModeId: "full-access" }],
+    });
+    const teamRequest = {
+      ...request,
+      id: "warm-team-model",
+      executor: { kind: "team", ref: canonicalPragmaResourceRef(team), name: team.metadata.name },
+    };
+    const warm = await compiler.compileStable(compiler.createRequestScope(teamRequest), runtimes);
+    const owner = {
+      hasOwner: true,
+      identity: warm.identity,
+      definitionFingerprint: warm.definitionFingerprint,
+      executionProfilesFingerprint: warm.executionProfilesFingerprint,
+      capabilities: warm.capabilities,
+      secrets: warm.secrets,
+      plugins: warm.plugins,
+    };
+    for (const config of [
+      { runtimeId: "codex", providerId: "test", model: "member-model", thinkingLevel: "low" },
+      { runtimeId: "codex", providerId: "test", model: "member-model", thinkingLevel: "high" },
+    ]) {
+      memberProfile.spec.config = config;
+      const prepared = await compiler.prepare(
+        compiler.createRequestScope(teamRequest),
+        runtimes,
+        owner,
+      );
+      expect(prepared.cacheHit).toBe(false);
+      expect(prepared.definitionChanged).toBe(true);
+      expect(prepared.refreshEnvironment).toBe(false);
+      expect(prepared.definitionFingerprint).toBe(owner.definitionFingerprint);
+      Object.assign(owner, {
+        identity: prepared.identity,
+        executionProfilesFingerprint: prepared.executionProfilesFingerprint,
+      });
+      expect(prepared.compiled?.value).toMatchObject({
+        members: [
+          {
+            models: {
+              default: { model: { modelId: "member-model" }, thinkingLevel: config.thinkingLevel },
+            },
+          },
+        ],
+      });
+    }
+    const pi = defineRuntimeTestDriver({
+      descriptor: { id: "pi", kind: "test", displayName: "Pi" },
+      createSession: () => ({}),
+      startTurn: () => ({ outputText: "done" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    changed.spec.config = { runtimeId: "pi" };
+    const switchedRuntimes = createStaticRuntimeResolver({
+      defaultRuntimeId: "codex",
+      runtimes: [adapter, pi],
+    });
+    const switchedScope = compiler.createRequestScope(request);
+    expect(
+      (await compiler.compileStable(switchedScope, switchedRuntimes)).compiled.rootRuntimeId,
+    ).toBe("pi");
+    expect(await compiler.runtimeIds(switchedScope, switchedRuntimes)).toEqual(["pi"]);
+    changed.spec.config = { runtimeId: "codex" };
+    const cleared = await compiler.compileStable(compiler.createRequestScope(request), runtimes);
+    expect(cleared.compiled.value).toMatchObject({ permissionModeId: "full-access" });
+    changed.spec.config = {
+      runtimeId: "codex",
+      permissionModeId: "read-only",
+      providerId: "test",
+      model: "retired-default",
+    };
+    const strictRuntimes: typeof runtimes = {
+      ...runtimes,
+      bind: async (request = {}) => {
+        if (request.modelSelection?.model.modelId === "retired-default")
+          throw new Error("Runtime model is unavailable: retired-default");
+        return await runtimes.bind(request);
+      },
+    };
+    const overridden = await compiler.compileStable(
+      compiler.createRequestScope({
+        ...request,
+        modelOverride: { providerId: "test", modelId: "mission-override" },
+      }),
+      strictRuntimes,
+    );
+    expect(overridden.compiled.value).toMatchObject({
+      permissionModeId: "read-only",
+      models: { default: { model: { providerId: "test", modelId: "mission-override" } } },
+    });
+    changed.spec.config = { runtimeId: "codex", permissionModeId: "plan" };
+    await expect(
+      compiler.compileStable(compiler.createRequestScope(request), runtimes),
+    ).rejects.toThrow();
+  } finally {
+    await project.dispose();
+    await rm(home, { recursive: true, force: true });
+  }
+});

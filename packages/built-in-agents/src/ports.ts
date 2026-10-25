@@ -261,7 +261,6 @@ export interface PragmaAgentAutomationPort {
     readonly expectedProjectRevision: number;
     readonly source: string;
     readonly workspaceId: string;
-    readonly toolPermissionMode: "request-approval" | "auto-approve" | "full-access";
     readonly operationId: string;
   }): Promise<PragmaAgentAutomationSummary>;
   delete(input: {

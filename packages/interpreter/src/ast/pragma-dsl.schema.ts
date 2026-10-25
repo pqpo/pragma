@@ -251,6 +251,7 @@ export const PragmaAdapterResourceSpecSchema = z
 
 export const PragmaRuntimeProfileConfigSchema = z
   .object({
+    permissionModeId: z.string().trim().min(1).max(100).optional(),
     runtimeId: z.string().trim().min(1),
     providerId: z.string().trim().min(1).optional(),
     model: z.string().trim().min(1).optional(),

@@ -246,7 +246,6 @@ it.each(["root", "dependency", "root with model override"] as const)(
         ).toBe("base-model");
         await runner.updateOptions({
           id: mission.id,
-          toolPermissionMode: mission.toolPermissionMode,
           modelOverride: null,
         });
       }

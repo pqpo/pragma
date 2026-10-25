@@ -1120,6 +1120,7 @@ async function createStepInvocation(
       ("modelSelection" in step.options ? step.options.modelSelection : undefined) ??
       nativeExpert.models?.default;
     const runtime = await options.runtimes.bind({
+      permissionModeId: nativeExpert.permissionModeId,
       runtimeId: resolveFlowStepRuntimeId(
         step,
         nativeExpert,

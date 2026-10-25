@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const PRAGMA_DSL_WRITE_API_VERSION = "pragma/v5" as const;
+export const PRAGMA_DSL_WRITE_API_VERSION = "pragma/v6" as const;
 
 export const PRAGMA_DSL_DIRECT_READ_API_VERSIONS = [PRAGMA_DSL_WRITE_API_VERSION] as const;
 
@@ -8,6 +8,7 @@ export const PRAGMA_DSL_UPGRADE_FROM_API_VERSIONS = [
   "pragma/v2",
   "pragma/v3",
   "pragma/v4",
+  "pragma/v5",
 ] as const;
 
 export const PragmaApiVersionSchema = z.literal(PRAGMA_DSL_WRITE_API_VERSION);

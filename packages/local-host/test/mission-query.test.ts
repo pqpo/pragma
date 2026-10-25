@@ -86,7 +86,7 @@ describe("Mission query projections", () => {
     const controller = await createController();
     await appendEvents(controller, [["mission.created", {}]]);
     const mission = MissionSchema.parse({
-      schemaVersion: "pragma.mission/v11",
+      schemaVersion: "pragma.mission/v12",
       id: MISSION_ID,
       title: "Task theme",
       goal: "First request",

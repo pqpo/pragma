@@ -1,4 +1,4 @@
-import { MissionSchema } from "@pragma/shared";
+import { MissionV11Schema } from "../schemas/v11.ts";
 import { MissionV10Schema } from "../schemas/v10.ts";
 
 export const missionV10ToV11Step = {
@@ -6,6 +6,6 @@ export const missionV10ToV11Step = {
   to: "pragma.mission/v11",
   migrate(input: unknown) {
     const legacy = MissionV10Schema.parse(input);
-    return MissionSchema.parse({ ...legacy, schemaVersion: "pragma.mission/v11" });
+    return MissionV11Schema.parse({ ...legacy, schemaVersion: "pragma.mission/v11" });
   },
 } as const;

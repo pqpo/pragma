@@ -6,7 +6,6 @@ import { z } from "zod";
 import type { PragmaLogger } from "@pragma/core";
 
 import type {
-  DesktopToolPermissionMode,
   Mission,
   MissionContextMount,
   MissionModelOverride,
@@ -34,7 +33,6 @@ export interface MissionCreator {
       | { readonly kind: "auto"; readonly value: string };
     readonly executorRef: string;
     readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
-    readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
     readonly modelOverride?: MissionModelOverride | undefined;
     readonly origin?: Mission["origin"] | undefined;
     readonly contextMounts?: readonly MissionContextMount[] | undefined;
@@ -54,8 +52,6 @@ export function createMissionCreator(options: {
   readonly executors: MissionExecutorCatalog;
   readonly contextStores?: ContextStoreStore | undefined;
   readonly contextStoreRevisions?: Pick<ContextStoreRevisionService, "resolveDraft"> | undefined;
-  readonly getDefaultToolPermissionMode: () =>
-    DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
 }): MissionCreator {
   return {
@@ -150,8 +146,6 @@ export function createMissionCreator(options: {
             ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
             ...(input.origin === undefined ? {} : { origin: input.origin }),
             contextMounts,
-            toolPermissionMode:
-              input.toolPermissionMode ?? (await options.getDefaultToolPermissionMode()),
           });
           logPhase("mission_persist", created.id);
           return created;
