@@ -1187,6 +1187,7 @@ export function StudioPage(props: {
           <CapabilityDirectoryFragment
             kind={activeView}
             capabilities={capabilities}
+            experts={expertsLoading || expertsLoadFailed ? undefined : experts}
             revisionTaskCount={skillRevisionTaskCount}
             onOpenRevisions={() => {
               setSelectedCapabilityId(null);

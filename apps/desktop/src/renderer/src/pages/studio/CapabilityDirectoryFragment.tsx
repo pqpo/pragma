@@ -38,8 +38,10 @@ import {
 } from "./JsonSchemaFieldsEditor.tsx";
 
 export { fieldsToObjectSchema, objectSchemaToFields } from "./JsonSchemaFieldsEditor.tsx";
-import { desktopApi } from "./studio-model.ts";
+import { desktopApi, fixedSkillCapabilityIds, type ExpertRecord } from "./studio-model.ts";
+import { formatMissionDateTime } from "../../lib/mission-time.ts";
 import { AssetGitImportForm } from "./AssetGitControls.tsx";
+import { AssetGitSyncIndicator } from "./AssetGitSyncIndicator.tsx";
 
 type Filter = "mcp" | "http" | "function";
 type CapabilityMode = "skill" | "mcp" | "http" | "code";
@@ -129,6 +131,7 @@ const emptyCode = {
 export function CapabilityDirectoryFragment(props: {
   readonly kind: "connectors" | "skills";
   readonly capabilities: readonly Capability[];
+  readonly experts?: readonly ExpertRecord[] | undefined;
   readonly onOpen: (capability: Capability) => void;
   readonly onOpenRevisions?: (() => void) | undefined;
   readonly revisionTaskCount?: number | undefined;
@@ -540,25 +543,38 @@ export function CapabilityDirectoryFragment(props: {
         </span>
       </div>
 
-      <div className="capability-table" role="list">
-        <div className="capability-table-heading" aria-hidden="true">
-          <span className="capability-column-name">{t("name")}</span>
-          <span className="capability-column-type">{t("type")}</span>
-          <span className="capability-column-source">{t("sourceConnection")}</span>
-          <span className="capability-column-status">{t("status")}</span>
-          <span className="capability-column-actions" />
-        </div>
-        {matching.map((capability) => (
-          <CapabilityRow
-            key={capability.manifest.id}
-            capability={capability}
-            onOpen={() => props.onOpen(capability)}
-            onEdit={
-              capability.definition.kind === "skill" ? undefined : () => openEditDrawer(capability)
-            }
-            onChanged={props.onChanged}
-          />
-        ))}
+      <div className={props.kind === "skills" ? "skill-grid" : "capability-table"} role="list">
+        {props.kind === "connectors" ? (
+          <div className="capability-table-heading" aria-hidden="true">
+            <span className="capability-column-name">{t("name")}</span>
+            <span className="capability-column-type">{t("type")}</span>
+            <span className="capability-column-source">{t("sourceConnection")}</span>
+            <span className="capability-column-status">{t("status")}</span>
+            <span className="capability-column-actions" />
+          </div>
+        ) : null}
+        {matching.map((capability) =>
+          props.kind === "skills" ? (
+            <SkillCard
+              key={capability.manifest.id}
+              capability={capability}
+              experts={props.experts}
+              onOpen={() => props.onOpen(capability)}
+            />
+          ) : (
+            <CapabilityRow
+              key={capability.manifest.id}
+              capability={capability}
+              onOpen={() => props.onOpen(capability)}
+              onEdit={
+                capability.definition.kind === "skill"
+                  ? undefined
+                  : () => openEditDrawer(capability)
+              }
+              onChanged={props.onChanged}
+            />
+          ),
+        )}
         {matching.length === 0 ? (
           <p className="capability-empty">
             {normalizedQuery.length > 0 ? t("noMatchesFound") : t("noCapabilities")}
@@ -730,6 +746,70 @@ export function CapabilityDirectoryFragment(props: {
         </div>
       ) : null}
     </StudioScreenFrame>
+  );
+}
+
+function SkillCard(props: {
+  readonly capability: Capability;
+  readonly experts?: readonly ExpertRecord[] | undefined;
+  readonly onOpen: () => void;
+}) {
+  const { t, i18n } = useTranslation("studio");
+  const { capability } = props;
+  const linkedExperts = props.experts?.filter(
+    (expert) =>
+      expert.capabilities.some(
+        (reference) =>
+          reference.kind === "skill" && reference.capabilityId === capability.manifest.id,
+      ) ||
+      fixedSkillCapabilityIds(expert.persisted?.opaqueCapabilities).includes(
+        capability.manifest.id,
+      ),
+  );
+  const updatedAt = new Date(capability.manifest.updatedAt);
+  const updatedLabel = Number.isFinite(updatedAt.getTime())
+    ? new Intl.DateTimeFormat(i18n.resolvedLanguage, {
+        year: updatedAt.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+        month: "short",
+        day: "numeric",
+      }).format(updatedAt)
+    : null;
+  return (
+    <div className="skill-card" role="listitem">
+      <button className="skill-card-open" type="button" onClick={props.onOpen}>
+        <span className="skill-card-heading">
+          <span className="skill-card-name" title={capability.manifest.name}>
+            {capability.manifest.name}
+          </span>
+          {capability.managedBy === "system" ? (
+            <span className="skill-card-source">{t("builtIn")}</span>
+          ) : (
+            <AssetGitSyncIndicator target={{ kind: "skill", id: capability.manifest.id }} />
+          )}
+        </span>
+        {capability.definition.description ? (
+          <span className="skill-card-description">{capability.definition.description}</span>
+        ) : null}
+        {capability.health.status !== "ready" ? (
+          <span className="skill-card-attention">{t("needsAttention")}</span>
+        ) : null}
+        <span className="skill-card-footer">
+          {(linkedExperts?.length ?? 0) > 0 ? (
+            <span title={linkedExperts?.map((expert) => expert.name).join("、")}>
+              {t("skillUsedByExperts", { count: linkedExperts?.length })}
+            </span>
+          ) : null}
+          {updatedLabel !== null ? (
+            <time
+              dateTime={capability.manifest.updatedAt}
+              title={formatMissionDateTime(capability.manifest.updatedAt)}
+            >
+              {t("skillUpdatedAt", { date: updatedLabel })}
+            </time>
+          ) : null}
+        </span>
+      </button>
+    </div>
   );
 }
 

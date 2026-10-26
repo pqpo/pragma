@@ -206,7 +206,12 @@ describe("capability row actions", () => {
     expect(html).not.toContain('aria-label="More actions for Test Skill"');
     expect(html).not.toContain('aria-haspopup="menu"');
     expect(html).not.toContain("Delete capability");
-    expect(html).toContain("data-capability-row-action");
+    expect(html).toContain("skill-card-open");
+    expect(html).toContain("Test capability actions.");
+    expect(html).not.toContain("capability-table-heading");
+    expect(html).not.toContain("studio-asset-icon");
+    expect(html).not.toContain("Ready");
+    expect(html).not.toContain("Uploaded package");
   });
 
   it("shows active revision tasks with the shared revision badge", () => {
@@ -254,7 +259,7 @@ describe("capability row actions", () => {
     expect(html).toContain("Built-in");
     expect(html).toContain("Test Skill");
     expect(html).toMatch(
-      /capability-name-title-row.*<strong title="Test Skill">Test Skill<\/strong><span class="capability-built-in-chip">Built-in<\/span>/,
+      /skill-card-heading.*Test Skill<\/span><span class="skill-card-source">Built-in<\/span>/,
     );
     expect(html).not.toContain('aria-label="More actions for Test Skill"');
   });
