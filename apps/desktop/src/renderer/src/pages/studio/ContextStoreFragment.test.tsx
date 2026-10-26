@@ -90,7 +90,7 @@ describe("knowledge base UI", () => {
     ).toEqual(firstFile);
   });
 
-  it("presents a single managed Markdown knowledge-base model", () => {
+  it("shows knowledge scope and maintenance information without repetitive type and source labels", () => {
     const html = renderToStaticMarkup(
       <ContextStoreDirectoryFragment
         stores={[store]}
@@ -109,8 +109,14 @@ describe("knowledge base UI", () => {
     );
 
     expect(html).toContain("Knowledge bases");
-    expect(html).toContain("Markdown");
-    expect(html).toContain("Copied into Pragma");
+    expect(html).toContain("Product docs");
+    expect(html).toContain("Managed product knowledge.");
+    expect(html).toContain("Updated");
+    expect(html).toContain('class="studio-catalog-card-open"');
+    expect(html).not.toContain(">Markdown<");
+    expect(html).not.toContain("Copied into Pragma");
+    expect(html).not.toContain("Ready");
+    expect(html).not.toContain("store-icon");
     expect(html).toContain("Revision tasks");
     expect(html).toContain('class="revision-task-count">2</span>');
     expect(html).not.toContain("Context note");

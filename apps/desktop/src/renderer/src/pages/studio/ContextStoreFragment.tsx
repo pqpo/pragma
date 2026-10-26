@@ -51,7 +51,8 @@ import {
 } from "./context-store-autosave.ts";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame, type StudioLeaveGuard } from "./StudioScreenFrame.tsx";
-import { desktopApi } from "./studio-model.ts";
+import { desktopApi, type ExpertRecord } from "./studio-model.ts";
+import { StudioCatalogCard } from "./StudioCatalogCard.tsx";
 import { AssetGitImportForm, AssetGitPanel } from "./AssetGitControls.tsx";
 import type { AssetGitTarget } from "../../../../shared/contracts/index.ts";
 
@@ -118,6 +119,7 @@ export function contextStorePreviewAfterLoad(
 
 export function ContextStoreDirectoryFragment(props: {
   readonly stores: readonly ContextStore[];
+  readonly experts?: readonly ExpertRecord[] | undefined;
   readonly revisionTaskCount?: number | undefined;
   readonly onOpenRevisions?: (() => void) | undefined;
   readonly onCreate: (input: CreateContextStore) => Promise<ContextStore>;
@@ -165,16 +167,21 @@ export function ContextStoreDirectoryFragment(props: {
         </header>
       }
     >
-      <label className="directory-search store-search">
-        <MagnifyingGlass size={18} aria-hidden="true" />
-        <span className="sr-only">{t("searchKnowledgeBases")}</span>
-        <input
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={t("searchKnowledgeBases")}
-        />
-      </label>
+      <div className="studio-catalog-controls">
+        <label className="directory-search store-search">
+          <MagnifyingGlass size={18} aria-hidden="true" />
+          <span className="sr-only">{t("searchKnowledgeBases")}</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("searchKnowledgeBases")}
+          />
+        </label>
+        <span className="studio-catalog-results-count">
+          {t("showingMatching", { visible: stores.length, total: props.stores.length })}
+        </span>
+      </div>
 
       {stores.length === 0 ? (
         <div className="empty-state store-empty-state">
@@ -190,46 +197,25 @@ export function ContextStoreDirectoryFragment(props: {
           ) : null}
         </div>
       ) : (
-        <div className="store-table" role="list" aria-label={t("knowledgeBases")}>
-          <div className="store-table-heading" aria-hidden="true">
-            <span className="store-column-name">{t("knowledgeBase")}</span>
-            <span className="store-column-type">{t("format")}</span>
-            <span className="store-column-source">{t("source")}</span>
-            <span className="store-column-status">{t("status")}</span>
-            <span className="store-column-action" />
-          </div>
+        <div className="studio-catalog-grid" role="list" aria-label={t("knowledgeBases")}>
           {stores.map((store) => (
-            <button
-              className="store-list-row"
+            <StudioCatalogCard
               key={store.id}
-              type="button"
-              onClick={() => props.onOpen(store)}
-            >
-              <span className="store-list-name store-column-name">
-                <span className="store-icon" aria-hidden="true">
-                  <Folder size={22} />
-                </span>
-                <span>
-                  <strong>{store.name}</strong>
-                  <small>{store.description || t("noDescription")}</small>
-                </span>
-              </span>
-              <span className="store-column-type">Markdown</span>
-              <span className="store-source store-column-source">
-                {store.source.origin === "created"
-                  ? t("createdKnowledgeBase")
-                  : store.source.origin === "copied"
-                    ? t("copiedKnowledgeBase")
-                    : t("migratedKnowledgeBase")}
-              </span>
-              <span className="store-status store-column-status">
-                <i className={store.status === "ready" ? "is-ready" : ""} />
-                {store.status === "ready" ? t("ready") : t("needsAttention")}
-              </span>
-              <CaretRight className="store-column-action" size={17} aria-hidden="true" />
-            </button>
+              name={store.name}
+              description={store.description}
+              updatedAt={store.updatedAt}
+              expertNames={props.experts
+                ?.filter((expert) =>
+                  expert.contextStoreMounts.some(
+                    (mount) => mount.storeId === store.id && mount.enabled,
+                  ),
+                )
+                .map((expert) => expert.name)}
+              needsAttention={store.status !== "ready"}
+              syncTarget={{ kind: "knowledge", id: store.id }}
+              onOpen={() => props.onOpen(store)}
+            />
           ))}
-          <p className="directory-count">{t("knowledgeBaseCount", { count: stores.length })}</p>
         </div>
       )}
 

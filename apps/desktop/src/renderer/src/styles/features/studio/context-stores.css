@@ -32,73 +32,11 @@
   font-weight: 650;
 }
 
-.store-search {
-  margin: 25px 0 24px;
-}
-
-.store-table {
-  min-width: 0;
-}
-
-.store-table-heading,
-.store-list-row {
-  display: grid;
-  grid-template-columns: minmax(240px, 1.45fr) 105px minmax(130px, 0.8fr) 100px auto;
-  align-items: center;
-  gap: 16px;
-}
-
-.store-table-heading {
-  /* Keep the directory table chrome in step with the capability directory. */
-  min-height: 42px;
-  border: 0;
-  color: var(--ui-text-secondary);
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.store-list-row {
-  width: 100%;
-  min-height: 84px;
-  padding: 0 5px 0 0;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
-  color: var(--ui-text-secondary);
-  cursor: pointer;
-  font-size: 12px;
-  text-align: left;
-}
-
-.store-list-row:hover,
-.store-list-row.is-selected {
-  background: var(--ui-selection);
-}
-
-.store-list-name {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.store-list-name > span:last-child {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-}
-
-.store-list-name strong,
 .mount-store-row strong {
   color: var(--text);
   font-size: 13px;
   font-weight: 680;
 }
-
-.store-list-name small,
 .mount-store-row small {
   overflow: hidden;
   color: var(--muted);
@@ -116,12 +54,6 @@
   border-radius: 8px;
   background: var(--ui-surface-subtle);
   color: var(--ui-text-secondary);
-}
-
-.store-source {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .store-status {
@@ -1973,39 +1905,6 @@
   container-type: inline-size;
 }
 
-.context-store-directory .store-table-heading,
-.context-store-directory .store-list-row {
-  grid-template-columns:
-    minmax(210px, 1.35fr) minmax(90px, 0.5fr) minmax(130px, 0.75fr)
-    100px max-content;
-}
-
-.context-store-directory .store-column-action {
-  justify-self: end;
-}
-
-@container context-store-directory (max-width: 800px) {
-  .context-store-directory .store-table-heading,
-  .context-store-directory .store-list-row {
-    grid-template-columns: minmax(200px, 1fr) minmax(90px, 0.4fr) 100px max-content;
-  }
-
-  .context-store-directory .store-column-source {
-    display: none;
-  }
-}
-
-@container context-store-directory (max-width: 620px) {
-  .context-store-directory .store-table-heading,
-  .context-store-directory .store-list-row {
-    grid-template-columns: minmax(180px, 1fr) minmax(90px, 0.4fr) max-content;
-  }
-
-  .context-store-directory .store-column-status {
-    display: none;
-  }
-}
-
 @container context-store-directory (max-width: 480px) {
   .context-store-directory .expert-directory-heading {
     align-items: stretch;
@@ -2026,16 +1925,6 @@
   .context-store-directory .store-search {
     width: 100%;
     max-width: none;
-  }
-
-  .context-store-directory .store-table-heading,
-  .context-store-directory .store-list-row {
-    grid-template-columns: minmax(0, 1fr) max-content;
-    gap: 10px;
-  }
-
-  .context-store-directory .store-column-type {
-    display: none;
   }
 }
 
@@ -2261,23 +2150,17 @@
   outline: 0;
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
-
 .capability-table,
-.store-table,
 .expert-table {
   display: grid;
   gap: 7px;
   border: 0;
 }
-
 .capability-table-heading,
-.store-table-heading,
 .expert-table-heading {
   padding: 0 14px;
 }
-
 .capability-row,
-.store-list-row,
 .expert-list-row {
   padding-right: 14px;
   padding-left: 14px;
@@ -2286,20 +2169,12 @@
   background: transparent;
   box-shadow: none;
 }
-
 .capability-row:hover,
-.store-list-row:hover,
 .expert-list-row:hover,
 .capability-row:focus-within,
-.store-list-row:focus-visible,
 .expert-list-row:focus-visible {
   background: var(--ui-surface);
   box-shadow: none;
-}
-
-.store-list-row.is-selected {
-  border-color: var(--ui-line-strong);
-  background: var(--ui-selection);
 }
 
 .store-filter-tabs,

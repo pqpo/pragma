@@ -206,7 +206,7 @@ describe("capability row actions", () => {
     expect(html).not.toContain('aria-label="More actions for Test Skill"');
     expect(html).not.toContain('aria-haspopup="menu"');
     expect(html).not.toContain("Delete capability");
-    expect(html).toContain("skill-card-open");
+    expect(html).toContain("studio-catalog-card-open");
     expect(html).toContain("Test capability actions.");
     expect(html).not.toContain("capability-table-heading");
     expect(html).not.toContain("studio-asset-icon");
@@ -259,7 +259,7 @@ describe("capability row actions", () => {
     expect(html).toContain("Built-in");
     expect(html).toContain("Test Skill");
     expect(html).toMatch(
-      /skill-card-heading.*Test Skill<\/span><span class="skill-card-source">Built-in<\/span>/,
+      /studio-catalog-card-heading.*Test Skill<\/span><span class="studio-catalog-card-source">Built-in<\/span>/,
     );
     expect(html).not.toContain('aria-label="More actions for Test Skill"');
   });

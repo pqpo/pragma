@@ -28,7 +28,7 @@ export function AssetGitSyncIcon(props: { readonly state: SyncState }) {
     props.state === "loading"
       ? t("checking")
       : props.state === "unavailable"
-        ? t("skillSyncUnavailable")
+        ? t("assetSyncUnavailable")
         : t(`assetGit.status.${props.state}`);
   return (
     <span

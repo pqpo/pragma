@@ -934,6 +934,7 @@ export function StudioPage(props: {
         {screen === "directory" && activeView === "context-stores" ? (
           <ContextStoreDirectoryFragment
             stores={contextStores}
+            experts={expertsLoading || expertsLoadFailed ? undefined : experts}
             onGitImported={async (target) => {
               if (target.kind !== "knowledge") return;
               const stores = await window.pragmaDesktop.listContextStores();

@@ -39,9 +39,8 @@ import {
 
 export { fieldsToObjectSchema, objectSchemaToFields } from "./JsonSchemaFieldsEditor.tsx";
 import { desktopApi, fixedSkillCapabilityIds, type ExpertRecord } from "./studio-model.ts";
-import { formatMissionDateTime } from "../../lib/mission-time.ts";
 import { AssetGitImportForm } from "./AssetGitControls.tsx";
-import { AssetGitSyncIndicator } from "./AssetGitSyncIndicator.tsx";
+import { StudioCatalogCard } from "./StudioCatalogCard.tsx";
 
 type Filter = "mcp" | "http" | "function";
 type CapabilityMode = "skill" | "mcp" | "http" | "code";
@@ -543,7 +542,10 @@ export function CapabilityDirectoryFragment(props: {
         </span>
       </div>
 
-      <div className={props.kind === "skills" ? "skill-grid" : "capability-table"} role="list">
+      <div
+        className={props.kind === "skills" ? "studio-catalog-grid" : "capability-table"}
+        role="list"
+      >
         {props.kind === "connectors" ? (
           <div className="capability-table-heading" aria-hidden="true">
             <span className="capability-column-name">{t("name")}</span>
@@ -754,7 +756,6 @@ function SkillCard(props: {
   readonly experts?: readonly ExpertRecord[] | undefined;
   readonly onOpen: () => void;
 }) {
-  const { t, i18n } = useTranslation("studio");
   const { capability } = props;
   const linkedExperts = props.experts?.filter(
     (expert) =>
@@ -766,50 +767,17 @@ function SkillCard(props: {
         capability.manifest.id,
       ),
   );
-  const updatedAt = new Date(capability.manifest.updatedAt);
-  const updatedLabel = Number.isFinite(updatedAt.getTime())
-    ? new Intl.DateTimeFormat(i18n.resolvedLanguage, {
-        year: updatedAt.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
-        month: "short",
-        day: "numeric",
-      }).format(updatedAt)
-    : null;
   return (
-    <div className="skill-card" role="listitem">
-      <button className="skill-card-open" type="button" onClick={props.onOpen}>
-        <span className="skill-card-heading">
-          <span className="skill-card-name" title={capability.manifest.name}>
-            {capability.manifest.name}
-          </span>
-          {capability.managedBy === "system" ? (
-            <span className="skill-card-source">{t("builtIn")}</span>
-          ) : (
-            <AssetGitSyncIndicator target={{ kind: "skill", id: capability.manifest.id }} />
-          )}
-        </span>
-        {capability.definition.description ? (
-          <span className="skill-card-description">{capability.definition.description}</span>
-        ) : null}
-        {capability.health.status !== "ready" ? (
-          <span className="skill-card-attention">{t("needsAttention")}</span>
-        ) : null}
-        <span className="skill-card-footer">
-          {(linkedExperts?.length ?? 0) > 0 ? (
-            <span title={linkedExperts?.map((expert) => expert.name).join("、")}>
-              {t("skillUsedByExperts", { count: linkedExperts?.length })}
-            </span>
-          ) : null}
-          {updatedLabel !== null ? (
-            <time
-              dateTime={capability.manifest.updatedAt}
-              title={formatMissionDateTime(capability.manifest.updatedAt)}
-            >
-              {t("skillUpdatedAt", { date: updatedLabel })}
-            </time>
-          ) : null}
-        </span>
-      </button>
-    </div>
+    <StudioCatalogCard
+      name={capability.manifest.name}
+      description={capability.definition.description}
+      updatedAt={capability.manifest.updatedAt}
+      expertNames={linkedExperts?.map((expert) => expert.name)}
+      builtIn={capability.managedBy === "system"}
+      needsAttention={capability.health.status !== "ready"}
+      syncTarget={{ kind: "skill", id: capability.manifest.id }}
+      onOpen={props.onOpen}
+    />
   );
 }
 

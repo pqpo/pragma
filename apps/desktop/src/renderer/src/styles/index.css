@@ -23,6 +23,7 @@
 @import "./features/settings/storage-cleanup.css";
 
 @import "./features/studio/base.css";
+@import "./features/studio/catalog.css";
 @import "./features/studio/automations.css";
 @import "./features/studio/capabilities.css";
 @import "./features/studio/context-stores.css";
