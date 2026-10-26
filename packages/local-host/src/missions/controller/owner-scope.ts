@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
 import { isRetryableStorageContentionError } from "@pragma/core";
-import { createIntegrationError } from "@pragma/shared/integration";
+import { createIntegrationError, IntegrationErrorSchema } from "@pragma/shared/integration";
 
 import type {
   MissionCommandConsumer,
@@ -114,6 +114,7 @@ export function createMissionOwnerScope(options: {
     string,
     {
       guard: MissionControllerGuard;
+      generation: number;
       timer?: ReturnType<typeof setTimeout> | undefined;
       stopped: boolean;
       leaseLossNotified: boolean;
@@ -157,6 +158,20 @@ export function createMissionOwnerScope(options: {
     recoveryTimers.delete(missionId);
   };
 
+  const invalidateRecovery = (missionId: string): void => {
+    recoveryGeneration.set(missionId, (recoveryGeneration.get(missionId) ?? 0) + 1);
+    cancelRecovery(missionId);
+  };
+
+  const isCommittedDeletion = (error: unknown): boolean => {
+    const parsed = IntegrationErrorSchema.safeParse(error);
+    return (
+      parsed.success &&
+      parsed.data.code === "MISSION_NOT_FOUND" &&
+      parsed.data.details?.reason === "deletion_committed"
+    );
+  };
+
   const hasPendingOperation = async (missionId: string): Promise<boolean> =>
     (await options.controller.listOperations({ missionId })).some(
       (operation) =>
@@ -166,9 +181,14 @@ export function createMissionOwnerScope(options: {
         operation.state !== "failed",
     );
 
-  const scheduleRecovery = (missionId: string, delayMs = leaseMs): void => {
-    if (shutdown || boundConsumer === undefined || recoveryTimers.has(missionId)) return;
-    const generation = recoveryGeneration.get(missionId) ?? 0;
+  const scheduleRecovery = (missionId: string, generation: number, delayMs = leaseMs): void => {
+    if (
+      shutdown ||
+      boundConsumer === undefined ||
+      recoveryTimers.has(missionId) ||
+      generation !== (recoveryGeneration.get(missionId) ?? 0)
+    )
+      return;
     const timer = setTimeout(
       () => {
         recoveryTimers.delete(missionId);
@@ -181,17 +201,20 @@ export function createMissionOwnerScope(options: {
           )
             return;
           if (generation !== (recoveryGeneration.get(missionId) ?? 0)) return;
-          try {
-            await scope.acquire(missionId);
-          } catch (error) {
-            await options.onPollingError?.({ missionId, error, consecutiveFailures: 0 });
-            if (generation === (recoveryGeneration.get(missionId) ?? 0))
-              scheduleRecovery(missionId, Math.min(5_000, leaseMs));
+          await scope.acquire(missionId);
+        })().catch(async (error: unknown) => {
+          if (generation !== (recoveryGeneration.get(missionId) ?? 0)) return;
+          if (isCommittedDeletion(error)) {
+            invalidateRecovery(missionId);
+            return;
           }
-        })().catch((error: unknown) => {
-          void options.onPollingError?.({ missionId, error, consecutiveFailures: 0 });
+          try {
+            await options.onPollingError?.({ missionId, error, consecutiveFailures: 0 });
+          } catch {
+            /* Diagnostics must not escape a background recovery task. */
+          }
           if (generation === (recoveryGeneration.get(missionId) ?? 0))
-            scheduleRecovery(missionId, Math.min(5_000, leaseMs));
+            scheduleRecovery(missionId, generation, Math.min(5_000, leaseMs));
         });
         trackBackground(missionId, task);
       },
@@ -227,18 +250,22 @@ export function createMissionOwnerScope(options: {
 
   const notifyLeaseLost = async (
     missionId: string,
-    current: { leaseLossNotified: boolean },
+    current: { leaseLossNotified: boolean; generation: number },
     error?: unknown,
   ): Promise<void> => {
     if (current.leaseLossNotified) return;
     current.leaseLossNotified = true;
+    // Use the owner's acquisition generation: deletion can invalidate it
+    // before renewal notices lease loss or before the host hook completes.
+    const generation = current.generation;
     try {
       await options.onLeaseLost?.(missionId, error);
     } catch {
       // Lease loss is already fenced locally. A host callback is an
       // observability/cleanup hook and must not escape a background task.
     } finally {
-      scheduleRecovery(missionId);
+      if (isCommittedDeletion(error)) invalidateRecovery(missionId);
+      else scheduleRecovery(missionId, generation);
     }
   };
 
@@ -350,7 +377,7 @@ export function createMissionOwnerScope(options: {
               await scope.release(input.missionId);
               // A command may have been durably appended while the Host was
               // releasing its Session. Recheck once, without retaining a poller.
-              scheduleRecovery(input.missionId, 1);
+              scheduleRecovery(input.missionId, current.generation, 1);
             },
           });
         } catch (error) {
@@ -419,6 +446,7 @@ export function createMissionOwnerScope(options: {
         await startPolling({ missionId, consumer: boundConsumer });
       return guard;
     }
+    const generation = recoveryGeneration.get(missionId) ?? 0;
     const acquisition = (async (): Promise<MissionControllerGuard> => {
       const grant = await options.controller.claim({
         missionId,
@@ -426,14 +454,27 @@ export function createMissionOwnerScope(options: {
         leaseMs,
       });
       const guard = { claimId: grant.claimId, fencingToken: grant.fencingToken };
+      const assertAcquisitionCurrent = (): void => {
+        if (generation !== (recoveryGeneration.get(missionId) ?? 0)) {
+          throw createIntegrationError({
+            code: "MISSION_FENCING_REJECTED",
+            category: "conflict",
+            message: `Mission ${missionId} owner acquisition was stopped.`,
+            details: { missionId },
+          });
+        }
+      };
       try {
+        assertAcquisitionCurrent();
         await options.recoverSemanticWrite?.({ missionId, guard });
+        assertAcquisitionCurrent();
       } catch (error) {
         await options.controller.release({ missionId, guard }).catch(() => undefined);
         throw error;
       }
       const current = {
         guard,
+        generation,
         stopped: false,
         leaseLossNotified: false,
       };
@@ -460,7 +501,9 @@ export function createMissionOwnerScope(options: {
       // Acquisition can fail after a command is already durable (for
       // example while starting its Inbox poller). Keep that queued work on
       // the same bounded recovery path used after lease loss.
-      if (polling) scheduleRecovery(missionId, Math.min(5_000, leaseMs));
+      if (isCommittedDeletion(error)) invalidateRecovery(missionId);
+      else if (polling && generation === (recoveryGeneration.get(missionId) ?? 0))
+        scheduleRecovery(missionId, generation, Math.min(5_000, leaseMs));
       throw error;
     } finally {
       acquiring.delete(missionId);
@@ -614,7 +657,7 @@ export function createMissionOwnerScope(options: {
         await stopPolling(missionId);
       } finally {
         if (active.get(missionId) === current) active.delete(missionId);
-        scheduleRecovery(missionId, 1);
+        scheduleRecovery(missionId, current.generation, 1);
       }
       return true;
     },
@@ -640,12 +683,7 @@ export function createMissionOwnerScope(options: {
       await scope.release(missionId, current.guard);
     },
     async terminalDelete(missionId, deleteOwner) {
-      cancelRecovery(missionId);
-      const current = active.get(missionId);
-      if (current === undefined) {
-        await deleteOwner();
-        return;
-      }
+      invalidateRecovery(missionId);
 
       // Stop consuming commands while the owner graph is moved by the
       // terminal transaction, but keep the lease and renewal state until the
@@ -657,10 +695,11 @@ export function createMissionOwnerScope(options: {
         await deleteOwner();
         deleted = true;
       } finally {
-        if (deleted && active.get(missionId) === current) {
-          if (current.timer !== undefined) clearTimeout(current.timer);
-          current.stopped = true;
-          active.delete(missionId);
+        if (deleted) {
+          // Also invalidate recovery scheduled by lease loss during deletion.
+          invalidateRecovery(missionId);
+          pendingReleaseGuards.delete(missionId);
+          await stopWithoutCallback(missionId, true);
         }
       }
     },

@@ -567,6 +567,257 @@ describe("Mission owner scope", () => {
     }
   });
 
+  it.each(["read", "claim"] as const)(
+    "stops recovery after committed deletion is observed during %s",
+    async (boundary) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-owner-deleted-recovery-"));
+      let committed = false;
+      const controller = createMissionControllerStore({
+        missionsPath: root,
+        isDeletionCommitted: async () => committed,
+      });
+      const onPollingError = vi.fn();
+      const scope = createMissionOwnerScope({ controller, leaseMs: 60, onPollingError });
+      scope.bindConsumer({ apply: async () => ({ result: {} }) });
+      const originalClaim = controller.claim.bind(controller);
+      const claim = vi.spyOn(controller, "claim");
+      claim.mockRejectedValueOnce(new Error("temporary startup failure"));
+      const originalList = controller.listOperations.bind(controller);
+      const list = vi.spyOn(controller, "listOperations");
+      if (boundary === "claim") {
+        list.mockImplementation(async (input) => {
+          const operations = await originalList(input);
+          committed = true;
+          return operations;
+        });
+        claim.mockImplementationOnce(async (input) => await originalClaim(input));
+      }
+      try {
+        await appendCommand(controller);
+        await expect(scope.acquire(missionId)).rejects.toThrow("temporary startup failure");
+        if (boundary === "read") committed = true;
+        await vi.waitFor(() => expect(list).toHaveBeenCalledOnce(), { interval: 5 });
+        await new Promise<void>((resolve) => setTimeout(resolve, 180));
+        expect(list).toHaveBeenCalledOnce();
+        expect(claim).toHaveBeenCalledTimes(boundary === "read" ? 1 : 2);
+        expect(onPollingError).not.toHaveBeenCalled();
+        expect(scope.currentGuard(missionId)).toBeUndefined();
+      } finally {
+        await scope.stop(missionId);
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(["read", "claim", "semantic write"] as const)(
+    "invalidates recovery already waiting in %s when deletion commits",
+    async (boundary) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-owner-delete-race-"));
+      const controller = createMissionControllerStore({ missionsPath: root });
+      const onPollingError = vi.fn();
+      const recoverSemanticWrite = vi.fn(async () => {
+        if (boundary !== "semantic write") return;
+        entered.resolve();
+        await finish.promise;
+      });
+      const scope = createMissionOwnerScope({
+        controller,
+        leaseMs: 60,
+        onPollingError,
+        recoverSemanticWrite,
+      });
+      const apply = vi.fn(async () => ({ result: {} }));
+      scope.bindConsumer({ apply });
+      const entered = deferred();
+      const finish = deferred();
+      const originalClaim = controller.claim.bind(controller);
+      const claim = vi.spyOn(controller, "claim");
+      claim.mockRejectedValueOnce(new Error("temporary startup failure"));
+      const originalList = controller.listOperations.bind(controller);
+      const list = vi.spyOn(controller, "listOperations");
+      if (boundary === "read") {
+        list.mockImplementationOnce(async (input) => {
+          const operations = await originalList(input);
+          entered.resolve();
+          await finish.promise;
+          return operations;
+        });
+      } else if (boundary === "claim") {
+        claim.mockImplementationOnce(async (input) => {
+          const grant = await originalClaim(input);
+          entered.resolve();
+          await finish.promise;
+          return grant;
+        });
+      }
+      try {
+        await appendCommand(controller);
+        await expect(scope.acquire(missionId)).rejects.toThrow("temporary startup failure");
+        await entered.promise;
+        await scope.terminalDelete(missionId, async () => undefined);
+        finish.resolve();
+        await new Promise<void>((resolve) => setTimeout(resolve, 180));
+        expect(list).toHaveBeenCalledOnce();
+        expect(claim).toHaveBeenCalledTimes(boundary === "read" ? 1 : 2);
+        expect(scope.currentGuard(missionId)).toBeUndefined();
+        expect(scope.diagnostics().activeInboxPollerCount).toBe(0);
+        expect(apply).not.toHaveBeenCalled();
+        expect(onPollingError).not.toHaveBeenCalled();
+      } finally {
+        finish.resolve();
+        await scope.stop(missionId);
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("retries recovery read contention even when the diagnostic callback rejects", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-recovery-contention-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const onPollingError = vi.fn(async () => {
+      throw new Error("diagnostic callback failed");
+    });
+    const scope = createMissionOwnerScope({ controller, leaseMs: 60, onPollingError });
+    scope.bindConsumer({ apply: async () => ({ result: {} }) });
+    vi.spyOn(controller, "claim").mockRejectedValueOnce(new Error("temporary startup failure"));
+    vi.spyOn(controller, "listOperations").mockRejectedValueOnce(
+      new FileLockTimeoutError("busy", "/tmp/mission.lock", "active", 10, "read"),
+    );
+    try {
+      await appendCommand(controller);
+      await expect(scope.acquire(missionId)).rejects.toThrow("temporary startup failure");
+      await expect(
+        controller.waitForTerminalOperation({
+          missionId,
+          requestId,
+          timeoutMs: 1_500,
+          pollIntervalMs: 10,
+        }),
+      ).resolves.toMatchObject({ state: "applied" });
+      expect(onPollingError).toHaveBeenCalledOnce();
+    } finally {
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["idle callback", "terminal receipt"] as const)(
+    "does not restart recovery when %s releases an owner during deletion",
+    async (boundary) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-owner-deleting-idle-"));
+      const controller = createMissionControllerStore({ missionsPath: root });
+      const entered = deferred();
+      const finish = deferred();
+      const deletionEntered = deferred();
+      const finishDeletion = deferred();
+      const list = vi.spyOn(controller, "listOperations");
+      const scope = createMissionOwnerScope({
+        controller,
+        leaseMs: 1_000,
+        idleTimeoutMs: 1,
+        onIdle: async ({ releaseOwner }) => {
+          if (boundary !== "idle callback") return;
+          entered.resolve();
+          await finish.promise;
+          await releaseOwner();
+        },
+      });
+      scope.bindConsumer({ apply: async () => ({ result: {} }) });
+      let releasing: Promise<unknown> | undefined;
+      let deleting: Promise<void> | undefined;
+      try {
+        const guard = await scope.acquire(missionId);
+        if (boundary === "terminal receipt") {
+          const release = controller.releaseIfIdle.bind(controller);
+          vi.spyOn(controller, "releaseIfIdle").mockImplementationOnce(async (input) => {
+            const released = await release(input);
+            entered.resolve();
+            await finish.promise;
+            return released;
+          });
+          releasing = scope.releaseIfIdle(missionId, guard);
+        }
+        await entered.promise;
+        await appendCommand(controller);
+        deleting = scope.terminalDelete(missionId, async () => {
+          deletionEntered.resolve();
+          await finishDeletion.promise;
+        });
+        finish.resolve();
+        await deletionEntered.promise;
+        await releasing;
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        expect(list).not.toHaveBeenCalled();
+        expect(scope.currentGuard(missionId)).toBeUndefined();
+      } finally {
+        finish.resolve();
+        finishDeletion.resolve();
+        await Promise.allSettled([releasing, deleting]);
+        await scope.stop(missionId);
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("does not restart the owner when its lease is lost during terminal deletion", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-deleting-lease-"));
+    let committed = false;
+    const controller = createMissionControllerStore({
+      missionsPath: root,
+      isDeletionCommitted: async () => committed,
+    });
+    const claim = vi.spyOn(controller, "claim");
+    const list = vi.spyOn(controller, "listOperations");
+    const onLeaseLost = vi.fn();
+    const apply = vi.fn(async () => ({ result: {} }));
+    const scope = createMissionOwnerScope({ controller, leaseMs: 100, onLeaseLost });
+    scope.bindConsumer({ apply });
+    try {
+      await appendCommand(controller);
+      await scope.acquire(missionId);
+      await scope.terminalDelete(missionId, async () => {
+        await controller.revoke({ missionId });
+        await vi.waitFor(() => expect(onLeaseLost).toHaveBeenCalledOnce(), { interval: 5 });
+        // Keep deletion open beyond the recovery delay. The queued command
+        // must not revive its owner while the original owner graph is removed.
+        await new Promise<void>((resolve) => setTimeout(resolve, 250));
+        expect(list).not.toHaveBeenCalled();
+        expect(claim).toHaveBeenCalledOnce();
+        expect(apply).not.toHaveBeenCalled();
+        expect(scope.currentGuard(missionId)).toBeUndefined();
+        committed = true;
+      });
+    } finally {
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not schedule recovery after committed deletion causes lease loss", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-deleted-lease-"));
+    let committed = false;
+    const controller = createMissionControllerStore({
+      missionsPath: root,
+      isDeletionCommitted: async () => committed,
+    });
+    const list = vi.spyOn(controller, "listOperations");
+    const onLeaseLost = vi.fn();
+    const scope = createMissionOwnerScope({ controller, leaseMs: 60, onLeaseLost });
+    scope.bindConsumer({ apply: async () => ({ result: {} }) });
+    try {
+      await appendCommand(controller);
+      await scope.acquire(missionId);
+      committed = true;
+      await vi.waitFor(() => expect(onLeaseLost).toHaveBeenCalledOnce(), { interval: 5 });
+      await new Promise<void>((resolve) => setTimeout(resolve, 180));
+      expect(list).not.toHaveBeenCalled();
+      expect(scope.currentGuard(missionId)).toBeUndefined();
+    } finally {
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("stops the owner and notifies once when renewal and polling lose the fence together", async () => {
     const onLeaseLost = vi.fn(async () => undefined);
     const poller = { stop: vi.fn(async () => undefined) };
