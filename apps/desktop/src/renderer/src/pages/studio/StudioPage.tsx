@@ -538,9 +538,9 @@ export function StudioPage(props: {
     return api.inspectContextStoreImport({ sourcePath });
   };
   const listContextStoreEntries = useCallback(
-    async (storeId: string): Promise<readonly ContextStoreEntry[]> => {
+    async (storeId: string, directory?: string): Promise<readonly ContextStoreEntry[]> => {
       const api = desktopApi();
-      if (api !== undefined) return api.listContextStoreEntries({ storeId });
+      if (api !== undefined) return api.listContextStoreEntries({ storeId, directory });
       return [];
     },
     [],
@@ -978,6 +978,7 @@ export function StudioPage(props: {
         ) : null}
         {screen === "context-store-detail" && selectedContextStore !== null ? (
           <ContextStoreDetailFragment
+            key={selectedContextStore.id}
             store={selectedContextStore}
             onUpdateWriteApproval={async (writeApprovalMode) => {
               const api = desktopApi();

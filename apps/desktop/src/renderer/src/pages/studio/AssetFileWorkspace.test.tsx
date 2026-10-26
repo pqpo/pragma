@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import "../../i18n/index.ts";
 import { SIDEBAR_WIDTH_PREFERENCES } from "../../lib/sidebar-width-preference.ts";
 import { AssetFileWorkspace, type AssetFileOperations } from "./AssetFileWorkspace.tsx";
-import { skillFileTreeEntries } from "./SkillFileWorkspace.tsx";
+import { skillDirectoryEntries, skillDirectoryOrigin } from "./SkillFileWorkspace.tsx";
 
 const entries = [
   { id: "SKILL.md", kind: "file" as const },
@@ -37,6 +37,43 @@ const props = {
 };
 
 describe("shared asset file workspace", () => {
+  it("loads an unopened moved Skill folder from its original revision path", () => {
+    const operations = [
+      { kind: "move" as const, path: "references", nextPath: "notes" },
+      { kind: "move" as const, path: "notes", nextPath: "docs/notes" },
+    ];
+    expect(skillDirectoryOrigin("docs/notes/nested", operations)).toBe("references/nested");
+    const staged = skillDirectoryEntries(
+      "docs/notes",
+      [
+        { path: "references/guide.md", size: 20 },
+        { path: "references/nested", kind: "directory", size: 0 },
+      ],
+      operations,
+      [{ id: "docs/notes/local.md", kind: "file" }],
+    );
+    expect(staged.entries).toEqual([
+      { id: "docs/notes/guide.md", kind: "file" },
+      { id: "docs/notes/nested", kind: "directory" },
+      { id: "docs/notes/local.md", kind: "file" },
+    ]);
+    expect(staged.origins.get("docs/notes/guide.md")).toBe("references/guide.md");
+    expect(
+      skillDirectoryOrigin("notes", [
+        { kind: "create-directory", path: "draft" },
+        { kind: "move", path: "draft", nextPath: "notes" },
+      ]),
+    ).toBeUndefined();
+    expect(
+      skillDirectoryEntries(
+        "references",
+        [{ path: "references/deleted.md", size: 1 }],
+        [{ kind: "delete", path: "references/deleted.md" }],
+        [],
+      ).entries,
+    ).toEqual([]);
+  });
+
   it("moves knowledge frontmatter out of preview and places metadata after rename", () => {
     const value = "---\ntitle: Metadata-only title\ntags: [CDN]\n---\n# Reading body";
     const editor = { ...props.editor, value };
@@ -108,14 +145,18 @@ describe("shared asset file workspace", () => {
       expect(html).not.toContain(`aria-label="${action}"`);
     expect(html).toContain('aria-label="Refresh"');
     expect(
-      skillFileTreeEntries([
-        { path: "empty", kind: "directory", size: 0 },
-        { path: "references/checklist.md", size: 10 },
-      ]),
+      skillDirectoryEntries(
+        "",
+        [
+          { path: "empty", kind: "directory", size: 0 },
+          { path: "references", kind: "directory", size: 0 },
+        ],
+        [],
+        [],
+      ).entries,
     ).toEqual([
       { id: "empty", kind: "directory" },
       { id: "references", kind: "directory" },
-      { id: "references/checklist.md", kind: "file" },
     ]);
   });
 

@@ -1,5 +1,5 @@
 import { FileText, SpinnerGap } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   Capability,
@@ -12,21 +12,58 @@ import { Dialog } from "../../components/Dialog.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { SIDEBAR_WIDTH_PREFERENCES } from "../../lib/sidebar-width-preference.ts";
 import { AssetFileWorkspace } from "./AssetFileWorkspace.tsx";
+import { useAssetDirectories } from "./use-asset-directories.ts";
 import { parentId, rebaseEntryId } from "./asset-file-paths.ts";
 import type { StudioLeaveGuard } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
-export function skillFileTreeEntries(files: readonly SkillFileEntry[]): ContextStoreEntry[] {
-  const entries = new Map<string, ContextStoreEntry>();
-  for (const file of files) {
-    const segments = file.path.split("/");
-    for (let depth = 1; depth < segments.length; depth++) {
-      const id = segments.slice(0, depth).join("/");
-      entries.set(id, { id, kind: "directory" });
-    }
-    entries.set(file.path, { id: file.path, kind: file.kind ?? "file" });
+export function skillDirectoryOrigin(
+  directory: string,
+  operations: readonly SkillFileOperation[],
+): string | undefined {
+  let origin = directory;
+  for (const operation of [...operations].reverse()) {
+    if (operation.kind === "move")
+      origin = rebaseEntryId(origin, operation.nextPath, operation.path) ?? origin;
+    else if (
+      operation.kind === "create-directory" &&
+      (origin === operation.path || origin.startsWith(`${operation.path}/`))
+    )
+      return undefined;
   }
-  return [...entries.values()].toSorted((left, right) => left.id.localeCompare(right.id));
+  return origin;
+}
+
+export function skillDirectoryEntries(
+  directory: string,
+  files: readonly SkillFileEntry[],
+  operations: readonly SkillFileOperation[],
+  localEntries: readonly ContextStoreEntry[],
+): { entries: readonly ContextStoreEntry[]; origins: ReadonlyMap<string, string> } {
+  const entries = new Map<string, ContextStoreEntry>();
+  const origins = new Map<string, string>();
+  for (const file of files) {
+    let path: string | undefined = file.path;
+    for (const operation of operations) {
+      if (operation.kind === "move")
+        path = rebaseEntryId(path, operation.path, operation.nextPath) ?? path;
+      else if (
+        operation.kind === "delete" &&
+        (path === operation.path || path.startsWith(`${operation.path}/`))
+      ) {
+        path = undefined;
+        break;
+      }
+    }
+    if (path !== undefined && parentId(path) === directory) {
+      entries.set(path, { id: path, kind: file.kind ?? "file" });
+      if (file.kind !== "directory") origins.set(path, file.path);
+    }
+  }
+  for (const entry of localEntries) {
+    if (parentId(entry.id) === directory && operations.length > 0) entries.set(entry.id, entry);
+  }
+  return { entries: [...entries.values()], origins };
 }
 
 export function skillPreviewBody(path: string, content: string): string {
@@ -51,7 +88,6 @@ export function SkillFileWorkspace(props: {
 }) {
   const { t } = useTranslation("studio");
   const readOnly = props.capability.managedBy === "system";
-  const [files, setFiles] = useState<readonly SkillFileEntry[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<ContextStoreEntry | null>(null);
   const [operations, setOperations] = useState<readonly SkillFileOperation[]>([]);
   const operationsRef = useRef(operations);
@@ -61,7 +97,6 @@ export function SkillFileWorkspace(props: {
   const [edits, setEdits] = useState<ReadonlyMap<string, string>>(new Map());
   const editsRef = useRef(edits);
   editsRef.current = edits;
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [preview, setPreview] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -75,6 +110,33 @@ export function SkillFileWorkspace(props: {
   const loadedRevisionRef = useRef(props.capability.manifest.latestRevision);
   const id = props.capability.manifest.id;
   const revision = props.capability.manifest.latestRevision;
+  const {
+    loader: directories,
+    entries,
+    collapsed,
+    pending: pendingDirectories,
+  } = useAssetDirectories(id, async (directory) => {
+    const api = desktopApi();
+    if (api === undefined) return [];
+    const origin = skillDirectoryOrigin(directory, operationsRef.current);
+    const files =
+      origin === undefined
+        ? []
+        : await api.listSkillFiles({
+            id,
+            revision: loadedRevisionRef.current,
+            includeDirectories: true,
+            directory: origin,
+          });
+    const next = skillDirectoryEntries(
+      directory,
+      files,
+      operationsRef.current,
+      directories.getSnapshot().entries,
+    );
+    for (const [path, originalPath] of next.origins) originsRef.current.set(path, originalPath);
+    return next.entries;
+  });
 
   const readFile = useCallback(
     async (path: string, fileRevision: number) => {
@@ -127,18 +189,15 @@ export function SkillFileWorkspace(props: {
     loadedRevisionRef.current = revision;
     setLoading(true);
     setSelected(null);
-    setFiles([]);
-    void api
-      .listSkillFiles({ id, revision, includeDirectories: true })
-      .then(async (next) => {
-        if (cancelled) return;
-        setFiles(next);
-        originsRef.current = new Map(
-          next.filter((file) => file.kind !== "directory").map((file) => [file.path, file.path]),
-        );
-        const path = next.some(
-          (file) => file.kind !== "directory" && file.path === selectionRef.current,
-        )
+    originsRef.current = new Map();
+    void directories
+      .refresh()
+      .then(async (refreshed) => {
+        if (cancelled || !refreshed) return;
+        await directories.reveal(selectionRef.current);
+        const path = directories
+          .getSnapshot()
+          .entries.some((file) => file.kind !== "directory" && file.id === selectionRef.current)
           ? selectionRef.current
           : "SKILL.md";
         await readFile(path, revision);
@@ -153,7 +212,7 @@ export function SkillFileWorkspace(props: {
       cancelled = true;
       requestRef.current++;
     };
-  }, [id, revision, readFile, reloadVersion, t]);
+  }, [id, revision, readFile, reloadVersion, t, directories]);
 
   const save = useCallback(async (): Promise<boolean> => {
     const api = desktopApi();
@@ -214,7 +273,6 @@ export function SkillFileWorkspace(props: {
     return () => window.removeEventListener("beforeunload", preventUnload);
   }, [edits.size, operations.length]);
 
-  const entries = useMemo(() => skillFileTreeEntries(files), [files]);
   const value = selected === null ? null : (edits.get(selected.path) ?? selected.content);
   const dirty = edits.size > 0 || operations.length > 0;
   useEffect(() => {
@@ -227,18 +285,16 @@ export function SkillFileWorkspace(props: {
     setSaved(false);
   };
   const ensureAvailable = (path: string) => {
-    if (entries.some((entry) => entry.id === path)) throw new Error(t("fileEntryAlreadyExists"));
+    if (directories.getSnapshot().entries.some((entry) => entry.id === path))
+      throw new Error(t("fileEntryAlreadyExists"));
   };
   const renameEntry = async (entry: ContextStoreEntry, nextId: string) => {
     if (entry.id === nextId) return;
+    await directories.load(parentId(nextId));
     ensureAvailable(nextId);
     recordOperation({ kind: "move", path: entry.id, nextPath: nextId });
-    setFiles((current) =>
-      current.map((file) => ({
-        ...file,
-        path: rebaseEntryId(file.path, entry.id, nextId) ?? file.path,
-      })),
-    );
+    directories.rebase(entry.id, nextId);
+    await directories.reveal(nextId);
     const nextEdits = new Map(
       [...editsRef.current].map(([path, content]) => [
         rebaseEntryId(path, entry.id, nextId) ?? path,
@@ -253,10 +309,7 @@ export function SkillFileWorkspace(props: {
         origin,
       ]),
     );
-    setCollapsed(
-      (current) =>
-        new Set([...current].map((path) => rebaseEntryId(path, entry.id, nextId) ?? path)),
-    );
+
     const nextSelection =
       selectedEntry === null ? undefined : rebaseEntryId(selectedEntry.id, entry.id, nextId);
     if (nextSelection !== undefined) {
@@ -275,11 +328,7 @@ export function SkillFileWorkspace(props: {
       props.onChanged(nextCapability);
       return;
     }
-    const next = await api.listSkillFiles({ id, revision, includeDirectories: true });
-    setFiles(next);
-    originsRef.current = new Map(
-      next.filter((file) => file.kind !== "directory").map((file) => [file.path, file.path]),
-    );
+    if (!(await directories.refresh())) return;
     if (selectedEntry?.kind === "file") await readFile(selectedEntry.id, revision);
   };
   return (
@@ -293,8 +342,9 @@ export function SkillFileWorkspace(props: {
         entries={entries}
         selectedEntry={selectedEntry}
         collapsedDirectoryIds={collapsed}
+        pendingDirectoryIds={pendingDirectories}
         loading={loading}
-        disabled={saving || loading}
+        disabled={saving || loading || pendingDirectories.size > 0}
         deleteEntryDescription={(entry) => t("deleteSkillEntryConfirm", { name: entry.id })}
         onRefresh={refresh}
         onOpenEntry={(entry) => {
@@ -304,12 +354,12 @@ export function SkillFileWorkspace(props: {
             setSelectedEntry(entry);
             setSelected(null);
             setLoading(false);
-            setCollapsed((current) => {
-              const next = new Set(current);
-              if (next.has(entry.id)) next.delete(entry.id);
-              else next.add(entry.id);
-              return next;
-            });
+            void directories
+              .toggle(entry.id)
+              .then((changed) => {
+                if (changed) setError(null);
+              })
+              .catch((cause) => setError(errorMessage(cause)));
           } else void readFile(entry.id, loadedRevisionRef.current);
         }}
         operations={
@@ -318,10 +368,11 @@ export function SkillFileWorkspace(props: {
             : {
                 canModifyEntry: (entry) => entry.id !== "SKILL.md" && !saving && !loading,
                 createFile: async (path, copy) => {
+                  await directories.load(parentId(path));
                   ensureAvailable(path);
                   const content = copy ? (value ?? "") : "";
                   recordOperation({ kind: "create-file", path });
-                  setFiles((current) => [...current, { path, size: 0 }]);
+                  directories.setEntries((current) => [...current, { id: path, kind: "file" }]);
                   const next = new Map(editsRef.current).set(path, content);
                   editsRef.current = next;
                   setEdits(next);
@@ -330,24 +381,24 @@ export function SkillFileWorkspace(props: {
                   selectionRef.current = path;
                   setSelectedEntry({ id: path, kind: "file" });
                   setSelected({ capabilityId: id, revision, path, size: 0, content: "" });
-                  setCollapsed((current) => {
-                    const next = new Set(current);
-                    next.delete(parentId(path));
-                    return next;
-                  });
+                  await directories.reveal(path);
                   setPreview(false);
                 },
                 createFolder: async (path) => {
+                  await directories.load(parentId(path));
                   ensureAvailable(path);
                   recordOperation({ kind: "create-directory", path });
-                  setFiles((current) => [...current, { path, kind: "directory", size: 0 }]);
+                  directories.setEntries((current) => [
+                    ...current,
+                    { id: path, kind: "directory" },
+                  ]);
                 },
                 renameEntry,
                 deleteEntry: async (entry) => {
                   recordOperation({ kind: "delete", path: entry.id });
                   const isRemoved = (path: string) =>
                     path === entry.id || path.startsWith(`${entry.id}/`);
-                  setFiles((current) => current.filter((file) => !isRemoved(file.path)));
+                  directories.remove(entry.id);
                   const next = new Map([...editsRef.current].filter(([path]) => !isRemoved(path)));
                   editsRef.current = next;
                   setEdits(next);
@@ -438,8 +489,7 @@ export function SkillFileWorkspace(props: {
                   originsRef.current = new Map();
                   setSelectedEntry(null);
                   setSelected(null);
-                  setFiles([]);
-                  setCollapsed(new Set());
+                  directories.setEntries(() => []);
                   setSaved(false);
                   setError(null);
                   setReloadVersion((current) => current + 1);

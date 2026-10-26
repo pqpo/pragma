@@ -1,4 +1,8 @@
-export { ContextStoreStoreError, hashSnapshotContent } from "../../resources/index.ts";
+export {
+  ContextStoreStoreError,
+  hashSnapshotContent,
+  contextStoreDirectoryIds,
+} from "../../resources/index.ts";
 import {
   createLocalHostContextStoreReader,
   ContextStoreStoreError,
@@ -14,6 +18,8 @@ import {
   collectManagedEntries,
   copyMarkdownTree,
   walkSource,
+  type ContextStoreSnapshotQuery,
+  type ContextStoreSnapshotSelection,
 } from "../../resources/index.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -78,7 +84,7 @@ export interface ContextStoreStore {
         }
       | undefined,
   ): Promise<void>;
-  listEntries(storeId: string): Promise<readonly ContextStoreEntry[]>;
+  listEntries(storeId: string, directory?: string): Promise<readonly ContextStoreEntry[]>;
   createFolder(storeId: string, id: string): Promise<void>;
   createFile(
     storeId: string,
@@ -115,6 +121,10 @@ export interface ContextStoreStore {
     readonly expectedSnapshotHash?: string | undefined;
   }): Promise<ContextStore>;
   getSnapshot(storeId: string, revision?: number): Promise<ContextStoreSnapshot>;
+  getSnapshotSelection(
+    storeId: string,
+    query: ContextStoreSnapshotQuery,
+  ): Promise<ContextStoreSnapshotSelection>;
   applyChangeSet(
     changeSet: ContextStoreChangeSet,
     author: ContextStoreRevisionRecord["author"],
@@ -191,6 +201,7 @@ export function createContextStoreStore(options: {
     buildSnapshot,
     persistSnapshotManifest,
     readSnapshot,
+    readSnapshotSelection,
     readStore,
     finalizeRevisionTransaction,
   } = reader;
@@ -644,9 +655,13 @@ export function createContextStoreStore(options: {
       );
       await options.onRemoved?.(id);
     },
-    async listEntries(storeId) {
+    async listEntries(storeId, directory) {
       await readStore(storeId);
-      return (await collectManagedEntries(contentRoot(storeId))).filter(
+      if (directory) {
+        assertVisibleKnowledgePath(directory);
+        await resolveEntryAtRoot(contentRoot(storeId), directory, "directory", true);
+      }
+      return (await collectManagedEntries(contentRoot(storeId), directory)).filter(
         (entry) => !isGitMetadataPath(entry.id),
       );
     },
@@ -873,6 +888,50 @@ export function createContextStoreStore(options: {
           throw error;
         }
       });
+    },
+    async getSnapshotSelection(storeId, query) {
+      if (query.directory === undefined && query.fileId === undefined) {
+        const snapshot = await this.getSnapshot(storeId, query.revision);
+        return {
+          revision: snapshot.revision,
+          snapshotHash: snapshot.snapshotHash,
+          files: snapshot.files,
+          directories: snapshot.directories,
+        };
+      }
+      const current = await readStore(storeId);
+      const revision = query.revision ?? current.contentRevision;
+      try {
+        const selection = await readSnapshotSelection(storeId, revision, query);
+        const record = ContextStoreRevisionRecordSchema.parse(
+          parseJson(
+            await readFile(revisionRecordPath(storeId, revision), "utf8"),
+            `${storeId}/revisions/${revision}/record.json`,
+          ),
+        );
+        if (
+          record.storeId !== storeId ||
+          record.revision !== revision ||
+          record.snapshotHash !== selection.snapshotHash ||
+          (revision === current.contentRevision &&
+            selection.snapshotHash !== current.snapshotHash) ||
+          (revision === 1 ? record.parentRevision !== null : record.parentRevision !== revision - 1)
+        ) {
+          throw new ContextStoreStoreError(
+            "config_invalid",
+            `Knowledge base ${storeId} has an inconsistent revision ${revision}.`,
+          );
+        }
+        return selection;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new ContextStoreStoreError(
+            "content_not_found",
+            `Knowledge base revision ${revision} does not exist.`,
+          );
+        }
+        throw error;
+      }
     },
     async getSnapshot(storeId, revision) {
       const current = await readStore(storeId);

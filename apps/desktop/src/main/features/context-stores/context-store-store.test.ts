@@ -508,6 +508,16 @@ describe("managed context store", () => {
       expect.objectContaining({ id: "guides/review.md", kind: "file" }),
     ]);
 
+    await expect(store.listEntries(created.id, "")).resolves.toEqual([
+      { id: "guides", kind: "directory" },
+    ]);
+    await expect(store.listEntries(created.id, "guides")).resolves.toEqual([
+      { id: "guides/nested", kind: "directory" },
+      expect.objectContaining({ id: "guides/review.md", kind: "file" }),
+    ]);
+    await expect(store.listEntries(created.id, "guides/nested/deep")).resolves.toEqual([]);
+    await expect(store.listEntries(created.id, "../outside")).rejects.toThrow();
+
     const updated = await store.updateFile(
       created.id,
       "guides/review.md",
@@ -1320,5 +1330,33 @@ describe("managed context store", () => {
     await expect(store.getSnapshot(created.id, 1)).rejects.toMatchObject({
       code: "config_invalid",
     });
+    await expect(
+      store.getSnapshotSelection(created.id, { directory: "", revision: 1 }),
+    ).rejects.toMatchObject({ code: "config_invalid" });
+    await expect(
+      store.getSnapshotSelection(created.id, { fileId: "a.md", revision: 1 }),
+    ).rejects.toMatchObject({ code: "config_invalid" });
+  });
+
+  it("rejects a substituted Merkle root before selective snapshot reads", async () => {
+    const { storesPath, store } = await createStore();
+    const created = await store.create({ mode: "blank", name: "Integrity", description: "" });
+    await store.createFile(created.id, "a.md", "Original");
+    await store.createFile(created.id, "a.md.copy.md", "Different");
+    const firstPath = join(storesPath, created.id, "revisions", "00000002", "snapshot.json");
+    const latestPath = join(storesPath, created.id, "revisions", "00000003", "snapshot.json");
+    const first = JSON.parse(await readFile(firstPath, "utf8"));
+    const latest = JSON.parse(await readFile(latestPath, "utf8"));
+    await writeFile(
+      latestPath,
+      JSON.stringify({ ...latest, objectTreeHash: first.objectTreeHash }),
+    );
+    await expect(store.getSnapshotSelection(created.id, { directory: "" })).rejects.toMatchObject({
+      code: "config_invalid",
+    });
+    const reopened = createContextStoreStore({ storesPath });
+    await expect(
+      reopened.getSnapshotSelection(created.id, { fileId: "a.md" }),
+    ).rejects.toMatchObject({ code: "config_invalid" });
   });
 });

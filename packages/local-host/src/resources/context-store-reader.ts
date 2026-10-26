@@ -66,6 +66,16 @@ export const ContextStoreSnapshotStorageMarkerSchema = z.object({
 
 export type ContextStoreSnapshotManifestV2 = z.infer<typeof ContextStoreSnapshotManifestV2Schema>;
 
+export type ContextStoreSnapshotSelection = Pick<
+  ContextStoreSnapshot,
+  "revision" | "snapshotHash" | "files" | "directories"
+>;
+export type ContextStoreSnapshotQuery = {
+  readonly revision?: number | undefined;
+  readonly directory?: string | undefined;
+  readonly fileId?: string | undefined;
+};
+
 export const LegacyContextStoreV3Schema = z.object({
   schemaVersion: z.literal("pragma.context-store/v3"),
   id: z.string().uuid(),
@@ -293,7 +303,23 @@ export function hashSnapshotContent(
   return hash.digest("hex");
 }
 
-export async function collectManagedEntries(root: string): Promise<ContextStoreEntry[]> {
+export function contextStoreDirectoryIds(
+  files: readonly { readonly id: string }[],
+  directories: readonly string[],
+): string[] {
+  const result = new Set(directories);
+  for (const path of [...directories, ...files.map((file) => file.id)]) {
+    const segments = path.split("/");
+    for (let depth = 1; depth < segments.length; depth++)
+      result.add(segments.slice(0, depth).join("/"));
+  }
+  return [...result].toSorted();
+}
+
+export async function collectManagedEntries(
+  root: string,
+  requestedDirectory?: string,
+): Promise<ContextStoreEntry[]> {
   const result: ContextStoreEntry[] = [];
   const visit = async (directory: string): Promise<void> => {
     const entries = await readdir(directory, { withFileTypes: true });
@@ -303,7 +329,7 @@ export async function collectManagedEntries(root: string): Promise<ContextStoreE
       const id = relative(root, path).split(sep).join("/");
       if (entry.isDirectory()) {
         result.push({ id, kind: "directory" });
-        await visit(path);
+        if (requestedDirectory === undefined) await visit(path);
       } else if (entry.isFile() && extname(entry.name).toLowerCase() === ".md") {
         const details = await stat(path, { bigint: true });
         result.push({
@@ -315,7 +341,7 @@ export async function collectManagedEntries(root: string): Promise<ContextStoreE
       }
     }
   };
-  await visit(root);
+  await visit(requestedDirectory ? join(root, ...requestedDirectory.split("/")) : root);
   return result;
 }
 
@@ -733,7 +759,7 @@ export function createLocalHostContextStoreReader(options: {
       ]),
     );
     const stored = await objects.putSnapshot(files);
-    return ContextStoreSnapshotManifestV2Schema.parse({
+    const manifest = ContextStoreSnapshotManifestV2Schema.parse({
       schemaVersion: "pragma.context-store-snapshot-manifest/v2",
       storeId: id,
       revision: snapshot.revision,
@@ -747,6 +773,21 @@ export function createLocalHostContextStoreReader(options: {
         0,
       ),
     });
+    rememberVerifiedManifest(manifest);
+    return manifest;
+  };
+
+  // The semantic snapshot hash predates the Merkle root. Bind them through one
+  // full validation per manifest, rather than trusting a substituted tree hash.
+  // Writers already validated the full snapshot above. Keep only bounded digest
+  // witnesses, never the restored contents of a large knowledge base.
+  const verifiedManifests = new Set<string>();
+  const manifestKey = (manifest: ContextStoreSnapshotManifestV2) =>
+    createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+  const rememberVerifiedManifest = (manifest: ContextStoreSnapshotManifestV2) => {
+    if (verifiedManifests.size >= 256)
+      verifiedManifests.delete(verifiedManifests.values().next().value!);
+    verifiedManifests.add(manifestKey(manifest));
   };
 
   const materializeStoredSnapshot = async (
@@ -803,10 +844,14 @@ export function createLocalHostContextStoreReader(options: {
         `Knowledge base ${id} snapshot file count mismatch.`,
       );
     }
+    rememberVerifiedManifest(manifest);
     return snapshot;
   };
 
-  const readSnapshot = async (id: string, revision: number): Promise<ContextStoreSnapshot> => {
+  const readSnapshotManifest = async (
+    id: string,
+    revision: number,
+  ): Promise<ContextStoreSnapshotManifestV2> => {
     const raw = parseJson(
       await readFile(snapshotPath(id, revision), "utf8"),
       `${id}/revisions/${revision}/snapshot.json`,
@@ -818,7 +863,75 @@ export function createLocalHostContextStoreReader(options: {
         `Knowledge base ${id} revision ${revision} has not completed its snapshot-storage upgrade.`,
       );
     }
-    return await materializeStoredSnapshot(id, manifest.data);
+    if (manifest.data.storeId !== id || manifest.data.revision !== revision) {
+      throw new ContextStoreStoreError(
+        "config_invalid",
+        `Knowledge base ${id} snapshot identity mismatch.`,
+      );
+    }
+    return manifest.data;
+  };
+
+  const readSnapshot = async (id: string, revision: number): Promise<ContextStoreSnapshot> =>
+    await materializeStoredSnapshot(id, await readSnapshotManifest(id, revision));
+
+  const readSnapshotSelection = async (
+    id: string,
+    revision: number,
+    query: ContextStoreSnapshotQuery,
+  ): Promise<ContextStoreSnapshotSelection> => {
+    const manifest = await readSnapshotManifest(id, revision);
+    if (!verifiedManifests.has(manifestKey(manifest))) {
+      await materializeStoredSnapshot(id, manifest);
+    }
+    const directory =
+      query.fileId === undefined ? query.directory : query.fileId.split("/").slice(0, -1).join("/");
+    if (query.fileId !== undefined)
+      ContextStoreSnapshotSchema.shape.files.element.shape.id.parse(query.fileId);
+    if (directory) ContextStoreSnapshotSchema.shape.directories.unwrap().element.parse(directory);
+    let treeHash: string | undefined = manifest.objectTreeHash;
+    for (const segment of directory?.split("/").filter(Boolean) ?? []) {
+      if (treeHash === undefined) break;
+      const tree = await snapshotObjects.readTree(treeHash);
+      treeHash = tree.entries.find(
+        (entry) => entry.name === segment && entry.kind === "tree",
+      )?.hash;
+    }
+    const files: ContextStoreSnapshot["files"][number][] = [];
+    const directories = new Set(contextStoreDirectoryIds([], manifest.directories));
+    const visit = async (hash: string, prefix: string): Promise<void> => {
+      const tree = await snapshotObjects.readTree(hash);
+      for (const entry of tree.entries) {
+        const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+        if (entry.kind === "tree") {
+          directories.add(path);
+          if (directory === undefined) await visit(entry.hash, path);
+          continue;
+        }
+        if (query.fileId !== undefined && path !== query.fileId) continue;
+        const raw = JSON.parse(
+          Buffer.from(await snapshotObjects.readBlob(entry.hash)).toString("utf8"),
+        ) as { content?: unknown; metadata?: unknown };
+        files.push(
+          ContextStoreSnapshotSchema.shape.files.element.parse({
+            id: path,
+            content: raw.content,
+            metadata: raw.metadata,
+          }),
+        );
+      }
+    };
+    if (treeHash !== undefined) await visit(treeHash, directory ?? "");
+    return {
+      revision: manifest.revision,
+      snapshotHash: manifest.snapshotHash,
+      files: files.toSorted((a, b) => a.id.localeCompare(b.id)),
+      directories: [...directories].filter(
+        (path) =>
+          query.fileId === undefined &&
+          (directory === undefined || path.split("/").slice(0, -1).join("/") === directory),
+      ),
+    };
   };
 
   const persistRevision = async (
@@ -1191,6 +1304,7 @@ export function createLocalHostContextStoreReader(options: {
     buildSnapshot,
     persistSnapshotManifest,
     readSnapshot,
+    readSnapshotSelection,
     readStore,
     finalizeRevisionTransaction,
   };

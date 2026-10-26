@@ -2,24 +2,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AssetFileEditor } from "./AssetFileEditor.tsx";
 import { visibleAssetFileEntries } from "./AssetFileTree.tsx";
-import { skillFileTreeEntries, skillPreviewBody } from "./SkillFileWorkspace.tsx";
+import { skillPreviewBody } from "./SkillFileWorkspace.tsx";
 
 const callbacks = { onPreviewChange: () => undefined, onChange: () => undefined };
 
 describe("shared asset file browser and editor", () => {
-  it("builds a nested Skill tree and keeps only the collapsed directory row visible", () => {
-    const entries = skillFileTreeEntries([
-      { path: "references/guides/start.md", size: 10 },
-      { path: "references/checklist.md", size: 20 },
-      { path: "SKILL.md", size: 30 },
-    ]);
-    expect(entries.map((entry) => `${entry.kind}:${entry.id}`)).toEqual([
-      "directory:references",
-      "file:references/checklist.md",
-      "directory:references/guides",
-      "file:references/guides/start.md",
-      "file:SKILL.md",
-    ]);
+  it("keeps nested cached files hidden beneath a collapsed directory", () => {
+    const entries = [
+      { id: "references", kind: "directory" as const },
+      { id: "references/checklist.md", kind: "file" as const },
+      { id: "references/guides", kind: "directory" as const },
+      { id: "references/guides/start.md", kind: "file" as const },
+      { id: "SKILL.md", kind: "file" as const },
+    ];
     expect(
       visibleAssetFileEntries(entries, new Set(["references"])).map((entry) => entry.id),
     ).toEqual(["references", "SKILL.md"]);

@@ -132,6 +132,7 @@ export const SkillDocumentSchema = z.object({
 });
 export const ListSkillFilesSchema = GetSkillDocumentSchema.extend({
   includeDirectories: z.boolean().optional(),
+  directory: z.union([z.literal(""), SkillFilePathSchema]).optional(),
 });
 export const SkillFileEntrySchema = z.object({
   kind: z.enum(["file", "directory"]).optional(),

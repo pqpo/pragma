@@ -21,11 +21,15 @@ import {
   contextStoreOverlayBetween,
   materializeDraftSnapshot,
 } from "./context-store-draft-store.ts";
-import { hashSnapshotContent, type ContextStoreStore } from "@pragma/local-host/deployment";
+import {
+  hashSnapshotContent,
+  contextStoreDirectoryIds,
+  type ContextStoreStore,
+} from "@pragma/local-host/deployment";
 
 export interface ContextStoreEditorDraftService {
   get(storeId: string): Promise<ContextStoreEditorDraft | undefined>;
-  listEntries(storeId: string): Promise<readonly ContextStoreEntry[]>;
+  listEntries(storeId: string, directory?: string): Promise<readonly ContextStoreEntry[]>;
   getContent(storeId: string, id: string): Promise<ContextStoreContent>;
   createFolder(storeId: string, id: string): Promise<void>;
   createFile(
@@ -94,10 +98,14 @@ export function createContextStoreEditorDraftService(options: {
   }> => {
     const draft = await readDraft(storeId);
     const base = await options.stores.getSnapshot(storeId, draft?.baseRevision);
+    const effective = draft === undefined ? base : materializeDraftSnapshot(draft, base);
     return {
       draft,
       base,
-      effective: draft === undefined ? base : materializeDraftSnapshot(draft, base),
+      effective: {
+        ...effective,
+        directories: contextStoreDirectoryIds(effective.files, effective.directories),
+      },
     };
   };
 
@@ -108,7 +116,13 @@ export function createContextStoreEditorDraftService(options: {
     await withFileLock(lockPath(storeId), async () => {
       const loaded = await effectiveSnapshot(storeId);
       const next = update(loaded.effective);
-      const overlay = contextStoreOverlayBetween(loaded.base, next);
+      const overlay = contextStoreOverlayBetween(
+        {
+          ...loaded.base,
+          directories: contextStoreDirectoryIds(loaded.base.files, loaded.base.directories),
+        },
+        next,
+      );
       if (overlayIsEmpty(overlay)) {
         await rm(draftRoot(storeId), { recursive: true, force: true });
         return { draft: undefined, effective: { ...loaded.base, ...next } };
@@ -139,14 +153,41 @@ export function createContextStoreEditorDraftService(options: {
 
   return {
     get: readDraft,
-    async listEntries(storeId) {
-      const { effective } = await effectiveSnapshot(storeId);
+    async listEntries(storeId, directory) {
+      const draft = await readDraft(storeId);
+      const base = await options.stores.getSnapshotSelection(storeId, {
+        revision: draft?.baseRevision,
+        directory,
+      });
+      if (draft !== undefined && base.snapshotHash !== draft.baseSnapshotHash)
+        throw new Error("Knowledge editor draft base mismatch.");
+      const visible = (id: string) =>
+        !isGitMetadataPath(id) &&
+        (directory === undefined || id.split("/").slice(0, -1).join("/") === directory);
+      const deletedDirectories = new Set(draft?.overlay.deletedDirectories);
+      const deletedFiles = new Set(draft?.overlay.deletedFiles);
+      const files = new Map(
+        base.files
+          .filter(
+            (file) =>
+              !deletedFiles.has(file.id) &&
+              ![...deletedDirectories].some((path) =>
+                file.id.startsWith(`${path.replace(/\/+$/gu, "")}/`),
+              ),
+          )
+          .map((file) => [file.id, file]),
+      );
+      for (const file of draft?.overlay.files ?? []) if (visible(file.id)) files.set(file.id, file);
+      const directories = new Set(base.directories.filter((path) => !deletedDirectories.has(path)));
+      for (const path of contextStoreDirectoryIds(
+        draft?.overlay.files ?? [],
+        draft?.overlay.directories ?? [],
+      ))
+        if (visible(path)) directories.add(path);
       return [
-        ...effective.directories
-          .filter((id) => !isGitMetadataPath(id))
-          .map((id) => ({ id, kind: "directory" as const })),
-        ...effective.files
-          .filter((file) => !isGitMetadataPath(file.id))
+        ...[...directories].filter(visible).map((id) => ({ id, kind: "directory" as const })),
+        ...[...files.values()]
+          .filter((file) => visible(file.id))
           .map((file) => ({
             id: file.id,
             kind: "file" as const,
@@ -157,8 +198,23 @@ export function createContextStoreEditorDraftService(options: {
     },
     async getContent(storeId, id) {
       assertVisibleKnowledgePath(id);
-      const { effective } = await effectiveSnapshot(storeId);
-      return contentResult(findFile(effective, id));
+      const draft = await readDraft(storeId);
+      const base = await options.stores.getSnapshotSelection(storeId, {
+        revision: draft?.baseRevision,
+        fileId: id,
+      });
+      if (draft !== undefined && base.snapshotHash !== draft.baseSnapshotHash)
+        throw new Error("Knowledge editor draft base mismatch.");
+      const staged = draft?.overlay.files.find((file) => file.id === id);
+      if (staged !== undefined) return contentResult(staged);
+      const deleted =
+        draft?.overlay.deletedFiles.includes(id) ||
+        draft?.overlay.deletedDirectories.some((path) =>
+          id.startsWith(`${path.replace(/\/+$/gu, "")}/`),
+        );
+      const file = deleted ? undefined : base.files.find((file) => file.id === id);
+      if (file === undefined) throw new Error(`Entry not found: ${id}`);
+      return contentResult(file);
     },
     async createFolder(storeId, id) {
       assertVisibleKnowledgePath(id);

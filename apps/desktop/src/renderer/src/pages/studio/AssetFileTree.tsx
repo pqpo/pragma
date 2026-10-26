@@ -1,4 +1,4 @@
-import { FileText, Folder, FolderOpen, PencilSimple } from "@phosphor-icons/react";
+import { FileText, Folder, FolderOpen, PencilSimple, SpinnerGap } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import type { ContextStoreEntry } from "../../../../shared/contracts/index.ts";
 
@@ -7,6 +7,7 @@ export function AssetFileTree(props: {
   readonly disabled?: boolean;
   readonly selectedEntry: ContextStoreEntry | null;
   readonly collapsedDirectoryIds: ReadonlySet<string>;
+  readonly pendingDirectoryIds?: ReadonlySet<string> | undefined;
   readonly onOpenEntry: (entry: ContextStoreEntry) => void;
   readonly onRenameEntry?: ((entry: ContextStoreEntry) => void) | undefined;
   readonly canRenameEntry?: (entry: ContextStoreEntry) => boolean;
@@ -88,6 +89,7 @@ export function AssetFileTree(props: {
               role="treeitem"
               aria-selected={props.selectedEntry?.id === entry.id}
               aria-expanded={entry.kind === "directory" ? isExpanded : undefined}
+              aria-busy={props.pendingDirectoryIds?.has(entry.id) || undefined}
               disabled={props.disabled}
               draggable={
                 !props.disabled &&
@@ -105,7 +107,11 @@ export function AssetFileTree(props: {
                 props.onDropTargetChange?.(null);
               }}
             >
-              <Icon size={17} aria-hidden="true" />
+              {props.pendingDirectoryIds?.has(entry.id) ? (
+                <SpinnerGap size={17} className="spin" aria-hidden="true" />
+              ) : (
+                <Icon size={17} aria-hidden="true" />
+              )}
               <span>{entry.id.split("/").at(-1)}</span>
             </button>
             {props.onRenameEntry === undefined || props.canRenameEntry?.(entry) === false ? null : (

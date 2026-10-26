@@ -702,6 +702,32 @@ describe("capability store", () => {
     });
     expect(entries).toContainEqual({ path: "empty", kind: "directory", size: 0 });
     expect(entries).toContainEqual({ path: "references", kind: "directory", size: 0 });
+    const rootEntries = await store.listSkillFiles({
+      id: initial.manifest.id,
+      includeDirectories: true,
+      directory: "",
+    });
+    expect(rootEntries.map((entry) => entry.path)).toEqual(["empty", "references", "SKILL.md"]);
+    await expect(
+      store.listSkillFiles({
+        id: initial.manifest.id,
+        includeDirectories: true,
+        directory: "references",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ path: "references/legacy.sh" }),
+      expect.objectContaining({ path: "references/review.md" }),
+    ]);
+    await expect(
+      store.listSkillFiles({
+        id: initial.manifest.id,
+        includeDirectories: true,
+        directory: "empty",
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      store.listSkillFiles({ id: initial.manifest.id, directory: "../outside" }),
+    ).rejects.toThrow();
     expect(entries.some((entry) => entry.path === "image.bin")).toBe(false);
     const record = (
       await store.listSkillManualRevisions({ capabilityId: initial.manifest.id })

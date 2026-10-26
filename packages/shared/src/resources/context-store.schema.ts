@@ -311,6 +311,8 @@ export const ContextStoreEntrySchema = z.object({
 
 export const ListContextStoreEntriesSchema = z.object({
   storeId: ContextStoreIdSchema,
+  // Omitted preserves recursive listing; an empty string lists the root only.
+  directory: z.union([z.literal(""), StoredDirectoryIdSchema]).optional(),
 });
 
 export const CreateContextStoreFolderSchema = z.object({

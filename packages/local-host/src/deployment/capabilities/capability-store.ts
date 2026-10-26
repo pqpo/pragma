@@ -462,10 +462,29 @@ export function createCapabilityStore(options: {
       const builtin = builtInSkill(input.id);
       if (builtin !== undefined) {
         assertBuiltInRevision(input.revision, builtin.version);
+        const files: SkillFileEntry[] = Object.entries(builtin.files)
+          .slice(0, MAX_SKILL_FILES)
+          .map(([path, content]) => ({ path, size: Buffer.byteLength(content) }));
+        if (input.directory !== undefined) {
+          const directories = new Set<string>();
+          for (const file of files) {
+            const segments = file.path.split("/");
+            for (let depth = 1; depth < segments.length; depth++) {
+              directories.add(segments.slice(0, depth).join("/"));
+            }
+          }
+          if (input.includeDirectories) {
+            files.push(
+              ...[...directories].map((path) => ({ path, kind: "directory" as const, size: 0 })),
+            );
+          }
+        }
         return SkillFileEntrySchema.array().parse(
-          Object.entries(builtin.files)
-            .slice(0, MAX_SKILL_FILES)
-            .map(([path, content]) => ({ path, size: Buffer.byteLength(content) })),
+          files.filter(
+            (file) =>
+              input.directory === undefined ||
+              file.path.split("/").slice(0, -1).join("/") === input.directory,
+          ),
         );
       }
       const capability = await readCapability(input.id, input.revision);
@@ -479,7 +498,7 @@ export function createCapabilityStore(options: {
         const revision = capability.manifest.latestRevision;
         const payloadPath = join(revisionPath(capability.manifest.id, revision), "payload");
         return SkillFileEntrySchema.array().parse(
-          await listSkillFileEntries(payloadPath, input.includeDirectories),
+          await listSkillFileEntries(payloadPath, input.includeDirectories, input.directory),
         );
       } catch (error) {
         if (error instanceof CapabilityStoreError) throw error;
@@ -1861,7 +1880,24 @@ async function listFiles(path: string): Promise<string[]> {
 async function listSkillFileEntries(
   path: string,
   includeDirectories = false,
+  requestedDirectory?: string,
 ): Promise<SkillFileEntry[]> {
+  let start = path;
+  if (requestedDirectory) {
+    if (
+      isGitMetadataPath(requestedDirectory) ||
+      !isPathInside(path, resolve(path, requestedDirectory))
+    ) {
+      throw new CapabilityStoreError("config_invalid", "The Skill directory path is invalid.");
+    }
+    for (const segment of requestedDirectory.split("/")) {
+      start = join(start, segment);
+      const info = await lstat(start);
+      if (!info.isDirectory() || info.isSymbolicLink()) {
+        throw new CapabilityStoreError("config_invalid", "The Skill directory is not readable.");
+      }
+    }
+  }
   const output: SkillFileEntry[] = [];
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -1870,14 +1906,14 @@ async function listSkillFileEntries(
       if (isGitMetadataPath(logical)) continue;
       if (entry.isDirectory()) {
         if (includeDirectories) output.push({ path: logical, kind: "directory", size: 0 });
-        await visit(target);
+        if (requestedDirectory === undefined) await visit(target);
       } else if (entry.isFile()) {
         const info = await lstat(target);
         output.push({ path: logical, size: info.size });
       }
     }
   };
-  await visit(path);
+  await visit(start);
   return output.toSorted((left, right) => left.path.localeCompare(right.path));
 }
 function decodeTextFile(bytes: Uint8Array): string | null {

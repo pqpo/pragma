@@ -68,6 +68,7 @@ export function AssetFileWorkspace(props: {
   readonly entries: readonly ContextStoreEntry[];
   readonly selectedEntry: ContextStoreEntry | null;
   readonly collapsedDirectoryIds: ReadonlySet<string>;
+  readonly pendingDirectoryIds?: ReadonlySet<string> | undefined;
   readonly onOpenEntry: (entry: ContextStoreEntry) => void;
   readonly loading: boolean;
   readonly onRefresh: () => Promise<void>;
@@ -319,6 +320,7 @@ export function AssetFileWorkspace(props: {
             disabled={disabled}
             selectedEntry={props.selectedEntry}
             collapsedDirectoryIds={props.collapsedDirectoryIds}
+            pendingDirectoryIds={props.pendingDirectoryIds}
             onOpenEntry={props.onOpenEntry}
             onRenameEntry={
               operations === undefined ? undefined : (entry) => void openOperation("rename", entry)

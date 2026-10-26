@@ -92,7 +92,7 @@ export function installContextStoreHandlers(
   });
   ipcMain.handle("context-stores:list-entries", (_event, input: unknown) => {
     const parsed = ListContextStoreEntriesSchema.parse(input);
-    return (editorDrafts ?? store).listEntries(parsed.storeId);
+    return (editorDrafts ?? store).listEntries(parsed.storeId, parsed.directory);
   });
   ipcMain.handle("context-stores:get-revision-diff", (_event, input: unknown) =>
     getContextStoreRevisionDiff(store, input),

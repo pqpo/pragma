@@ -38,8 +38,9 @@ import type {
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
 import { AssetFileWorkspace } from "./AssetFileWorkspace.tsx";
+import { useAssetDirectories } from "./use-asset-directories.ts";
 import { StudioDetailDescription } from "./StudioDetailDescription.tsx";
-import { fileName, rebaseEntryId } from "./asset-file-paths.ts";
+import { fileName, parentId, rebaseEntryId } from "./asset-file-paths.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { StudioDetailActions } from "../../components/StudioDetailActions.tsx";
 import { StudioActionButton } from "../../components/StudioActionButton.tsx";
@@ -249,7 +250,10 @@ export function ContextStoreDetailFragment(props: {
     ((prompt: string) => Promise<ContextStoreRevisionJob | undefined>) | undefined;
   readonly onRevisionSubmitted?: ((job: ContextStoreRevisionJob | undefined) => void) | undefined;
   readonly onDelete: () => Promise<void>;
-  readonly onListEntries: (storeId: string) => Promise<readonly ContextStoreEntry[]>;
+  readonly onListEntries: (
+    storeId: string,
+    directory?: string,
+  ) => Promise<readonly ContextStoreEntry[]>;
   readonly onGetContent: (storeId: string, contentId: string) => Promise<ContextStoreContent>;
   readonly onCreateFile: (
     storeId: string,
@@ -288,9 +292,13 @@ export function ContextStoreDetailFragment(props: {
   readonly openGitSettingsRequest?: number | undefined;
 }) {
   const { t } = useTranslation("studio");
-  const [entries, setEntries] = useState<readonly ContextStoreEntry[]>([]);
-  const [collapsedDirectoryIds, setCollapsedDirectoryIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
+  const {
+    loader: directories,
+    entries,
+    collapsed: collapsedDirectoryIds,
+    pending: pendingDirectories,
+  } = useAssetDirectories(props.store.id, (directory) =>
+    props.onListEntries(props.store.id, directory),
   );
   const [selectedEntry, setSelectedEntry] = useState<ContextStoreEntry | null>(null);
   const [content, setContent] = useState<ContextStoreContent | null>(null);
@@ -412,13 +420,15 @@ export function ContextStoreDetailFragment(props: {
   const loadEntries = useCallback(
     async (expectedSelection?: ContextStoreEntry | null) => {
       try {
-        const next = await props.onListEntries(props.store.id);
-        setEntries(next);
+        if (!(await directories.refresh())) return;
+        const next = directories.getSnapshot().entries;
         const current =
           expectedSelection === undefined ? currentRef.current.selectedEntry : expectedSelection;
         if (
           current !== null &&
-          !next.some((entry) => entry.id === current.id && entry.kind === current.kind)
+          (directories.contains(current.id) === false ||
+            (directories.isLoaded(parentId(current.id)) &&
+              !next.some((entry) => entry.id === current.id && entry.kind === current.kind)))
         ) {
           setSelectedEntry(null);
           setContent(null);
@@ -432,7 +442,7 @@ export function ContextStoreDetailFragment(props: {
         setLoading(false);
       }
     },
-    [props.onListEntries, props.store.id],
+    [directories],
   );
 
   const loadFile = useCallback(
@@ -577,13 +587,9 @@ export function ContextStoreDetailFragment(props: {
 
   useEffect(() => {
     if (loading || selectedEntry !== null) return;
-    const firstFile = firstContextStoreFile(entries);
+    const firstFile = firstContextStoreFile(entries.filter((entry) => !entry.id.includes("/")));
     if (firstFile !== undefined) void loadFile(firstFile);
   }, [entries, loadFile, loading, selectedEntry]);
-
-  useEffect(() => {
-    setCollapsedDirectoryIds(new Set());
-  }, [props.store.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -611,14 +617,14 @@ export function ContextStoreDetailFragment(props: {
   const openEntry = async (entry: ContextStoreEntry) => {
     if (entry.kind === "directory") {
       if (await save()) {
+        loadRequestRef.current++;
         setSelectedEntry(entry);
         setContent(null);
-        setCollapsedDirectoryIds((current) => {
-          const next = new Set(current);
-          if (next.has(entry.id)) next.delete(entry.id);
-          else next.add(entry.id);
-          return next;
-        });
+        try {
+          if (await directories.toggle(entry.id)) setError(null);
+        } catch (cause) {
+          setError(errorMessage(cause));
+        }
       }
       return;
     }
@@ -725,6 +731,7 @@ export function ContextStoreDetailFragment(props: {
       copy ? draft : "",
       copy ? metadata : { ...DEFAULT_METADATA, description: fileName(id).replace(/\.md$/iu, "") },
     );
+    await directories.reveal(id);
     await loadEntries();
     await loadFile({ id, kind: "file", revision: created.revision });
     setDraftDirty(true);
@@ -732,6 +739,8 @@ export function ContextStoreDetailFragment(props: {
 
   const renameEntry = async (entry: ContextStoreEntry, nextId: string): Promise<void> => {
     await props.onRenameEntry(props.store.id, entry.id, nextId, entry.kind);
+    directories.rebase(entry.id, nextId);
+    await directories.reveal(nextId);
     const selected = currentRef.current.selectedEntry;
     const rebasedId = selected === null ? undefined : rebaseEntryId(selected.id, entry.id, nextId);
     const nextSelection =
@@ -915,8 +924,10 @@ export function ContextStoreDetailFragment(props: {
         entries={entries}
         selectedEntry={selectedEntry}
         collapsedDirectoryIds={collapsedDirectoryIds}
+        pendingDirectoryIds={pendingDirectories}
         onOpenEntry={(entry) => void openEntry(entry)}
         loading={loading}
+        disabled={pendingDirectories.size > 0}
         onRefresh={() => loadEntries()}
         markdownFileNames
         extractFrontmatter
