@@ -16,6 +16,8 @@ import {
   validateAutomationEditor,
 } from "./AutomationDirectoryFragment.tsx";
 import { AutomationDetailFragment } from "./AutomationDetailFragment.tsx";
+import { AutomationCatalogCard, automationScheduleSummary } from "./AutomationCatalogCard.tsx";
+import { i18n } from "../../i18n/index.ts";
 
 const automation: AutomationSummary = {
   ref: "automation:hrxn3mv2e991j2rj",
@@ -96,6 +98,95 @@ describe("AutomationDirectoryFragment", () => {
     expect(html).toContain("Daily review");
     expect(html).toContain("Loading…");
     expect(html).not.toContain("expert:3sfd30h5017wd17d");
+  });
+
+  it("shows the next run in the schedule timezone without a redundant scheduled badge", () => {
+    const html = renderToStaticMarkup(
+      <AutomationCatalogCard
+        automation={{
+          ...automation,
+          nextRunAt: "2026-10-27T01:00:00.000Z",
+          resource: {
+            ...automation.resource,
+            spec: {
+              ...automation.resource.spec,
+              config: {
+                trigger: {
+                  kind: "calendar",
+                  frequency: "monthly",
+                  dayOfMonth: 15,
+                  time: "09:00",
+                  timezone: "Asia/Shanghai",
+                },
+              },
+            },
+          },
+        }}
+        executorName="Reviewer"
+        onOpen={() => undefined}
+      />,
+    );
+    expect(html).toContain("Day 15 of each month 09:00");
+    expect(html).toMatch(/9:00.*GMT\+8/);
+    expect(html).toContain("Runs: Reviewer");
+    expect(html).not.toContain("Scheduled");
+    expect(html).not.toContain("studio-asset-icon");
+  });
+
+  it("distinguishes paused automations from dispatch failures and queued events", () => {
+    const paused = renderToStaticMarkup(
+      <AutomationCatalogCard
+        automation={{ ...automation, status: "disabled" }}
+        executorName="Reviewer"
+        onOpen={() => undefined}
+      />,
+    );
+    expect(paused).toContain("Disabled");
+    expect(paused).not.toContain("Next run");
+    const failed = renderToStaticMarkup(
+      <AutomationCatalogCard
+        automation={{
+          ...automation,
+          queueDepth: 3,
+          lastRun: {
+            eventId: "event-1",
+            scheduledFor: "2026-10-26T09:00:00.000Z",
+            status: "failed",
+            error: "Executor unavailable",
+            createdAt: "2026-10-26T09:00:00.000Z",
+            updatedAt: "2026-10-26T09:00:00.000Z",
+          },
+        }}
+        executorName="Reviewer"
+        onOpen={() => undefined}
+      />,
+    );
+    expect(failed).toContain("Last dispatch failed");
+    expect(failed).toContain("3 queued events");
+  });
+
+  it("keeps weekly days and interval units meaningful in schedule summaries", () => {
+    const t = i18n.getFixedT("en", "studio");
+    expect(
+      automationScheduleSummary(
+        { kind: "interval", every: 1, unit: "hours", anchorAt: "2026-10-26T00:00:00Z" },
+        "en",
+        t,
+      ),
+    ).toBe("Every 1 hour");
+    expect(
+      automationScheduleSummary(
+        {
+          kind: "calendar",
+          frequency: "weekly",
+          weekdays: ["mon", "fri"],
+          time: "09:30",
+          timezone: "UTC",
+        },
+        "en",
+        t,
+      ),
+    ).toContain("Monday, Friday 09:30");
   });
 
   it("resolves an Automation executor ref to its user-facing name", () => {

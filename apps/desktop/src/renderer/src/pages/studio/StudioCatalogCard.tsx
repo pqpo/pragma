@@ -10,6 +10,7 @@ export function StudioCatalogCard(props: {
   readonly updatedAt?: string | undefined;
   readonly expertNames?: readonly string[] | undefined;
   readonly syncTarget?: AssetGitTarget | undefined;
+  readonly badge?: ReactNode;
   readonly summary?: ReactNode;
   readonly footer?: ReactNode;
   readonly builtIn?: boolean | undefined;
@@ -32,11 +33,12 @@ export function StudioCatalogCard(props: {
           <span className="studio-catalog-card-name" title={props.name}>
             {props.name}
           </span>
-          {props.builtIn === true ? (
-            <span className="studio-catalog-card-source">{t("builtIn")}</span>
-          ) : props.syncTarget !== undefined ? (
-            <AssetGitSyncIndicator target={props.syncTarget} />
-          ) : null}
+          {props.badge ??
+            (props.builtIn === true ? (
+              <span className="studio-catalog-card-source">{t("builtIn")}</span>
+            ) : props.syncTarget !== undefined ? (
+              <AssetGitSyncIndicator target={props.syncTarget} />
+            ) : null)}
         </span>
         {props.description ? (
           <span className="studio-catalog-card-description">{props.description}</span>

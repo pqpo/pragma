@@ -1,4 +1,13 @@
-import { ArrowLeft, CaretDown, Check, Clock, FolderOpen, Plus, Robot } from "@phosphor-icons/react";
+import {
+  ArrowLeft,
+  CaretDown,
+  Check,
+  Clock,
+  FolderOpen,
+  Plus,
+  Robot,
+  MagnifyingGlass,
+} from "@phosphor-icons/react";
 import { PRAGMA_DSL_WRITE_API_VERSION, PragmaScheduleTriggerSchema } from "@pragma/interpreter/ast";
 import {
   PRAGMA_TEXT_LIMITS,
@@ -28,6 +37,7 @@ import {
   isSchemaInputValid,
 } from "../home/SchemaInputForm.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
+import { AutomationCatalogCard } from "./AutomationCatalogCard.tsx";
 import { AutomationDetailFragment } from "./AutomationDetailFragment.tsx";
 import { desktopApi } from "./studio-model.ts";
 
@@ -105,6 +115,7 @@ export function AutomationDirectoryFragment(props: {
   const { t } = useTranslation("studio");
   const { t: tCommon } = useTranslation("common");
   const { t: tMissions } = useTranslation("missions");
+  const [query, setQuery] = useState("");
   const [tab, setTab] = useState<"automations" | "connections">("automations");
   const [selectedAutomation, setSelectedAutomation] = useState<AutomationSummary | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -839,6 +850,21 @@ export function AutomationDirectoryFragment(props: {
     );
   }
 
+  const matchingAutomations = props.automations.filter((automation) => {
+    const executor = resolveAutomationExecutorName(
+      automation.resource.spec.route.executor.ref,
+      executors,
+    );
+    return [
+      automation.resource.metadata.name,
+      automation.resource.metadata.description,
+      executor ?? "",
+    ]
+      .join(" ")
+      .toLocaleLowerCase()
+      .includes(query.trim().toLocaleLowerCase());
+  });
+
   return (
     <StudioScreenFrame
       className="automation-directory"
@@ -879,46 +905,55 @@ export function AutomationDirectoryFragment(props: {
         </button>
       </div>
       {tab === "automations" ? (
-        props.automations.length === 0 ? (
-          <div className="automation-empty">
-            <Clock size={28} aria-hidden="true" />
-            <h2>{t("noAutomations")}</h2>
-            <p>{t("noAutomationsDescription")}</p>
+        <>
+          <div className="studio-catalog-controls">
+            <label className="directory-search">
+              <MagnifyingGlass size={18} aria-hidden="true" />
+              <span className="sr-only">{t("searchAutomations")}</span>
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t("searchAutomations")}
+              />
+            </label>
+            <span className="studio-catalog-results-count">
+              {t("showingMatching", {
+                visible: matchingAutomations.length,
+                total: props.automations.length,
+              })}
+            </span>
           </div>
-        ) : (
-          <div className="studio-asset-rows automation-rows">
-            {props.automations.map((automation) => (
-              <button
-                className="studio-asset-row"
-                type="button"
-                key={automation.ref}
-                onClick={() => setSelectedAutomation(automation)}
-              >
-                <span className="studio-asset-icon">
-                  <Clock size={22} aria-hidden="true" />
-                </span>
-                <span className="studio-asset-copy">
-                  <strong>{automation.resource.metadata.name}</strong>
-                  <span>
-                    {resolveAutomationExecutorName(
+          {matchingAutomations.length === 0 ? (
+            props.automations.length === 0 ? (
+              <div className="automation-empty">
+                <h2>{t("noAutomations")}</h2>
+                <p>{t("noAutomationsDescription")}</p>
+              </div>
+            ) : (
+              <p className="studio-empty-copy">{t("noMatchesFound")}</p>
+            )
+          ) : (
+            <div className="studio-catalog-grid" role="list" aria-label={t("automations")}>
+              {matchingAutomations.map((automation) => (
+                <AutomationCatalogCard
+                  key={automation.ref}
+                  automation={automation}
+                  executorName={
+                    resolveAutomationExecutorName(
                       automation.resource.spec.route.executor.ref,
                       executors,
                     ) ??
-                      (executorCatalogLoaded
-                        ? t("automationExecutorUnavailable")
-                        : tCommon("actions.loading"))}{" "}
-                    · {t(`automationStatus.${automation.status}`)}
-                  </span>
-                </span>
-                <span className={`automation-status is-${automation.status}`}>
-                  {automation.nextRunAt === undefined
-                    ? t(`automationStatus.${automation.status}`)
-                    : new Date(automation.nextRunAt).toLocaleString()}
-                </span>
-              </button>
-            ))}
-          </div>
-        )
+                    (executorCatalogLoaded
+                      ? t("automationExecutorUnavailable")
+                      : tCommon("actions.loading"))
+                  }
+                  onOpen={() => setSelectedAutomation(automation)}
+                />
+              ))}
+            </div>
+          )}
+        </>
       ) : (
         <div className="connection-catalog">
           <article>
