@@ -1,3 +1,4 @@
+import { SkillRevisionRequestV4Schema } from "@pragma/built-in-agents";
 import { describe, expect, it, vi } from "vitest";
 
 import type { CapabilityStore } from "@pragma/local-host/deployment";
@@ -41,71 +42,86 @@ describe("Skill revision management capability", () => {
     expect(unmountDraft).toHaveBeenCalledWith({ missionId, draftId });
   });
 
-  it("starts an empty creation draft without a synthetic target", async () => {
-    const draftId = "10000000-0000-4000-8000-000000000001";
-    const jobId = "20000000-0000-4000-8000-000000000001";
-    const start = vi.fn(async (request) => ({
-      id: jobId,
-      draftId,
-      state: "editing",
-      request,
-    }));
-    const revisions = {
-      start,
-      inspectDraft: vi.fn(async () => ({
-        draft: {
-          schemaVersion: "pragma.skill-revision-draft/v5",
+  it.each([false, true])(
+    "starts an empty creation draft without a synthetic target (automatic=%s)",
+    async (memoryLearning) => {
+      const draftId = "10000000-0000-4000-8000-000000000001";
+      const jobId = "20000000-0000-4000-8000-000000000001";
+      const start = vi.fn(async (request) => ({
+        id: jobId,
+        draftId,
+        state: "editing",
+        request,
+      }));
+      const revisions = {
+        start,
+        inspectDraft: vi.fn(async () => ({
+          draft: {
+            schemaVersion: "pragma.skill-revision-draft/v5",
+            operation: "create",
+            id: draftId,
+            revision: 1,
+            capabilityId: start.mock.calls[0]![0].capabilityId,
+            name: "created-skill",
+            resourceDescription: "Created through review.",
+            baseRevision: 0,
+            baseContentHash: "a".repeat(64),
+            workspacePath: "/tmp/workspace",
+            state: "editing",
+            createdAt: "2026-09-19T00:00:00.000Z",
+            updatedAt: "2026-09-19T00:00:00.000Z",
+          },
+          draftPath: "/tmp/draft",
+          workingTree: { hash: "a".repeat(64), entries: [], totalBytes: 0 },
+          currentRevision: 0,
+          currentContentHash: "a".repeat(64),
+          stale: false,
+          changes: [],
+        })),
+      } as unknown as SkillRevisionService;
+      const port = createDesktopSkillRevisionSubmissionPort({
+        capabilities: { list: vi.fn(async () => []) } as unknown as CapabilityStore,
+        revisions,
+        ...(memoryLearning
+          ? {
+              memoryLearning: {
+                sourceDigest: "a".repeat(64),
+                sourceRefs: async () => [{ kind: "episodic" as const, id: "episode", revision: 1 }],
+              },
+            }
+          : {}),
+      });
+
+      const result = await port.start({
+        executionId: "30000000-0000-4000-8000-000000000001",
+        invocationId: "40000000-0000-4000-8000-000000000001",
+        expertId: "0000000000sk1rev",
+        operationId: "50000000-0000-4000-8000-000000000001",
+        create: { name: "created-skill", description: "Created through review." },
+        prompt: "Create a Skill.",
+      });
+
+      const request = SkillRevisionRequestV4Schema.parse(start.mock.calls[0]![0]);
+      expect(request.source).toBe(memoryLearning ? "memory-learning" : "expert-reflection");
+      if (memoryLearning)
+        expect(request.sourceRefs).toEqual([{ kind: "episodic", id: "episode", revision: 1 }]);
+      expect(result.target).toBeUndefined();
+      expect(result.creation).toMatchObject({
+        resourceId: expect.any(String),
+        name: "created-skill",
+        description: "Created through review.",
+      });
+      expect(start).toHaveBeenCalledWith(
+        expect.objectContaining({
           operation: "create",
-          id: draftId,
-          revision: 1,
-          capabilityId: start.mock.calls[0]![0].capabilityId,
-          name: "created-skill",
+          capabilityId: result.creation?.resourceId,
+          resourceName: "created-skill",
           resourceDescription: "Created through review.",
-          baseRevision: 0,
-          baseContentHash: "a".repeat(64),
-          workspacePath: "/tmp/workspace",
-          state: "editing",
-          createdAt: "2026-09-19T00:00:00.000Z",
-          updatedAt: "2026-09-19T00:00:00.000Z",
-        },
-        draftPath: "/tmp/draft",
-        workingTree: { hash: "a".repeat(64), entries: [], totalBytes: 0 },
-        currentRevision: 0,
-        currentContentHash: "a".repeat(64),
-        stale: false,
-        changes: [],
-      })),
-    } as unknown as SkillRevisionService;
-    const port = createDesktopSkillRevisionSubmissionPort({
-      capabilities: { list: vi.fn(async () => []) } as unknown as CapabilityStore,
-      revisions,
-    });
-
-    const result = await port.start({
-      executionId: "30000000-0000-4000-8000-000000000001",
-      invocationId: "40000000-0000-4000-8000-000000000001",
-      expertId: "0000000000sk1rev",
-      operationId: "50000000-0000-4000-8000-000000000001",
-      create: { name: "created-skill", description: "Created through review." },
-      prompt: "Create a Skill.",
-    });
-
-    expect(result.target).toBeUndefined();
-    expect(result.creation).toMatchObject({
-      resourceId: expect.any(String),
-      name: "created-skill",
-      description: "Created through review.",
-    });
-    expect(start).toHaveBeenCalledWith(
-      expect.objectContaining({
-        operation: "create",
-        capabilityId: result.creation?.resourceId,
-        resourceName: "created-skill",
-        resourceDescription: "Created through review.",
-      }),
-      expect.any(Object),
-    );
-  });
+        }),
+        expect.any(Object),
+      );
+    },
+  );
 
   it("reuses the reserved Skill id when a creation invocation is replayed", async () => {
     const draftId = "10000000-0000-4000-8000-000000000003";

@@ -85,11 +85,10 @@ export function createDesktopStoreRevisionAgent(options: {
           ref: STORE_REVISION_EXPERT_REF,
           name: "Store Revision Agent",
         },
-        origin: {
-          type: "system-store-revision",
-          jobId: input.jobId,
-          storeId: input.request.storeId,
-        },
+        origin:
+          input.request.source === "memory-learning"
+            ? { type: "system-memory", jobId: `knowledge-legacy-revision:${input.jobId}` }
+            : { type: "system-store-revision", jobId: input.jobId, storeId: input.request.storeId },
         contextMounts: [
           {
             kind: "context-store-draft",

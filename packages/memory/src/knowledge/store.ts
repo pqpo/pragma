@@ -66,7 +66,12 @@ export interface KnowledgeLearningStore {
     readonly now: Date;
   }): Promise<KnowledgeExtractionJob | undefined>;
   discardJob(input: { readonly id: string; readonly expectedRevision: number }): Promise<boolean>;
-  claimDueJob(now: Date): Promise<KnowledgeExtractionJob | undefined>;
+  claimDueJob(
+    now: Date,
+    ownedObservationIds?: ReadonlySet<string>,
+  ): Promise<KnowledgeExtractionJob | undefined>;
+  deferObservation(job: KnowledgeExtractionJob, now: Date): Promise<void>;
+  resumeObservation(id: string, now: Date): Promise<void>;
   isClaimCurrent(job: KnowledgeExtractionJob): Promise<boolean>;
   completeRejected(job: KnowledgeExtractionJob, now: Date): Promise<void>;
   completeLearned(job: KnowledgeExtractionJob, now: Date): Promise<void>;
@@ -221,7 +226,7 @@ export async function createKnowledgeLearningStore(
       writeJob(job);
       return job;
     },
-    async claimDueJob(now) {
+    async claimDueJob(now, ownedObservationIds) {
       const timestamp = now.toISOString();
       const row = database
         .prepare(
@@ -233,8 +238,10 @@ export async function createKnowledgeLearningStore(
         .get(timestamp, timestamp) as { job_json: string } | undefined;
       if (row === undefined) return undefined;
       const current = parseJob(row.job_json);
-      const replayBlocked = blocksAutomaticExtractionRetry(current.lastFailure, current.attempts);
-      const executionUnconfirmed = current.status === "running";
+      const ownedObservation = ownedObservationIds?.has(current.id) === true;
+      const replayBlocked =
+        !ownedObservation && blocksAutomaticExtractionRetry(current.lastFailure, current.attempts);
+      const executionUnconfirmed = current.status === "running" && !ownedObservation;
       if (replayBlocked || executionUnconfirmed) {
         const diagnostic =
           current.lastFailure === undefined || executionUnconfirmed
@@ -261,13 +268,51 @@ export async function createKnowledgeLearningStore(
         ...current,
         revision: current.revision + 1,
         status: "running",
-        attempts: current.attempts + 1,
+        attempts: ownedObservation ? current.attempts : current.attempts + 1,
         retryAt: undefined,
         leaseUntil: new Date(now.getTime() + LEASE_MS).toISOString(),
         updatedAt: timestamp,
       });
       writeJob(claimed);
       return claimed;
+    },
+    async deferObservation(job, now) {
+      const current = readJob(database, job.id);
+      if (current?.revision !== job.revision || current.status !== "running") return;
+      writeJob(
+        KnowledgeExtractionJobSchema.parse({
+          ...current,
+          revision: current.revision + 1,
+          status: "pending",
+          attempts: current.attempts,
+          leaseUntil: undefined,
+          retryAt: new Date(now.getTime() + 5000).toISOString(),
+          lastErrorCode: "memory_revision_observation_pending",
+          lastErrorMessage: "Observing the original Revision Mission.",
+          updatedAt: now.toISOString(),
+        }),
+      );
+    },
+    async resumeObservation(id, now) {
+      const current = readJob(database, id);
+      if (
+        current?.status !== "needs_attention" ||
+        current.lastErrorCode !== "memory_extraction_execution_unconfirmed"
+      )
+        return;
+      writeJob(
+        KnowledgeExtractionJobSchema.parse({
+          ...current,
+          revision: current.revision + 1,
+          status: "pending",
+          leaseUntil: undefined,
+          retryAt: now.toISOString(),
+          lastFailure: undefined,
+          failureClass: undefined,
+          lastErrorCode: "memory_revision_observation_pending",
+          updatedAt: now.toISOString(),
+        }),
+      );
     },
     async isClaimCurrent(job) {
       const current = readJob(database, job.id);

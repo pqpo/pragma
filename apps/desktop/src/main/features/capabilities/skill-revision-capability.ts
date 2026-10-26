@@ -15,12 +15,19 @@ import {
 } from "@pragma/built-in-agents";
 
 import { paginateManagementItems } from "../built-in-agents/management-pagination.ts";
-import { reservedRevisionResourceId } from "../built-in-agents/revision-resource-id.ts";
+import {
+  reservedRevisionResourceId,
+  deterministicRevisionUuid,
+} from "../built-in-agents/revision-resource-id.ts";
 import type { CapabilityStore } from "@pragma/local-host/deployment";
 import type { SkillRevisionService } from "./skill-revision-service.ts";
 
 export function createDesktopSkillRevisionSubmissionPort(options: {
   readonly capabilities: CapabilityStore;
+  readonly memoryLearning?: {
+    readonly sourceDigest: string;
+    readonly sourceRefs: () => Promise<readonly import("@pragma/shared").SkillSourceRevisionRef[]>;
+  };
   readonly revisions: SkillRevisionService;
   readonly inlineMissionId?: string | undefined;
   readonly inlineWorkspacePath?: string | undefined;
@@ -179,7 +186,13 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
       }
       const capabilityId =
         input.create !== undefined
-          ? reservedRevisionResourceId("skill", input)
+          ? options.memoryLearning === undefined
+            ? reservedRevisionResourceId("skill", input)
+            : deterministicRevisionUuid("memory-learning-resource", [
+                options.memoryLearning.sourceDigest,
+                "skill",
+                input.create!.name.normalize("NFKC").trim().toLowerCase(),
+              ])
           : (continuedDraft?.capabilityId ?? target!.capabilityId);
       const operation: "create" | "revise" =
         input.create !== undefined || continuedDraft?.operation === "create" ? "create" : "revise";
@@ -188,7 +201,7 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
         (continuedDraft?.operation === "create"
           ? { name: continuedDraft.name, description: continuedDraft.resourceDescription! }
           : undefined);
-      const sourceDigest = createHash("sha256")
+      const reflectionDigest = createHash("sha256")
         .update(
           JSON.stringify({
             capabilityId,
@@ -203,6 +216,12 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
           }),
         )
         .digest("hex");
+      const sourceDigest =
+        options.memoryLearning === undefined
+          ? reflectionDigest
+          : createHash("sha256")
+              .update(`${options.memoryLearning.sourceDigest}\0${capabilityId}`)
+              .digest("hex");
       const job = await options.revisions.start(
         {
           schemaVersion: "pragma.skill-revision-request/v4",
@@ -212,15 +231,22 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
             ? {}
             : { resourceName: creation.name, resourceDescription: creation.description }),
           prompt: input.prompt,
-          source: "expert-reflection",
+          source: options.memoryLearning === undefined ? "expert-reflection" : "memory-learning",
           sourceDigest,
-          provenance: {
-            executionId: input.executionId,
-            invocationId: input.invocationId,
-            expertId: input.expertId,
-            ...(input.teamId === undefined ? {} : { teamId: input.teamId }),
-          },
-          sourceRefs: [],
+          ...(options.memoryLearning === undefined
+            ? {
+                provenance: {
+                  executionId: input.executionId,
+                  invocationId: input.invocationId,
+                  expertId: input.expertId,
+                  ...(input.teamId === undefined ? {} : { teamId: input.teamId }),
+                },
+              }
+            : {}),
+          sourceRefs:
+            options.memoryLearning === undefined
+              ? []
+              : [...(await options.memoryLearning.sourceRefs())],
         },
         {
           ...(input.draftId === undefined ? {} : { draftId: input.draftId }),

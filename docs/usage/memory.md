@@ -18,7 +18,7 @@ Store/Skill Revision Agent 托管的 Knowledge 与 Skill 学习闭环：
 - Desktop 设置页可以控制全局 capture、recall、learning，并查看 Feed 容量、安全 checkpoint、固定保留
   策略、Evidence 截断、dead letter 和提炼失败；
 - Expert、ExpertTeam、Flow 编辑页可以继承或收紧全局策略。
-- Execution 终态会创建持久提炼任务；Memory Curator 处理 Episode/Fact，Store/Skill Revision Agent 处理 Knowledge/Skill 学习；
+- Execution 终态会创建持久提炼任务；Memory Curator 处理 Episode/Fact。Knowledge/Skill 独立调度，Revision Agent 在同一任务中查阅来源、优先修订已有资产并提交待审草稿，不再先运行独立规划器；
 - 普通 Expert、ExpertTeam 和 Flow 内 Expert 会加载有界 Memory guide、类型摘要与热点索引；
 - 独立 Expert 只能看到自己的 Episode；Team/Flow 内 Expert 看到当前 Team/Flow Episode 与自己的个人
   Episode，不会混入其他专家或其他团队资产；

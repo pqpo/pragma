@@ -1,5 +1,7 @@
 # ADR 075: Incremental Memory learning
 
+独立 Planner 与新任务计划交接已由 [ADR 080](080-direct-memory-revision-extraction.md) 取代；本文其余来源资格与资产复用规则继续适用。
+
 - Status: Accepted
 - Date: 2026-10-22
 - Supersedes: ADR 057's per-Expert knowledge target and repeated high-score Episode admission, within Memory learning.

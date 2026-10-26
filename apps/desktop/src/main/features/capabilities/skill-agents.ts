@@ -74,6 +74,7 @@ export function createDesktopSkillAgents(options: {
     readonly draftId: string;
     readonly goal: string;
     readonly capabilityId?: string | undefined;
+    readonly memoryLearning?: boolean;
   }) => {
     const project = await options.project.ensurePublished();
     const missionWorkspace = await options.resolveDraftWorkspace(input.draftId);
@@ -91,11 +92,9 @@ export function createDesktopSkillAgents(options: {
         ref: SKILL_REVISION_EXPERT_REF,
         name: "Skill Revision Agent",
       },
-      origin: {
-        type: "system-skill-revision",
-        jobId: input.jobId,
-        capabilityId: input.capabilityId!,
-      },
+      origin: input.memoryLearning
+        ? { type: "system-memory", jobId: `skill-legacy-revision:${input.jobId}` }
+        : { type: "system-skill-revision", jobId: input.jobId, capabilityId: input.capabilityId! },
       contextMounts: [
         {
           kind: "skill-revision-draft",
@@ -134,6 +133,7 @@ export function createDesktopSkillAgents(options: {
             "Inspect and edit this draft directly. Submit it for review, repair every synchronous validation diagnostic in this same Mission, and resubmit until it passes.",
           ].join("\n\n"),
           capabilityId: input.request.capabilityId,
+          memoryLearning: input.request.source === "memory-learning",
         });
         return undefined;
       },

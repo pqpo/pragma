@@ -13,3 +13,5 @@ export * from "./builtin-skills.ts";
 export * from "./pragma-resource-query-tools.ts";
 
 export * from "./memory-curator-tools.ts";
+
+export { unattendedMemoryRevisionResource } from "./memory-revision.ts";

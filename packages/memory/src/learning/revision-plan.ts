@@ -1,9 +1,16 @@
+/** Legacy pre-#434 plan handoff only. New learning work uses MemoryRevisionExecutor. */
 import { z } from "zod";
 import {
   KnowledgeSourceRevisionRefSchema,
   SkillSourceRevisionRefSchema,
   SkillPackageFileSchema,
 } from "@pragma/shared";
+
+/** Scheduling identity used only when draining anonymous historical Planner markers. */
+export interface LegacyLearningTaskIdentity {
+  readonly taskCreatedAt: string;
+  readonly mayHaveRun: boolean;
+}
 
 export const MEMORY_LEARNING_POLICY_VERSION = "learning-v2";
 

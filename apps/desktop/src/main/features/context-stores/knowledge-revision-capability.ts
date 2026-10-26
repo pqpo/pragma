@@ -32,11 +32,15 @@ import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
 import type { ContextStoreStore } from "@pragma/local-host/deployment";
 import { paginateManagementItems } from "../built-in-agents/management-pagination.ts";
-import { reservedRevisionResourceId } from "../built-in-agents/revision-resource-id.ts";
+import {
+  reservedRevisionResourceId,
+  deterministicRevisionUuid,
+} from "../built-in-agents/revision-resource-id.ts";
 
 export function createDesktopKnowledgeRevisionSubmissionPort(options: {
   readonly project: PragmaProjectStore;
   readonly contextStores: ContextStoreStore;
+  readonly memoryLearning?: { readonly sourceDigest: string };
   readonly revisions: ContextStoreRevisionService;
   readonly additionalMountResources?: (() => readonly PragmaResource[]) | undefined;
   readonly continueMission?:
@@ -253,7 +257,13 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
       }
       const storeId =
         input.create !== undefined
-          ? reservedRevisionResourceId("context-store", input)
+          ? options.memoryLearning === undefined
+            ? reservedRevisionResourceId("context-store", input)
+            : deterministicRevisionUuid("memory-learning-resource", [
+                options.memoryLearning.sourceDigest,
+                "context-store",
+                input.create!.name.normalize("NFKC").trim().toLowerCase(),
+              ])
           : (continuedDraft?.storeId ?? selected!.storeId);
       const operation: "create" | "revise" =
         input.create !== undefined || continuedDraft?.operation === "create" ? "create" : "revise";
@@ -265,7 +275,13 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
               description: continuedDraft.resourceDescription!,
             }
           : undefined);
-      const sourceDigest = digestSubmission(input, storeId, input.prompt, input.draftId);
+      const submissionDigest = digestSubmission(input, storeId, input.prompt, input.draftId);
+      const sourceDigest =
+        options.memoryLearning === undefined
+          ? submissionDigest
+          : createHash("sha256")
+              .update(`${options.memoryLearning.sourceDigest}\0${storeId}`)
+              .digest("hex");
       const request = {
         schemaVersion: "pragma.context-store-revision-request/v2" as const,
         operation,
@@ -274,14 +290,21 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           ? {}
           : { resourceName: creation.name, resourceDescription: creation.description }),
         prompt: input.prompt,
-        source: "expert-reflection" as const,
+        source:
+          options.memoryLearning === undefined
+            ? ("expert-reflection" as const)
+            : ("memory-learning" as const),
         sourceDigest,
-        provenance: {
-          executionId: input.executionId,
-          invocationId: input.invocationId,
-          expertId: input.expertId,
-          ...(input.teamId === undefined ? {} : { teamId: input.teamId }),
-        },
+        ...(options.memoryLearning === undefined
+          ? {
+              provenance: {
+                executionId: input.executionId,
+                invocationId: input.invocationId,
+                expertId: input.expertId,
+                ...(input.teamId === undefined ? {} : { teamId: input.teamId }),
+              },
+            }
+          : {}),
       };
       if (inlineMission === undefined) {
         if (input.draftId !== undefined) {

@@ -50,3 +50,8 @@ export * from "./pipeline/conversation-extraction-jobs.ts";
 export * from "./pipeline/completed-job-retention.ts";
 
 export { createConversationMemoryRetryManager } from "./pipeline/conversation-retry.ts";
+
+export type {
+  MemoryRevisionExecutor,
+  MemoryRevisionExecutionResult,
+} from "./learning/revision-execution.ts";

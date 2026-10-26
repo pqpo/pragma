@@ -6,3 +6,6 @@
 - [Issue #326 验证记录](issue-326-memory-retrieval.md)
 - [记忆工具提炼 CR 与复审记录](tool-driven-memory-extraction-review.md)
 - [Tool-driven Memory extraction validation](tool-driven-memory-extraction.md)
+
+- [Issue #434：直接 Revision 提炼验收](issue-434-memory-revision.md)
+- [Issue #434 CR 与复审](issue-434-code-review.md)

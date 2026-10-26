@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestExecutionStore } from "./execution-test-host.ts";
@@ -7,7 +7,12 @@ import { createTestExecutionStore } from "./execution-test-host.ts";
 import { createFileCanonicalEventFeed, createPragmaLogger, PragmaPaths } from "@pragma/core";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { SKILL_REVISION_EXPERT_REF, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
+import {
+  SKILL_REVISION_EXPERT_REF,
+  STORE_REVISION_EXPERT_REF,
+  ContextStoreRevisionJobSchema,
+  ManagedSkillRevisionJobSchema,
+} from "@pragma/built-in-agents";
 import { createLocalHostMemoryDataPlane } from "../src/memory-data-plane.ts";
 import { createMissionDelivery } from "../src/missions/mission-delivery.ts";
 import { createMissionStore } from "../src/missions/repository/mission-store.ts";
@@ -34,13 +39,15 @@ import {
 import { createProbeMemoryModule } from "@pragma/memory/testing";
 
 it.each([
-  [SKILL_REVISION_EXPERT_REF, "system-memory"],
-  [STORE_REVISION_EXPERT_REF, "system-memory"],
-  [SKILL_REVISION_EXPERT_REF, "user"],
-  [STORE_REVISION_EXPERT_REF, "user"],
-  [SKILL_REVISION_EXPERT_REF, "system-skill-revision"],
-  [STORE_REVISION_EXPERT_REF, "system-store-revision"],
-] as const)("captures %s only for user work (%s)", async (ref, originType) => {
+  [SKILL_REVISION_EXPERT_REF, "system-memory", "user"],
+  [STORE_REVISION_EXPERT_REF, "system-memory", "user"],
+  [SKILL_REVISION_EXPERT_REF, "user", "user"],
+  [STORE_REVISION_EXPERT_REF, "user", "user"],
+  [SKILL_REVISION_EXPERT_REF, "system-skill-revision", "user"],
+  [STORE_REVISION_EXPERT_REF, "system-store-revision", "user"],
+  [SKILL_REVISION_EXPERT_REF, "system-skill-revision", "memory-learning"],
+  [STORE_REVISION_EXPERT_REF, "system-store-revision", "memory-learning"],
+] as const)("captures %s only for user work (%s, %s)", async (ref, originType, source) => {
   const root = await mkdtemp(join(tmpdir(), "pragma-planning-capture-"));
   const logger = createPragmaLogger(undefined, { component: "test.planning-capture" });
   const missions = createMissionStore({ missionsPath: join(root, "missions") });
@@ -147,7 +154,61 @@ it.each([
     await closeData();
     data = await createLocalHostMemoryDataPlane({ pragmaHome: root, logger });
     expect(await data.deferredCapture.inspect()).toEqual({ pending: 2, safeThrough: 0 });
-    const capture = originType !== "system-memory";
+    // Legacy Revision origins require their authority job to distinguish
+    // interactive work from automatic memory-learning. Missing owners defer.
+    const paths = new PragmaPaths({ pragmaHome: root });
+    const origin = mission.origin;
+    if (origin.type === "system-store-revision" || origin.type === "system-skill-revision") {
+      await expect(data.flushDelivery()).resolves.toEqual({
+        published: 0,
+        skipped: 0,
+        deferred: 2,
+      });
+      const common = {
+        id: origin.jobId,
+        revision: 1,
+        draftId: randomUUID(),
+        missionId: mission.id,
+        state: "running",
+        createdAt: occurredAt,
+        updatedAt: occurredAt,
+      };
+      const job =
+        origin.type === "system-store-revision"
+          ? ContextStoreRevisionJobSchema.parse({
+              ...common,
+              schemaVersion: "pragma.context-store-revision-job/v4",
+              request: {
+                schemaVersion: "pragma.context-store-revision-request/v2",
+                operation: "revise",
+                storeId: origin.storeId,
+                prompt: "Revise authorized guidance",
+                source,
+                ...(source === "memory-learning" ? { sourceDigest: "a".repeat(64) } : {}),
+              },
+            })
+          : ManagedSkillRevisionJobSchema.parse({
+              ...common,
+              schemaVersion: "pragma.skill-revision-job/v5",
+              request: {
+                schemaVersion: "pragma.skill-revision-request/v4",
+                operation: "revise",
+                capabilityId: origin.capabilityId,
+                prompt: "Revise authorized guidance",
+                source,
+                sourceDigest: "a".repeat(64),
+                sourceRefs: [],
+              },
+            });
+      const directory = join(
+        paths.stateRoot(),
+        origin.type === "system-store-revision" ? "context-store-revisions" : "skill-revisions",
+        "jobs",
+      );
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, `${origin.jobId}.json`), JSON.stringify(job));
+    }
+    const capture = originType !== "system-memory" && source !== "memory-learning";
     if (capture) {
       await data.registerExecutionContext({
         executionId,

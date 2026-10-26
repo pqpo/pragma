@@ -1,6 +1,8 @@
+import type { MemoryRevisionExecutor } from "../learning/revision-execution.ts";
 import {
   SkillLearningPlanSchema,
   MEMORY_LEARNING_POLICY_VERSION,
+  type LegacyLearningTaskIdentity,
 } from "../learning/revision-plan.ts";
 import { createLearningDecisionStore, learningFingerprint } from "../learning/decision-store.ts";
 import { createHash } from "node:crypto";
@@ -56,6 +58,9 @@ export interface SkillLearningSink {
 }
 
 export interface SkillLearningPlanner {
+  hasPending?(sourceDigest: string, task?: LegacyLearningTaskIdentity): Promise<boolean>;
+  prepareDirectRetry?(sourceDigest: string, task?: LegacyLearningTaskIdentity): Promise<boolean>;
+  settle?(sourceDigest: string): Promise<void>;
   plan(input: {
     readonly rootRef: MemorySubjectRef;
     readonly expertRef: string;
@@ -73,6 +78,8 @@ export interface SkillLearningPlanner {
 export interface SkillMemoryModule extends MemoryModule {
   readonly store: SkillLearningStore;
   scheduleRoot(rootRef: MemorySubjectRef): Promise<void>;
+  setExecutor(executor: MemoryRevisionExecutor | undefined): Promise<void>;
+  /** Historical plan handoff only; Desktop never installs a planner for new work. */
   setPlanner(planner: SkillLearningPlanner | undefined): Promise<void>;
   interruptExtractionJob(input: {
     readonly id: string;
@@ -87,6 +94,7 @@ export async function createSkillMemoryModule(options: {
   readonly targetReader: SkillLearningTargetReader;
   readonly learningSink: SkillLearningSink;
   readonly pragmaHome?: string;
+  readonly executor?: MemoryRevisionExecutor | undefined;
   readonly planner?: SkillLearningPlanner;
   readonly now?: () => Date;
 }): Promise<SkillMemoryModule> {
@@ -101,6 +109,7 @@ export async function createSkillMemoryModule(options: {
   }
   const canLearn = createMemoryLearningPolicyGuard({ ...options, now });
   let planner = options.planner;
+  let executor = options.executor;
   const running = new Map<string, AbortController>();
   const scheduleRoot = async (rootRef: MemorySubjectRef): Promise<void> => {
     if (!(await canLearn(rootRef))) return;
@@ -176,8 +185,25 @@ export async function createSkillMemoryModule(options: {
     },
     async runBackgroundOnce() {
       if (!(await canLearn())) return;
-      if (planner === undefined) return;
-      const job = await store.claimDueJob(now());
+      if (planner === undefined && executor === undefined) return;
+      const ownedObservations = new Set<string>();
+      if (executor?.canObserveJob !== undefined) {
+        for (const candidate of await store.listJobs()) {
+          const mayObserve =
+            candidate.lastErrorCode === "memory_revision_observation_pending" ||
+            (candidate.status === "needs_attention" &&
+              candidate.lastErrorCode === "memory_extraction_execution_unconfirmed") ||
+            (candidate.status === "running" &&
+              candidate.leaseUntil !== undefined &&
+              Date.parse(candidate.leaseUntil) <= now().getTime());
+          if (mayObserve && (await executor.canObserveJob(candidate.id))) {
+            ownedObservations.add(candidate.id);
+            if (candidate.status === "needs_attention")
+              await store.resumeObservation(candidate.id, now());
+          }
+        }
+      }
+      const job = await store.claimDueJob(now(), ownedObservations);
       if (job === undefined) return;
       const controller = new AbortController();
       running.set(job.id, controller);
@@ -249,12 +275,112 @@ export async function createSkillMemoryModule(options: {
             });
             continue;
           }
+          const existingExecution = await executor?.hasExecution?.({
+            kind: "skill",
+            jobId: job.id,
+            expertRef,
+            sourceDigest: sourceDigest,
+          });
+          const hasFailureHistory = (await store.listFailureAttempts(job.id)).length > 0;
+          const legacyTask = {
+            taskCreatedAt: job.createdAt,
+            mayHaveRun:
+              existingExecution !== true &&
+              (job.revision > 2 ||
+                job.attempts > 1 ||
+                hasFailureHistory ||
+                job.lastErrorCode === "memory_revision_observation_pending"),
+          };
+          const explicitLegacyRetry =
+            executor !== undefined &&
+            job.attempts === 1 &&
+            job.lastFailure === undefined &&
+            hasFailureHistory;
+          const directRetry =
+            explicitLegacyRetry &&
+            (await planner?.prepareDirectRetry?.(sourceDigest, legacyTask)) === true;
+          if (directRetry) decisions.discardPlan(evaluationKey);
+          if (
+            executor !== undefined &&
+            (directRetry ||
+              (decisions.readPlan(evaluationKey) === undefined &&
+                !((await planner?.hasPending?.(sourceDigest, legacyTask)) ?? false)))
+          ) {
+            phase = "revision_submit";
+            modelRequested = existingExecution !== true;
+            // The keyed admission receipt is per Expert. A proven job observation may
+            // finish one Expert and proceed to another Expert's first admission.
+            // Without the original owner proof, retain the no-redispatch guard.
+            if (
+              job.lastErrorCode === "memory_revision_observation_pending" &&
+              (existingExecution === undefined ||
+                (modelRequested && !ownedObservations.has(job.id)))
+            )
+              throw Object.assign(new Error("memory_revision_owner_unconfirmed"), {
+                retryable: false,
+              });
+            const result = await executor.execute({
+              kind: "skill",
+              jobId: job.id,
+              claimRevision: job.revision,
+              manualRetry: job.attempts === 1 && job.lastFailure === undefined,
+              // A job-level failure does not make a different Expert's first
+              // admission a retry. Missing owner proof must still fail closed.
+              retryFailedExecution:
+                job.lastFailure?.retryable === true &&
+                (existingExecution !== false ||
+                  !((await executor.canObserveJob?.(job.id)) ?? false)),
+              onAdmission: (admitted) => {
+                modelRequested = admitted;
+              },
+              rootRef: job.rootRef,
+              expertRef,
+              sourceDigest: sourceDigest,
+              sources: expertSources,
+              signal: controller.signal,
+              assertCurrent: async () => {
+                controller.signal.throwIfAborted();
+                if (
+                  !(await store.listJobs()).some(
+                    (current) =>
+                      current.id === job.id &&
+                      current.sourceDigest === job.sourceDigest &&
+                      current.status !== "completed",
+                  ) ||
+                  !(await canLearn(job.rootRef, producers))
+                )
+                  throw Object.assign(new Error("memory_revision_source_changed"), {
+                    retryable: false,
+                  });
+                const current = boundSources(
+                  await options.sourceReader.listEligibleSources({
+                    rootRef: job.rootRef,
+                    limit: MAX_SOURCE_REVISIONS,
+                    now: now(),
+                  }),
+                );
+                if (
+                  digest(
+                    "skill-sources",
+                    MEMORY_LEARNING_POLICY_VERSION,
+                    ...current.map(sourceKey).toSorted(),
+                  ) !== job.sourceDigest
+                )
+                  throw Object.assign(new Error("memory_revision_source_changed"), {
+                    retryable: false,
+                  });
+              },
+            });
+            decisions.write(evaluationKey, job.id, result.decision);
+            retained ||= result.submitted;
+            continue;
+          }
           phase = "revision_plan";
           const cachedPlan = decisions.readPlan(evaluationKey);
           modelRequested ||= cachedPlan === undefined;
           const proposedPlan =
             cachedPlan === undefined
-              ? await planner.plan({
+              ? await planner!.plan({
                   rootRef: job.rootRef,
                   expertRef,
                   sourceDigest,
@@ -346,6 +472,7 @@ export async function createSkillMemoryModule(options: {
                   : "No supported incremental change."),
               targets: [],
             });
+            await planner?.settle?.(sourceDigest);
             continue;
           }
           if (cachedPlan === undefined) decisions.writePlan(evaluationKey, plan);
@@ -402,6 +529,7 @@ export async function createSkillMemoryModule(options: {
           };
           decisions.write(proposalKey, job.id, decision);
           decisions.write(evaluationKey, job.id, decision);
+          await planner?.settle?.(sourceDigest);
           retained = true;
         }
         const completedAt = now();
@@ -421,6 +549,10 @@ export async function createSkillMemoryModule(options: {
               ).diagnostic,
         );
       } catch (error) {
+        if (error instanceof Error && error.message === "memory_revision_observation_pending") {
+          await store.deferObservation(job, now());
+          return;
+        }
         const failure = extractionFailureDiagnostic(error, "skill_extraction", {
           phase,
           startedAt,
@@ -440,6 +572,9 @@ export async function createSkillMemoryModule(options: {
       } finally {
         if (running.get(job.id) === controller) running.delete(job.id);
       }
+    },
+    async setExecutor(next) {
+      executor = next;
     },
     async setPlanner(next) {
       planner = next;
@@ -509,6 +644,13 @@ function digest(...parts: readonly string[]): string {
   return createHash("sha256").update(parts.join("\0")).digest("hex");
 }
 function isConfigurationError(error: unknown): boolean {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "memoryRevisionTransient" in error &&
+    error.memoryRevisionTransient === true
+  )
+    return false;
   const code =
     typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
   return /(?:unavailable|not configured|profile|runtime|provider|model|memory_revision_pending)/iu.test(

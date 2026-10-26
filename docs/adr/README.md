@@ -92,6 +92,7 @@ ADR 是有时间和范围的决策记录；版本、路径和支持范围以权�
 - [ADR 072: Tool-driven Memory extraction](072-tool-driven-memory-extraction.md)
 - [ADR 073: Shared conversation Memory extraction and continuation](073-shared-conversation-memory-extraction.md)
 - [ADR 075: Incremental Memory learning](075-incremental-memory-learning.md)
+- [ADR 080: Revision Agent 直接提炼 Memory 草稿](080-direct-memory-revision-extraction.md)
 - [ADR 074: Explicit Memory Curator tool contract and resumable feedback](074-memory-curator-tool-contract-v2.md)
 
 ## 已合并或归档

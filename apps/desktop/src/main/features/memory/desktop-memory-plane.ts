@@ -1,3 +1,4 @@
+import type { MemoryRevisionExecutor } from "@pragma/memory";
 import { join } from "node:path";
 import {
   readExecutionRunScope,
@@ -108,6 +109,7 @@ export interface DesktopMemoryPlane {
     extractor: ConversationMemoryExtractor | undefined,
     lifecycle?: { readonly retireJobs: (jobIds: readonly string[]) => Promise<void> },
   ): Promise<void>;
+  setRevisionExecutor(executor: MemoryRevisionExecutor): Promise<void>;
   setKnowledgePlanner(planner: KnowledgeLearningPlanner | undefined): Promise<void>;
   setSkillPlanner(planner: SkillLearningPlanner | undefined): Promise<void>;
   registerMemoryExecutionContext(input: {
@@ -214,6 +216,7 @@ export async function createDesktopMemoryPlane(options: {
   readonly skillLearningTargetReader?: SkillLearningTargetReader | undefined;
 }): Promise<DesktopMemoryPlane> {
   const data = await createLocalHostMemoryDataPlane(options);
+  let revisionExecutor: MemoryRevisionExecutor | undefined;
   let curatorLifecycle:
     { readonly retireJobs: (jobIds: readonly string[]) => Promise<void> } | undefined;
   const {
@@ -345,6 +348,11 @@ export async function createDesktopMemoryPlane(options: {
         semantic.store.maintain(maintenanceNow),
       ]);
       await retainCompletedJobs();
+      await revisionExecutor?.maintain?.(
+        [...(await knowledge.store.listJobs()), ...(await skill.store.listJobs())].map(
+          (job) => job.id,
+        ),
+      );
       const pipeline = await state.maintain(maintenanceNow);
       const deadLetters = await state.inspectDeadLetters();
       blockedBytes = feed.blockedBytes;
@@ -637,8 +645,11 @@ export async function createDesktopMemoryPlane(options: {
                 : skill.store;
         if (input.action === "expedite") await store.expediteJob(command);
         else if (input.action === "retry") await store.retryJob(command);
-        else if (input.action === "delete") await store.deleteJob(command);
-        else if (input.action === "interrupt") {
+        else if (input.action === "delete") {
+          await store.deleteJob(command);
+          if (input.module === "knowledge" || input.module === "skill")
+            await revisionExecutor?.retireJob?.(input.id);
+        } else if (input.action === "interrupt") {
           // Interrupt routes through the Module so the persisted transition and in-flight abort agree.
           if (input.module === "episodic") await episodic.interruptExtractionJob(command);
           else if (input.module === "semantic") await semantic.interruptExtractionJob(command);
@@ -715,6 +726,10 @@ export async function createDesktopMemoryPlane(options: {
     async setSemanticExtractor(extractor) {
       await semantic.setExtractor(extractor);
       wakePipeline();
+    },
+    async setRevisionExecutor(executor) {
+      revisionExecutor = executor;
+      await Promise.all([knowledge.setExecutor(executor), skill.setExecutor(executor)]);
     },
     async setKnowledgePlanner(planner) {
       await knowledge.setPlanner(planner);
