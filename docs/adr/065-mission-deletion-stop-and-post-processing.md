@@ -61,4 +61,4 @@ DSL 未发布审批若被删除隔离拒绝，可撤销 initiated journal 并进
 
 回归覆盖重复删除、晚到写入、跨进程 Execution fence、Session/delivery 锁顺序、opening/invalidation
 停止、停止超时与重试、Host 通知失败、rename 未记进度、两个 worker、过期来源与未来版本。
-测试与本机测量结果见 [验证记录](../archive/architecture/mission-deletion-validation.md)。
+历史测试与本机测量明细可从 Git 历史追溯；当前验证要求见[测试与发布规范](../conventions/testing-and-release-performance.md)。

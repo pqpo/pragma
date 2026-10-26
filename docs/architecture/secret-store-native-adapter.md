@@ -26,15 +26,3 @@ The 2.x adapter distinguishes missing entries from provider failures: a missing 
 `null`/`false`, while locked, denied, or unavailable providers throw. Local Host classifies those
 errors into its existing health codes. This upgrade keeps the service/account identity and binary
 secret representation unchanged, so existing Desktop and CLI credentials remain shared.
-
-## M5 supply-chain audit (2026-08-24)
-
-- Direct production dependency: `@napi-rs/keyring@1.3.0` (exact version; no range) in
-  `@pragma/local-host`.
-- License: `MIT`, verified from the installed package manifest.
-- `pnpm-lock.yaml` pins the package and each optional native binary with immutable SHA-512 integrity.
-  The supported release binaries are `darwin-arm64`, `darwin-x64`, and `win32-x64-msvc`; the lock
-  also retains the upstream optional variants, which are not released by this product.
-- The full release SBOM must be generated from the packed Desktop/CLI artifacts and compared against
-  this lock entry. Windows packaging verification is environment-limited here and is deferred to
-  M10/CI; it is not represented as a passed local test.

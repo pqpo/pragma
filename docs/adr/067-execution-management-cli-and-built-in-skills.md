@@ -73,7 +73,7 @@ DSL apiVersion、compilerVersion、Core storage major 或已有持久 Schema，�
 默认 Pragma 的六个 Flow 工具。Pi Keychain、Qoder 额度和性能证据等缺口保留在验收记录中，
 不将用户授权切换等同于所有验收已通过。
 
-验收与未完成项见[第一阶段实施报告](../archive/architecture/management-tools-cli-skills-phase-one-implementation.md)。
+验收与未完成项见[历史验收摘要](../archive/README.md)。
 
 ## PR 评论后的历史交接
 
@@ -105,7 +105,7 @@ Automation 等第三阶段内容仍保留原入口。
 据此移除 DSL 14 个与 Evaluation 7 个默认工具，Pi 默认数量 49 → 28；原定义和 handler
 继续用于 CLI、显式 binding 与 Revision Agent。CLI grants、审批和 owner/receipt 独立于模型目录。
 此前 prospective probe 数据保留；Pi Keychain、Qoder 额度、性能与平台等门禁继续未完成，
-不以此次授权切换宣称验收通过。详见[第二阶段实施记录](../archive/architecture/management-tools-cli-skills-phase-two-implementation.md)。
+不以此次授权切换宣称验收通过。详见[历史验收摘要](../archive/README.md)。
 
 ## 第三阶段与统一 manage 命名空间（2026-10-09）
 
@@ -139,7 +139,7 @@ reference 从 DSL Skill 移走；原六组 handler 定义仍用于 CLI、显式 
 默认 Pragma management binding 保留 `tools: []`，Interpreter 已有 contribution hooks 仍能
 装配私有通道；不以删除整个 binding 的方式移除 Schema。默认 managed tools 为两个 Revision
 调用，Pi 默认口径为 13。真实 Runtime、发行与性能结果分别见
-[第三阶段实施报告](../archive/architecture/management-tools-cli-skills-phase-three-implementation.md)，
+[历史验收摘要](../archive/README.md)，
 未通过门禁不因默认目录切换而关闭。
 
 ## 合并为 manage-pragma（2026-10-09 后续用户决策）
@@ -156,4 +156,4 @@ wire/storage Schema 或版本号，静态 content hash 与编译 fingerprint 随
 
 命令仍为 46 项、默认 Pi 工具仍为 13 项，授权与审批不因 Skill 合并扩张。阶段成本数据
 保留原测试时的六 Skill 配置；合并后的静态估算单独记录，不作为真实任务成本下降证明。
-[实施与验证记录](../archive/architecture/management-tools-cli-skills-unified-skill-implementation.md)。
+[历史验收摘要](../archive/README.md)。

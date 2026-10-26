@@ -27,16 +27,19 @@
 - [技术文章](articles/README.md)、[产品策略](strategy/README.md)。
 - [本地存储离线迁移手册](migrations/local-storage-v3-ai-migration.md)：按其适用版本操作，不代替应用内支持窗口升级。
 
-## 计划与历史证据
+## 交付范围与历史边界
 
-- [Issue 399 当前收尾计划](plans/issue-399.md)：保留明确未完成项，不将计划视为已实现能力。
+- [Issue 399 交付与暂缓范围](plans/issue-399.md)：共享配置已交付，独立部署、Linux 与 Memory Headless 仍暂缓。
 - [验证记录](validation/README.md)：范围、环境与限制随记录保留。
-- [性能历史](performance/README.md)：只证明对应提交和环境，不能据此认定当前性能。
-- [历史归档](archive/README.md)：阶段方案、CR、旧 ADR 与实施证据，不参与当前规范优先级。
+- [性能测量入口](performance/README.md)：可复用基准、复测口径与历史验收缺口。
+- [历史验收摘要](archive/README.md)：必要验收边界和旧 ADR，阶段明细从 Git 历史追溯。
 
 ## 维护规则
 
 - 稳定规则放 conventions，系统行为放 architecture，取舍及兼容性授权放 ADR；不要在根 AGENTS 累加具体 bug 的实施记录。
 - 新 ADR 使用未占用编号；早期重号以完整文件名和主题区分，不重编号破坏引用。
 - 完全重复且无独立历史约束的 ADR 合并到权威后继；仍有有效部分的 ADR 明确范围；已取代但保有 cutover/验收依据的记录进入 archive。
-- 归档不代表验收通过，也不删除支持中的迁移、历史 Schema 或 fixture。链接、脚本路径和历史证据一起维护。
+- 归档不代表验收通过，也不删除支持中的迁移、历史 Schema 或 fixture。删除历史记录前保留有效约束及验收缺口，同步维护链接。
+
+- 一次性截图、探针、源码快照、采样 JSON 和逐轮 CR 留在仓库外或 CI artifact；文档只保留可复用方法、必要结论和限制。
+- 文件密集目录与超长文档优先检查重复、过时和生成内容；接口与 Schema 链接权威源码，避免抄写。源码、迁移链和有效回归不能仅因数量或行数删除。

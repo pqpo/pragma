@@ -426,61 +426,21 @@ Do not commit source text, credentials or traces. A successful run requires comp
 durable recoverable receipts and one model admission. Injected errors must recover within two
 resubmissions; coverage is recorded separately from success.
 
-Acceptance on 2026-10-19 used default PI (`cloud-pi-agent`) and DeepSeek v4 Flash with
-embedding disabled. Captured local Evidence was replayed into disposable homes; private source
-files and call traces remain outside the repository.
+Historical PI/DeepSeek runs with embedding disabled exercised tool workflows, receipt recovery,
+transient-task skipping and correction after injected errors. They did not establish extraction
+quality, positive vector retrieval, other models/runtimes, Electron UI or full Mission acceptance.
 
-| Case                                                                    | Captured / selected Evidence | Runs completed | Calls per run | Tool errors                              |
-| ----------------------------------------------------------------------- | ---------------------------- | -------------- | ------------- | ---------------------------------------- |
-| Short conversation                                                      | 56 / 45                      | 3 / 3          | 14, 14, 12    | 0, 0, 0                                  |
-| Long conversation                                                       | 570 / 397                    | 3 / 3          | 49, 59, 53    | 0, 2, 0                                  |
-| Existing Memory, candidate inspection/edit, invalid-reference injection | 56 / 45                      | 1 / 1          | 26            | 1 injected; repaired by one resubmission |
-| Transient request with no lasting information                           | 2 / 2                        | 3 / 3          | 3, 3, 2       | 0; no Memory created                     |
+### Recovery constraints
 
-Together these runs exercised all twelve tools and all five episode branches. All observed visible
-responses were below 1,400 tokens (the enforced ceiling is 2,000). The long run's two errors were unread citation and premature finish;
-the Agent resumed reading and completed both receipts in the same admission. Existing Memory
-full reads, staged candidate full reads and correction with the same candidate handle completed.
-Completed receipts were reopened without another model admission. Eligibility may reject a type
-locally before admission; such a decision correctly has no model receipt and must not be counted
-as model-generated Memory. The probe checks recovered receipts for admitted types only.
-
-These are workflow/materialization results, not an extraction-quality benchmark: the short case
-retained facts in two runs and skipped facts in one. Positive vector retrieval, other models and
-runtimes, the remote machine, Electron UI and the full Mission application entry were not covered
-by these real-model runs. Separate automated Desktop/Local Host tests cover their changed wiring.
-
-### Follow-up code review
-
-The implementation review reproduced and corrected six issue classes:
-
-- V2 cursor/candidate metadata was inferred from untrusted body text. Internal operations now
-  return structured cursor/candidate fields; v2 never parses presentation text for control data.
-  The historical adapter keeps its original footers. Evidence/Memory labels remain intact.
-- Reopening a dedicated Semantic/Episodic v2 session reset consumed counters and diagnostics.
-  The original reset behavior is now limited to legacy contract 1; v2 resumes retain the budget.
-- The legacy advertised property Schema rejected the original object branch. Migrated Native
-  conversations again accept that branch through provider-facing validation; v2 keeps flat fields.
-- Inherited object names could be mistaken for staged handles or branch examples. Candidate
-  membership uses own properties, and malformed `part` values cannot throw during error formatting.
-- Snapshot scope comparison treated JSON object-key order as a data change. Resume/recovery compare
-  JSON values while preserving array order and rejecting real evidence/subject changes.
-- Acceptance counted unrelated or already-parallel submissions as injected-error recovery. It now
-  requires the intended invalid-reference failure, matching fact/candidate identity, and a retry
-  started after the error returned. Requested injection must actually trigger to pass.
-
-Regression tests cover those reproductions, including the actual historical writer fixture and
-provider-facing Schema, raw source labels, authority Memory pagination, persisted counters and
-unchanged-versus-changed snapshots. `pnpm --filter @pragma/desktop test:memory-curator-acceptance`
-runs the acceptance-verdict tests without a model. The full Desktop test command includes them.
-Private real-model verification artifacts remain outside the repository.
-
-PR review additionally reproduced submissions/error feedback consuming the final receipt budget.
-Combined Semantic/Episodic regression cases set the limit before staging multiple facts and episode
-parts, exhaust submission/correction space, reopen, and save both receipts in either order.
-Duplicate finish calls cannot consume the companion receipt allocation. Frozen v1/v2 migration
-dependencies are copied from their actual writer commits; historical fixture validation is tested
-with the live Shared and omission-statistics modules unavailable.
+- V2 control data uses structured cursor/candidate fields, never parsed presentation text; legacy
+  contract 1 retains its historical footers and provider-facing object Schema.
+- V2 resume retains consumed counters and receipt reserves. Duplicate finish calls cannot consume
+  the companion receipt allocation. Candidate handles require own-property membership.
+- Snapshot recovery compares JSON values independent of object-key order, preserves array order,
+  and rejects changed Evidence or subjects. Historical dependencies/fixtures remain frozen.
+- Injected-error acceptance requires the intended failure and a matching retry started after it;
+  unrelated submissions do not count. Verdict regressions run via
+  `pnpm --filter @pragma/desktop test:memory-curator-acceptance` without a model.
 
 Semantic data upgrades 6 → 7 to distinguish governance/source invalidation from captured-learning denial in durable projection notifications. Existing denial flags remain unchanged; invalidation, forgetting, conflict and expiry changes can now wake learning to reconsider the remaining eligible projections. The historical v6 writer fixture verifies upgrade and delivery without changing Fact revisions.
 

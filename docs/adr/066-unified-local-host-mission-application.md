@@ -41,6 +41,5 @@ The CLI test entry runs the complete shared Local Host business gate before CLI 
 Desktop retains IPC/Electron/UI/platform resource and packaging verification. Real model, OS
 credential and full product performance acceptance cannot be inferred from fixture gates.
 
-The [R4 report](../archive/architecture/local-host-kernel-r4-implementation.md) records exact results,
-P01–P17 protections and remaining acceptance gaps; issue #348 stays incomplete while applicable
+The [历史验收摘要](../archive/README.md) records remaining acceptance gaps; issue #348 stays incomplete while applicable
 acceptance remains outstanding.

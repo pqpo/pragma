@@ -51,5 +51,5 @@ Shared 契约、Local Host 真正 repository 查询、CLI describe 及 Desktop �
 
 真实 Codex Runtime 已通过生产 binding、Interpreter 编译和内置 CLI 完成未挂载资源的只读验收。
 根据实际调用收紧渐进式说明后，同一验收任务从 8 次查询加 8 次帮助调用变为 6 次查询、0 次帮助调用。
-具体命令、返回正文大小和测量范围见[验收证据](../performance/managed-resource-cli-evidence.json)。
+具体命令、返回正文大小和测量范围可从 Git 历史追溯；该次测量不能代替当前性能验收。
 这项 native 验收使用完全访问模式，不执行修订或审批；受限 Runtime 沙箱仍必须允许进程访问本地授权通道。

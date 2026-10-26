@@ -18,7 +18,7 @@ Every dispatched prompt settles unfinished compaction hooks before releasing its
 
 `session/load` replays history into the session's message view without re-emitting it into a new turn. The persistent Runtime reference, ownership rules, native configuration directory and checkpoint format are unchanged. Old native Claude JSONL sessions are loaded by ID inside their owned configuration root.
 
-Claude Code must be installed by the user. Desktop excludes all SDK-supplied CLI binaries on every target architecture; the worker requires an explicit external CLI and cannot fall back to the SDK executable. Invalid installations produce Claude-specific availability diagnostics without preventing Host composition. See the [packaging audit and regression gate](../archive/architecture/claude-code-packaging-audit.md).
+Claude Code must be installed by the user. Desktop excludes all SDK-supplied CLI binaries on every target architecture; the worker requires an explicit external CLI and cannot fall back to the SDK executable. Invalid installations produce Claude-specific availability diagnostics without preventing Host composition. See the [历史验收摘要](../archive/README.md).
 
 Both CLI and Desktop include a self-contained worker at build time. Desktop unpacks only `out/main/claude-acp-worker.js` from ASAR so the Electron executable can launch it with `ELECTRON_RUN_AS_NODE=1`; main and its shared chunks retain their packaging policy. CLI tarball auditing covers the worker, its dependency graph and workspace import/path leaks.
 

@@ -1,6 +1,6 @@
 # Mission conversation read model
 
-阶段一/二完成范围、剩余交接与性能复测要求见[Mission 延迟优化交接](../performance/mission-latency-handoff.md)。
+阶段一/二完成范围、剩余交接与性能复测要求见[性能验收边界](../performance/README.md)。
 
 Mission 会话读取遵循“事实、投影、展示”三层边界，读取路径不得承担修复任务。
 

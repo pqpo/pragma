@@ -1,11 +1,27 @@
-# 性能历史与测量证据
+# 性能测量入口
 
-本目录是按提交、环境和时间保存的测量档案，不是当前性能承诺或开发计划。
-保留原路径以便既有 JSON、探针和外部报告能够重放。旧脚本可能依赖当时的 API，运行前核对其注明的提交与前提。
-当前测试预算见[测试与发布规范](../conventions/testing-and-release-performance.md)，系统边界见[当前架构](../architecture/current-architecture-overview.md)。
+当前性能预算与门禁见[测试与发布规范](../conventions/testing-and-release-performance.md)。
+阶段测量、源码快照、重复采样 JSON 和一次性分析探针不再随源码保留；历史记录可从 Git 历史追溯。
+旧测量只适用于当时的提交与环境，不能证明当前产品性能。
 
-- `issue-254/255/256` 报告：Mission 输入、流式更新和投影的阶段测量。
-- `mission-latency-*`：延迟优化阶段方案与测量；尚未验收的声明只反映记录时状态。
-- `local-host-kernel-*`：共享内核 R1–R4 的对照、源完整性、原生运行及成本证据。
+## 可复用基准
 
-目录中的样本量、分位数、mock/真实 Runtime 区分和验收缺口不得因整理而删除或提升为全产品结论。
+- [Mission 端到端](../../apps/desktop/scripts/benchmark-mission-end-to-end.mjs)与[延迟测量](../../apps/desktop/scripts/run-mission-latency-benchmark.mjs)。
+- [输入框](../../apps/desktop/scripts/benchmark-mission-composer.mjs)、[流式投影](../../apps/desktop/scripts/benchmark-mission-stream.mjs)、[Renderer 流式绘制](../../apps/desktop/scripts/benchmark-mission-stream-ui.mjs)与[会话投影](../../apps/desktop/scripts/benchmark-mission-projection.mjs)。
+- [Execution 存储](../../packages/local-host/scripts/benchmark-execution-storage.mjs)与[存储准备](../../packages/local-host/scripts/benchmark-storage-preparation.mjs)。
+
+运行前核对脚本参数和环境前提；生成结果留在仓库外或 CI artifact，PR 只记录必要结论、方法与限制。
+
+## 历史验收缺口
+
+Mission 延迟优化与 Issue 348 的局部基准、fixture 和工程门禁不等于完整产品验收。
+当时真实 Pi/DeepSeek 测量受 native Keychain 阻塞，未取得有效端到端样本；以下目标未获完整验证：
+
+- 暖 Session 接入额外开销 P95 < 250 ms。
+- 模型完成到 Core terminal P95 < 500 ms。
+- terminal 到 Renderer paint P95 < 200 ms，queue 控件可用 P95 < 200 ms。
+- 真实模型、Electron 绘制与正常后台负载重叠下的整体性能。
+
+复测须区分冷启动、暖 Mission、暖 Session、上轮收尾期间立即发送；每场景至少 20 个样本，
+串起点击、IPC、Inbox、dispatch、模型结束、耐久终态与 UI 绘制，报告 P50/P95 和等待时间。
+不得通过扣除真实等待、mock 吞吐或局部缓存命中宣布达标。清理记录不改变这些验收状态。

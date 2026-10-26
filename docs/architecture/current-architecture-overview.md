@@ -175,7 +175,7 @@ stable journal、备份与原子替换保证恢复。业务 parser 只接受当�
 - [Agent Core 架构](./agent-core-architecture.md)
 - [Pragma YAML DSL](./pragma-yaml-dsl.md)
 - [Pragma Bundle](./pragma-bundle.md)
-- [Issue 399 独立部署与 Memory Headless 重构执行计划](../plans/issue-399.md)
+- [Issue 399 共享配置交付与暂缓范围](../plans/issue-399.md)
 - [Runtime Feature Framework](./runtime-feature-framework.md)
 - [Mission Board](../articles/03-mission-board.md)
 - [Memory](../usage/memory.md)

@@ -73,74 +73,10 @@ fails.
 
 ## 3. Versioned protocol
 
-The target schema is browser-safe and belongs in `@pragma/shared`.
-
-```ts
-type DiagnosticLevel = "debug" | "info" | "warn" | "error" | "fatal";
-type DiagnosticStream = "operation" | "failure";
-
-interface DiagnosticRecord {
-  readonly schemaVersion: "pragma.diagnostic/v1";
-  readonly recordId: string;
-  readonly diagnosticId?: string;
-  readonly occurredAt: string;
-  readonly sequence: number;
-  readonly bootId: string;
-  readonly process: {
-    readonly kind: "desktop-main" | "desktop-renderer" | "cli" | "test" | string;
-    readonly pid?: number;
-    readonly version?: string;
-  };
-  readonly stream: DiagnosticStream;
-  readonly level: DiagnosticLevel;
-  readonly component: string;
-  readonly event: string;
-  readonly message: string;
-  readonly scope: DiagnosticScope;
-  readonly attributes?: Readonly<Record<string, JsonValue>>;
-  readonly error?: DiagnosticError;
-}
-
-interface DiagnosticScope {
-  readonly operationId?: string;
-  readonly parentOperationId?: string;
-  readonly requestId?: string;
-  readonly missionId?: string;
-  readonly executionId?: string;
-  readonly expertSessionId?: string;
-  readonly invocationId?: string;
-  readonly contextId?: string;
-  readonly agentId?: string;
-  readonly runId?: string;
-  readonly runtimeId?: string;
-  readonly systemSessionId?: string;
-  readonly runtimeSessionType?: string;
-  readonly runtimeSessionId?: string;
-  readonly pluginId?: string;
-}
-
-interface DiagnosticError {
-  readonly code: string;
-  readonly name: string;
-  readonly message: string;
-  readonly stack?: string;
-  readonly classification:
-    | "validation"
-    | "permission"
-    | "cancelled"
-    | "timeout"
-    | "conflict"
-    | "not-found"
-    | "storage"
-    | "runtime"
-    | "external"
-    | "invariant"
-    | "unknown";
-  readonly retryable: boolean;
-  readonly cause?: DiagnosticError;
-  readonly errors?: readonly DiagnosticError[];
-}
-```
+The browser-safe protocol is owned by
+[`@pragma/shared` logging Schema](../../packages/shared/src/logging/log.schema.ts).
+Logger APIs and operation helpers are defined in
+[`@pragma/core` logger](../../packages/core/src/logging/logger.ts); use those definitions rather than copying interfaces here.
 
 Schema invariants:
 
@@ -157,62 +93,12 @@ cannot be emitted.
 
 ## 4. API design
 
-The logger API keeps event identity separate from prose and makes failure normalization mandatory:
+Use a scoped logger with stable event names. `error()` and `fatal()` return a `diagnosticId`
+that durable failure summaries may reference. Stacks, cause chains, native stderr and arbitrary
+exception properties stay out of durable Execution state.
 
-```ts
-interface PragmaLogger {
-  child(scope: DiagnosticScope, component?: string): PragmaLogger;
-
-  debug(event: string, message: string, attributes?: LogAttributes): void;
-  info(event: string, message: string, attributes?: LogAttributes): void;
-  warn(event: string, message: string, attributes?: LogAttributes): void;
-
-  error(event: string, message: string, error: unknown, attributes?: LogAttributes): string;
-  fatal(event: string, message: string, error: unknown, attributes?: LogAttributes): string;
-}
-
-interface PragmaLoggerProvider {
-  createLogger(input: {
-    readonly component: string;
-    readonly scope?: DiagnosticScope;
-  }): PragmaLogger;
-}
-```
-
-`error()` and `fatal()` return `diagnosticId`. A terminal Execution/Invocation writer can place that
-id in its existing JSON-safe failure summary:
-
-```ts
-{
-  code: "runtime.turn.failed",
-  message: "The Runtime turn failed.",
-  diagnosticId: "01J...",
-  retryable: true
-}
-```
-
-Stacks, cause chains, native stderr, and arbitrary exception properties stay out of durable
-Execution state.
-
-For common timed operations, Core provides a small helper:
-
-```ts
-await runLoggedOperation(
-  logger,
-  {
-    event: "interpreter.project.compile",
-    startedMessage: "Project compilation started.",
-    completedMessage: "Project compilation completed.",
-    attributes: { projectId, revision, resourceRef },
-  },
-  async (operationLogger) => {
-    // ...
-  },
-);
-```
-
-It emits `*.started`, then either `*.completed` with `durationMs`, or `*.failed` once and rethrows.
-It must not be wrapped around code whose owner already logs the same failure.
+`runLoggedOperation()` emits started/completed with duration, or logs failure once and rethrows.
+Do not wrap an operation whose owner already logs that failure.
 
 ### Error ownership rules
 
@@ -290,32 +176,8 @@ The initial component namespace is:
 | `runtime.<adapter>`     | Concrete Runtime protocol/process              |
 | `plugin.<plugin-id>`    | Plugin-owned work                              |
 
-Event names are stable behavior names, not interpolated messages:
-
-```text
-desktop.process.started
-desktop.renderer.preload_failed
-desktop.renderer.process_gone
-desktop.mission.execution_started
-desktop.mission.projection_failed
-interpreter.project.load_completed
-interpreter.project.validation_rejected
-interpreter.project.compile_failed
-core.execution.recovery_started
-core.execution.finalization_failed
-core.invocation.started
-core.invocation.failed
-core.runtime.session_created
-core.runtime.session_restore_failed
-core.runtime.turn_failed
-core.tool.call_failed
-core.storage.migration_failed
-runtime.codex.process_exited
-runtime.claude-code.protocol_failed
-runtime.pi.request_failed
-```
-
-Dynamic ids belong in `scope` or `attributes`, never in `event`.
+Event names are stable lowercase behavior names, such as `core.execution.recovery_started`
+and `core.tool.call_failed`. Dynamic ids belong in `scope` or `attributes`, never in `event`.
 
 ## 7. Layer integration
 
