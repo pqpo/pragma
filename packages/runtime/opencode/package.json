@@ -20,8 +20,8 @@
   "dependencies": {
     "@pragma/core": "workspace:*",
     "@pragma/shared": "workspace:*",
-    "@opencode-ai/sdk": "1.19.2",
-    "@opencode/client": "2.0.30",
+    "@opencode-ai/sdk": "1.19.4",
+    "@opencode/client": "2.1.3",
     "json5": "2.2.3",
     "yaml": "^2.9.1",
     "zod": "4.6.7"
