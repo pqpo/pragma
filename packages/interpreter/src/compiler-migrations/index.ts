@@ -34,7 +34,7 @@ export {
 
 import { migratePragmaCompilerV9Project } from "./steps/v9-to-v10.ts";
 
-export const PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION = "pragma.compiler-migrations/v8";
+export const PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION = "pragma.compiler-migrations/v9";
 
 export function migratePragmaCompilerProjectToCurrent(input: {
   readonly files: ReadonlyMap<string, string>;
@@ -57,7 +57,11 @@ export function migratePragmaCompilerProjectToCurrent(input: {
                   ? migratePragmaCompilerV7Project(input)
                   : sourceCompilerVersion === "pragma.dsl/v8"
                     ? migratePragmaCompilerV8Project(input)
-                    : migratePragmaCompilerV9Project(input);
+                    : sourceCompilerVersion === "pragma.dsl/v9"
+                      ? migratePragmaCompilerV9Project(input)
+                      : // v10 → v11 changes compilation defaults only. Validate the
+                        // original lock and retain resource bytes and explicit policies.
+                        parseCurrentProject(input.files, sourceCompilerVersion);
     return {
       sourceCompilerVersion,
       targetCompilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
@@ -156,7 +160,9 @@ function parseCurrentProject(
       );
     })
     .map((resource) => resource.ref);
-  if (actualByRef.size !== expectedResources.length) mismatches.push("resource set");
+  if (actualByRef.size !== lock.resources.length || actualByRef.size !== expectedResources.length) {
+    mismatches.push("resource set");
+  }
   const expectedProjectFingerprint = sha256(
     stableStringify({
       resources: expectedResources.map(({ ref, contentHash }) => ({ ref, contentHash })),

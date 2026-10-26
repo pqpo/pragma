@@ -618,7 +618,7 @@ describe("Pragma YAML DSL", () => {
     });
     const dumped = await project.dump(compiled.value, { split: "by-resource" });
     expect(dumped.files.get("flows/t9ne4d8njvvxv2ea.pragma.yaml")).toContain("kind: Flow");
-    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v10");
+    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v11");
     const single = await project.dump(compiled.value, { split: "single" });
     await writeFile(join(root, "single.yaml"), single.files.get("pragma.yaml")!);
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
@@ -1077,7 +1077,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v2",
-      targetCompilerVersion: "pragma.dsl/v10",
+      targetCompilerVersion: "pragma.dsl/v11",
       migrated: true,
     });
     expect(migrated.resources).toEqual([
@@ -1100,7 +1100,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v3",
-      targetCompilerVersion: "pragma.dsl/v10",
+      targetCompilerVersion: "pragma.dsl/v11",
       migrated: true,
       resources: [expect.objectContaining({ kind: "Expert" })],
     });
@@ -1118,7 +1118,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v4",
-      targetCompilerVersion: "pragma.dsl/v10",
+      targetCompilerVersion: "pragma.dsl/v11",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1141,7 +1141,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v5",
-      targetCompilerVersion: "pragma.dsl/v10",
+      targetCompilerVersion: "pragma.dsl/v11",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1165,7 +1165,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v6",
-      targetCompilerVersion: "pragma.dsl/v10",
+      targetCompilerVersion: "pragma.dsl/v11",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1195,7 +1195,7 @@ describe("Pragma YAML DSL", () => {
     });
     expect(result).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v9",
-      targetCompilerVersion: "pragma.dsl/v10",
+      targetCompilerVersion: "pragma.dsl/v11",
       migrated: true,
       resources: [
         {
@@ -1214,6 +1214,51 @@ describe("Pragma YAML DSL", () => {
       migratePragmaCompilerProjectToCurrent({ files, revisionCompilerVersion: "pragma.dsl/v9" }),
     ).toThrow("does not match its lock");
     expect(files.get(resource)).toContain("Tampered instructions");
+  });
+
+  it("upgrades the real compiler v10 writer without changing policies or accepting a tampered lock", async () => {
+    const root = join(import.meta.dirname, "fixtures", "compiler-v10-mcp-approval");
+    const files = new Map(
+      await Promise.all(
+        ["pragma.yaml", "pragma.lock.yaml"].map(
+          async (path) => [path, await readFile(join(root, path), "utf8")] as const,
+        ),
+      ),
+    );
+    const original = new Map(files);
+    const migrated = migratePragmaCompilerProjectToCurrent({
+      files,
+      revisionCompilerVersion: "pragma.dsl/v10",
+    });
+    expect(migrated).toMatchObject({
+      sourceCompilerVersion: "pragma.dsl/v10",
+      targetCompilerVersion: "pragma.dsl/v11",
+      migrated: true,
+      resources: [
+        {
+          kind: "Expert",
+          spec: { toolApprovals: { mcp_docs_searchDocChunk: "ask", mcp_docs_write: "required" } },
+        },
+      ],
+    });
+    expect(files).toEqual(original);
+    const lock = parsePragmaYaml(files.get("pragma.lock.yaml")!) as { resources: unknown[] };
+    lock.resources.push(lock.resources[0]);
+    const duplicateLock = new Map(files);
+    duplicateLock.set("pragma.lock.yaml", formatPragmaYaml(lock));
+    expect(() =>
+      migratePragmaCompilerProjectToCurrent({
+        files: duplicateLock,
+        revisionCompilerVersion: "pragma.dsl/v10",
+      }),
+    ).toThrow(expect.objectContaining({ code: "lock_mismatch" }));
+    files.set(
+      "pragma.yaml",
+      files.get("pragma.yaml")!.replace("Pinned original instructions", "Tampered"),
+    );
+    expect(() =>
+      migratePragmaCompilerProjectToCurrent({ files, revisionCompilerVersion: "pragma.dsl/v10" }),
+    ).toThrow(expect.objectContaining({ code: "lock_mismatch" }));
   });
 
   it("preserves historical v9 extension fields while validating known fields", async () => {
@@ -1288,7 +1333,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v7",
-      targetCompilerVersion: "pragma.dsl/v10",
+      targetCompilerVersion: "pragma.dsl/v11",
       migrated: true,
       resources: [
         expect.objectContaining({ apiVersion: PRAGMA_DSL_WRITE_API_VERSION, kind: "Capability" }),
@@ -1353,7 +1398,7 @@ describe("Pragma YAML DSL", () => {
     });
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v8",
-      targetCompilerVersion: "pragma.dsl/v10",
+      targetCompilerVersion: "pragma.dsl/v11",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1372,15 +1417,15 @@ describe("Pragma YAML DSL", () => {
     await writeFile(entry, formatPragmaYaml(runtimeProfile()));
     const project = await loadPragmaProject(entry);
     const migrated = migratePragmaCompilerProjectToCurrent({
-      revisionCompilerVersion: "pragma.dsl/v10",
+      revisionCompilerVersion: "pragma.dsl/v11",
       files: new Map([
         ["pragma.yaml", await readFile(entry, "utf8")],
         ["pragma.lock.yaml", formatPragmaYaml(project.createLock())],
       ]),
     });
     expect(migrated).toMatchObject({
-      sourceCompilerVersion: "pragma.dsl/v10",
-      targetCompilerVersion: "pragma.dsl/v10",
+      sourceCompilerVersion: "pragma.dsl/v11",
+      targetCompilerVersion: "pragma.dsl/v11",
       migrated: false,
     });
   });
@@ -2373,83 +2418,143 @@ describe("Pragma YAML DSL", () => {
     );
   });
 
-  it("never downgrades capability-owned MCP approval requirements", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-mcp-approvals-"));
-    const entry = join(root, "pragma.yaml");
-    const expert: PragmaExpertResource = expertResource("1xddvess309a6gme", "Writes");
-    expert.spec.capabilities = [
-      { ref: "capability:pcr7npvx0gv8fpka", kind: "tools", tools: ["write"] },
-    ];
-    expert.spec.toolApprovals = { write: "none", mcp_writer_write: "none" };
-    await writeFile(
-      entry,
-      formatPragmaYaml({
-        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
-        kind: "Bundle",
-        imports: [],
-        resources: [
-          runtimeProfile(),
-          expert,
-          {
-            apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
-            kind: "Capability",
-            metadata: {
-              id: "pcr7npvx0gv8fpka",
-              name: "Writer tools",
-              description: "Writes data",
-              tags: [],
+  it.each([
+    {
+      serverKey: "writer",
+      approvalKey: "mcp_writer_write",
+      hostMode: "required",
+      isDefault: false,
+      explicit: "none",
+      expected: "required",
+    },
+    {
+      serverKey: "docs-service",
+      approvalKey: "mcp_docs_service_write",
+      hostMode: "ask",
+      isDefault: true,
+      explicit: "none",
+      expected: "none",
+    },
+    {
+      serverKey: "docs-service",
+      approvalKey: "mcp_docs_service_write",
+      hostMode: "ask",
+      isDefault: true,
+      explicit: "required",
+      expected: "required",
+    },
+    {
+      serverKey: "docs-service",
+      approvalKey: "mcp_docs_service_write",
+      hostMode: "ask",
+      isDefault: false,
+      explicit: "none",
+      expected: "ask",
+    },
+    {
+      serverKey: "docs-service",
+      approvalKey: "mcp_docs-service_write",
+      hostMode: "ask",
+      isDefault: true,
+      explicit: "required",
+      expected: "required",
+    },
+    {
+      serverKey: "docs__service",
+      approvalKey: "mcp_docs_service_write",
+      hostMode: "ask",
+      isDefault: true,
+      explicit: "none",
+      expected: "none",
+    },
+    {
+      serverKey: "writer",
+      approvalKey: "mcp_writer_write",
+      hostMode: "required",
+      isDefault: true,
+      explicit: "none",
+      expected: "required",
+    },
+  ] as const)(
+    "preserves approvals for $serverKey with host $hostMode and expert $explicit",
+    async ({ serverKey, approvalKey, hostMode, isDefault, explicit, expected }) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-mcp-approvals-"));
+      const entry = join(root, "pragma.yaml");
+      const expert: PragmaExpertResource = expertResource("1xddvess309a6gme", "Writes");
+      expert.spec.capabilities = [
+        { ref: "capability:pcr7npvx0gv8fpka", kind: "tools", tools: ["write"] },
+      ];
+      expert.spec.toolApprovals = { [approvalKey]: explicit };
+      await writeFile(
+        entry,
+        formatPragmaYaml({
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+          kind: "Bundle",
+          imports: [],
+          resources: [
+            runtimeProfile(),
+            expert,
+            {
+              apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+              kind: "Capability",
+              metadata: {
+                id: "pcr7npvx0gv8fpka",
+                name: "Writer tools",
+                description: "Writes data",
+                tags: [],
+              },
+              spec: {
+                adapter: "pragma.capability.host@v1",
+                binding: "binding:writer-tools",
+                config: { key: "writer-tools" },
+              },
             },
-            spec: {
-              adapter: "pragma.capability.host@v1",
-              binding: "binding:writer-tools",
-              config: { key: "writer-tools" },
-            },
-          },
-        ],
-      }),
-    );
-    const project = await loadPragmaProject(entry);
-    const compiled = await project.compile<Expert>("expert:1xddvess309a6gme", {
-      workspace: root,
-      adapterHost: {
-        environmentId: "test",
-        projectRoot: root,
-        async resolveBinding(ref) {
-          return {
-            ref,
-            revision: "1",
-            fingerprint: "a".repeat(64),
-            value: {
-              contribution: {
-                mcp: {
-                  mcpServers: {
-                    writer: {
-                      name: "Writer",
-                      transport: "in-process",
-                      inProcess: {
-                        listTools: async () => [{ name: "write" }],
-                        callTool: async () => ({ ok: true }),
+          ],
+        }),
+      );
+      const project = await loadPragmaProject(entry);
+      const compiled = await project.compile<Expert>("expert:1xddvess309a6gme", {
+        workspace: root,
+        adapterHost: {
+          environmentId: "test",
+          projectRoot: root,
+          async resolveBinding(ref) {
+            return {
+              ref,
+              revision: "1",
+              fingerprint: "a".repeat(64),
+              value: {
+                contribution: {
+                  mcp: {
+                    mcpServers: {
+                      [serverKey]: {
+                        name: "Writer",
+                        transport: "in-process",
+                        inProcess: {
+                          listTools: async () => [{ name: "write" }],
+                          callTool: async () => ({ ok: true }),
+                        },
+                        toolApprovals: { write: { mode: hostMode, isDefault } },
                       },
-                      toolApprovals: { write: { mode: "required" } },
                     },
                   },
                 },
               },
-            },
-          };
+            };
+          },
+          async resolveArtifact() {
+            throw new Error("unused");
+          },
+          async resolveSecret() {
+            return undefined;
+          },
         },
-        async resolveArtifact() {
-          throw new Error("unused");
-        },
-        async resolveSecret() {
-          return undefined;
-        },
-      },
-    });
-    expect(compiled.value.mcp?.mcpServers["writer"]?.toolApprovals?.["write"]?.mode).toBe(
-      "required",
-    );
-  });
+      });
+      expect(compiled.value.mcp?.mcpServers[serverKey]?.toolApprovals?.["write"]?.mode).toBe(
+        expected,
+      );
+    },
+  );
 
   it("rejects duplicate semantic identities", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-dsl-versions-"));

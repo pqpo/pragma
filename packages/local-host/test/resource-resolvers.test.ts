@@ -1,9 +1,23 @@
+import { createServer } from "node:http";
+import { once } from "node:events";
+import { loadPragmaProject, formatPragmaYaml } from "@pragma/interpreter";
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
+import { createRuntimeTestFeatures } from "@pragma/core/testing";
 import { randomUUID } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { PragmaPaths } from "@pragma/core";
+import {
+  PragmaPaths,
+  createStaticRuntimeResolver,
+  createMcpToolRegistryPool,
+  executeExecutionTool,
+  resolveExecutionTools,
+  createPragmaLogger,
+  snapshotRuntimeFeatures,
+  type Expert,
+} from "@pragma/core";
 import { PRAGMA_MANAGEMENT_BINDING_REF } from "@pragma/built-in-agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -141,6 +155,224 @@ describe("Node resource readers shared with Desktop", () => {
       "completing an active environment change",
     );
     if (pending !== undefined) await resources.capabilityCredentials.rollback(pending);
+  });
+
+  it("compiles real Host MCP defaults for full access, explicit policies, and manual retry", async () => {
+    const { home, paths, resources } = await fixture();
+    let requests = 0;
+    const server = createServer((_request, response) => {
+      requests += 1;
+      response.writeHead(requests === 1 ? 503 : 200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ ok: requests > 1 }));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const pool = createMcpToolRegistryPool();
+    try {
+      const address = server.address();
+      if (address === null || typeof address === "string") throw new Error("Missing test port");
+      const id = "00000000-0000-4000-8000-000000000032";
+      const root = join(paths.dataRoot(), "capabilities", id);
+      await json(join(root, "capability.json"), {
+        schemaVersion: "pragma.capability/v4",
+        id,
+        runtimeKey: "docs",
+        name: "Docs",
+        kind: "http_service",
+        latestRevision: 1,
+        activeRevision: 1,
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+      });
+      await json(join(root, "revisions", "000001", "definition.json"), {
+        kind: "http_service",
+        name: "Docs",
+        description: "",
+        auth: { type: "none" },
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        timeoutMs: 30000,
+        tools: [
+          {
+            name: "searchDocChunk",
+            description: "Search",
+            method: "GET",
+            path: "/read",
+            parameters: [],
+          },
+          { name: "write", description: "Write", method: "POST", path: "/write", parameters: [] },
+        ],
+      });
+      await json(join(root, "health.json"), {
+        revision: 1,
+        status: "ready",
+        checkedAt: "2026-10-01T00:00:00.000Z",
+      });
+      const entry = join(home, "pragma.yaml");
+      const capabilityRef = "capability:pcr7npvx0gv8fpka";
+      const compile = async (
+        mode: string,
+        approvals: Record<string, "none" | "ask" | "required"> = {},
+      ) => {
+        await writeFile(
+          entry,
+          formatPragmaYaml({
+            apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+            kind: "Bundle",
+            imports: [],
+            resources: [
+              {
+                apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+                kind: "Expert",
+                metadata: {
+                  id: "1xddvess309a6gme",
+                  name: "Search",
+                  description: "Search documents",
+                  tags: [],
+                },
+                spec: {
+                  scope: "application",
+                  instructions: "Search",
+                  tools: [],
+                  plugins: [],
+                  contextStores: [],
+                  capabilities: [
+                    { ref: capabilityRef, kind: "tools", tools: ["searchDocChunk", "write"] },
+                  ],
+                  toolApprovals: approvals,
+                },
+              },
+              {
+                apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+                kind: "Capability",
+                metadata: {
+                  id: "pcr7npvx0gv8fpka",
+                  name: "Docs",
+                  description: "Document tools",
+                  tags: [],
+                },
+                spec: {
+                  adapter: "pragma.capability.host@v1",
+                  binding: binding("capability", id),
+                  config: { key: "docs" },
+                },
+              },
+            ],
+          }),
+        );
+        const project = await loadPragmaProject(entry);
+        expect(await project.validate()).toEqual([]);
+        return (
+          await project.compile<Expert>("expert:1xddvess309a6gme", {
+            workspace: home,
+            adapterHost: resources.adapterHost({ id: "mission", workspace: { path: home } }),
+            expertExecutionProfiles: {
+              "1xddvess309a6gme": { runtimeId: "test", permissionModeId: mode },
+            },
+            runtimes: createStaticRuntimeResolver({
+              defaultRuntimeId: "test",
+              runtimes: [
+                {
+                  descriptor: {
+                    id: "test",
+                    kind: "test",
+                    displayName: "Test",
+                    permissionModes: {
+                      defaultModeId: "full-access",
+                      modes: [
+                        {
+                          id: "full-access",
+                          label: "Full",
+                          description: "Full",
+                          available: true,
+                          defaultMcpApproval: "none",
+                        },
+                        {
+                          id: "request-approval",
+                          label: "Ask",
+                          description: "Ask",
+                          available: true,
+                        },
+                      ],
+                    },
+                  },
+                  features: snapshotRuntimeFeatures(createRuntimeTestFeatures()),
+                  canUse: () => ({ usable: true }),
+                },
+              ],
+            }),
+          })
+        ).value;
+      };
+      const approvalHandler = vi.fn(async () => ({
+        kind: "tool_approval" as const,
+        approved: false,
+      }));
+      const executeSearch = async (agent: Expert) => {
+        const lease = await pool.acquire(agent.mcp);
+        try {
+          const tool = resolveExecutionTools({
+            agent,
+            getContext: () => undefined,
+            mcpTools: lease.registry.tools,
+          }).tools.find((candidate) => candidate.name === "mcp_docs_searchDocChunk")!.tool;
+          return await executeExecutionTool({
+            agent,
+            tool,
+            toolCallId: "search",
+            args: {},
+            signal: undefined,
+            humanInteractionHandler: approvalHandler,
+            logger: createPragmaLogger(undefined, { component: "test" }),
+            state: {},
+          });
+        } finally {
+          await lease.release();
+        }
+      };
+      await expect(executeSearch(await compile("full-access"))).resolves.toMatchObject({
+        isError: true,
+        details: { status: 503 },
+      });
+      // A manual retry recompiles the same pinned capability after the failed call.
+      await expect(executeSearch(await compile("full-access"))).resolves.toMatchObject({
+        content: [{ type: "text", text: '{"ok":true}' }],
+      });
+      expect(approvalHandler).not.toHaveBeenCalled();
+      expect(requests).toBe(2);
+      // Explicit asking policies still invoke the real approval gate and denial has no side effects.
+      for (const approval of ["ask", "required"] as const) {
+        await expect(
+          executeSearch(await compile("full-access", { mcp_docs_searchDocChunk: approval })),
+        ).resolves.toMatchObject({ isError: true });
+      }
+      expect(approvalHandler).toHaveBeenCalledTimes(2);
+      expect(requests).toBe(2);
+      for (const [mode, configured, expected] of [
+        ["full-access", undefined, "none"],
+        ["request-approval", undefined, "ask"],
+        ["full-access", "ask", "ask"],
+        ["full-access", "required", "required"],
+        ["request-approval", "none", "none"],
+      ] as const) {
+        const expert = await compile(
+          mode,
+          configured === undefined ? {} : { mcp_docs_searchDocChunk: configured },
+        );
+        expect(expert.mcp?.mcpServers["docs"]?.toolApprovals?.["searchDocChunk"]?.mode).toBe(
+          expected,
+        );
+        expect(expert.mcp?.mcpServers["docs"]?.toolApprovals?.["write"]?.mode).toBe("required");
+      }
+      const cannotBypassWrite = await compile("full-access", { mcp_docs_write: "none" });
+      expect(cannotBypassWrite.mcp?.mcpServers["docs"]?.toolApprovals?.["write"]?.mode).toBe(
+        "required",
+      );
+    } finally {
+      await pool.close();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 
   it("opens and upgrades a real historical ContextStore without Desktop running", async () => {

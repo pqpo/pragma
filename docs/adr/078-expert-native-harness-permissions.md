@@ -54,7 +54,9 @@ it does not change persisted definition fingerprints or historical Session recov
 Native read-only describes native filesystem execution. It does not revoke managed
 MCP capabilities: explicit tool allowlists, business approvals, credentials and
 Host-owned mutation rules remain independently authoritative. The editor explains
-this boundary. Full access also does not bypass these business approvals.
+this boundary. Full access also does not bypass these business approvals. ADR 079 refines only
+the fallback MCP prompt: full-access modes skip default confirmation while
+explicit tool approvals and mandatory business approvals remain authoritative.
 
 ## Persistence and recovery
 

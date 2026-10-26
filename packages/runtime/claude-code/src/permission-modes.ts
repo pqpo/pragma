@@ -7,6 +7,7 @@ export const permissionModes: RuntimePermissionCatalog = {
       id: "bypassPermissions",
       label: "Bypass permissions",
       description: "Native permission bypass; managed tool policies still apply.",
+      defaultMcpApproval: "none",
       available: true,
     },
     {

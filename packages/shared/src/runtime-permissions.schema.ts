@@ -5,6 +5,8 @@ export const RuntimePermissionModeSchema = z.object({
   label: z.string().min(1),
   description: z.string().min(1),
   available: z.boolean(),
+  // Omission preserves confirmation for default managed MCP calls.
+  defaultMcpApproval: z.enum(["none", "ask"]).optional(),
   reason: z.string().optional(),
 });
 export const RuntimePermissionCatalogSchema = z.object({

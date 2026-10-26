@@ -7,6 +7,7 @@ export const permissionModes: RuntimePermissionCatalog = {
       id: "full-access",
       label: "Allow all tools",
       description: "Native allow rules; explicit deny policies remain enforced.",
+      defaultMcpApproval: "none",
       available: true,
     },
     {

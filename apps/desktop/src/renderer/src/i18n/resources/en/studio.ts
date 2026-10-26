@@ -1,7 +1,7 @@
 export const studio = {
   permissionMode: "Permission mode",
   permissionModeHint:
-    "Uses this Harness’s own execution permissions. Managed tools keep their separate policies.",
+    "Full access skips default MCP approval. Explicit tool policies and required business approvals still apply.",
   permissionModeLabels: {
     "full-access": "Full access",
     "request-approval": "Ask for approval",
@@ -1646,9 +1646,9 @@ export const studio = {
   runtimeDefault: "Default",
   selectExpertTool: "Select {{name}}",
   toolApprovalFor: "Approval behavior for {{name}}",
-  approvalDefault: "Default approval",
+  approvalDefault: "Follow permission mode",
   approvalNone: "No approval",
-  approvalAsk: "Ask when needed",
+  approvalAsk: "Ask on every call",
   approvalRequired: "Always require approval",
   readySave: "Ready to save",
   readyCreate: "Ready to create",

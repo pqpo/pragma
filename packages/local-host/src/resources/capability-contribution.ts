@@ -364,9 +364,12 @@ function createApprovals(
 ) {
   return Object.fromEntries(
     tools.map((tool) => {
-      const mode =
-        expert.toolApprovals[`mcp_${runtimeKey}_${sanitizeExecutionToolName(tool)}`] ?? "ask";
-      return [tool, { mode }];
+      const configured =
+        expert.toolApprovals[`mcp_${runtimeKey}_${sanitizeExecutionToolName(tool)}`];
+      return [
+        tool,
+        configured === undefined ? { mode: "ask" as const, isDefault: true } : { mode: configured },
+      ];
     }),
   );
 }
@@ -381,7 +384,10 @@ function createHttpApprovals(
       const configured =
         expert.toolApprovals[`mcp_${runtimeKey}_${sanitizeExecutionToolName(tool.name)}`];
       const mode = configured ?? (tool.method === "POST" ? "required" : "ask");
-      return [tool.name, { mode }];
+      return [
+        tool.name,
+        { mode, ...(configured === undefined && tool.method === "GET" ? { isDefault: true } : {}) },
+      ];
     }),
   );
 }

@@ -581,7 +581,9 @@ function httpAdapter(): PragmaResourceAdapter<PragmaCapabilityResource> {
                 toolApprovals: Object.fromEntries(
                   parsed.tools.map((tool) => [
                     tool.name,
-                    { mode: tool.method === "POST" ? "required" : "ask" },
+                    tool.method === "POST"
+                      ? { mode: "required" }
+                      : { mode: "ask", isDefault: true },
                   ]),
                 ),
               },

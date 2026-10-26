@@ -226,6 +226,8 @@ export interface ExpertAgentToolApproval {
    * approval response.
    */
   readonly mode: ExpertAgentToolApprovalMode;
+  /** Host fallback, replaced by the Expert/runtime default during compilation. */
+  readonly isDefault?: boolean | undefined;
   readonly reason?: string | undefined;
   /**
    * Gates whether this approval policy applies to a specific tool call. When
@@ -258,11 +260,11 @@ export function mergeExpertAgentToolApprovals(
   left: ExpertAgentToolApproval | undefined,
   right: ExpertAgentToolApproval | undefined,
 ): ExpertAgentToolApproval | undefined {
-  if (left === undefined) {
-    return right;
+  if (left === undefined || left.mode === "none") {
+    return right ?? left;
   }
 
-  if (right === undefined) {
+  if (right === undefined || right.mode === "none") {
     return left;
   }
 

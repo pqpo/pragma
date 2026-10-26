@@ -8,6 +8,7 @@ export const permissionModes: RuntimePermissionCatalog = {
       label: "Native execution / full access",
       description:
         "Uses host process permissions. Pi has no built-in tool approval or sandbox policy.",
+      defaultMcpApproval: "none",
       available: true,
     },
   ],

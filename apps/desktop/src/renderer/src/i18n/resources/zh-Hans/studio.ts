@@ -1,6 +1,6 @@
 export const studio = {
   permissionMode: "权限模式",
-  permissionModeHint: "使用此 Harness 的执行权限。受管工具继续遵守各自的审批策略。",
+  permissionModeHint: "完全访问时，MCP 工具默认无需审批；工具显式审批与业务强制审批仍然生效。",
   permissionModeLabels: {
     "full-access": "完全访问",
     "request-approval": "请求审批",
@@ -1561,9 +1561,9 @@ export const studio = {
   runtimeDefault: "默认",
   selectExpertTool: "选择 {{name}}",
   toolApprovalFor: "{{name}} 的审批行为",
-  approvalDefault: "默认审批策略",
+  approvalDefault: "跟随权限模式",
   approvalNone: "无需审批",
-  approvalAsk: "按需询问",
+  approvalAsk: "每次调用时询问",
   approvalRequired: "始终需要审批",
   readySave: "可以保存",
   readyCreate: "可以创建",

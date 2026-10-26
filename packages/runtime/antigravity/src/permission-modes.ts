@@ -7,6 +7,7 @@ export const permissionModes: RuntimePermissionCatalog = {
       id: "full-access",
       label: "Full access",
       description: "Native host access with managed MCP policies.",
+      defaultMcpApproval: "none",
       available: true,
     },
     {

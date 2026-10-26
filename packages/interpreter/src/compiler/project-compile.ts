@@ -566,6 +566,19 @@ export async function compileExpert(
     executionOverride !== undefined
       ? executionOverride.permissionModeId
       : (executionBinding?.binding.permissionModeId ?? runtime?.permissionModeId);
+  const mcpRuntime =
+    executionBinding ??
+    (host.compilationPurpose === "stop" ||
+    !capabilities.some(({ contribution }) => contribution.mcp !== undefined)
+      ? undefined
+      : await host.runtimes?.bind({
+          runtimeId: runtime?.runtimeId,
+          permissionModeId,
+        }));
+  const defaultMcpApproval =
+    mcpRuntime?.adapter.descriptor.permissionModes?.modes.find(
+      (mode) => mode.id === mcpRuntime.binding.permissionModeId,
+    )?.defaultMcpApproval ?? "ask";
   const hookGroups: {
     readonly source: string;
     readonly hooks: ExpertAgentPluginHooks | undefined;
@@ -596,7 +609,9 @@ export async function compileExpert(
       );
     }
     if (contribution.mcp !== undefined) {
-      mcpConfigs.push(filterMcpContribution(contribution.mcp, allowed, resource));
+      mcpConfigs.push(
+        filterMcpContribution(contribution.mcp, allowed, resource, defaultMcpApproval),
+      );
     }
   }
   return await defineExpert({
@@ -930,6 +945,7 @@ function filterMcpContribution(
   contribution: IExpertAgentMcpConfig,
   allowed: ReadonlySet<string>,
   resource: PragmaExpertResource,
+  defaultApproval: "none" | "ask",
 ): IExpertAgentMcpConfig {
   return {
     mcpServers: Object.fromEntries(
@@ -941,14 +957,23 @@ function filterMcpContribution(
           toolApprovals: Object.fromEntries(
             [...allowed].map((toolName) => [
               toolName,
-              mergeExpertAgentToolApprovals(server.toolApprovals?.[toolName], {
-                mode:
-                  resource.spec.toolApprovals[
-                    `mcp_${key}_${sanitizeExecutionToolName(toolName)}`
-                  ] ??
-                  resource.spec.toolApprovals[toolName] ??
-                  "ask",
-              })!,
+              mergeExpertAgentToolApprovals(
+                server.toolApprovals?.[toolName]?.isDefault === true &&
+                  server.toolApprovals[toolName]?.mode === "ask"
+                  ? undefined
+                  : server.toolApprovals?.[toolName],
+                {
+                  mode:
+                    resource.spec.toolApprovals[
+                      `mcp_${key}_${sanitizeExecutionToolName(toolName)}`
+                    ] ??
+                    resource.spec.toolApprovals[
+                      `mcp_${sanitizeExecutionToolName(key)}_${sanitizeExecutionToolName(toolName)}`
+                    ] ??
+                    resource.spec.toolApprovals[toolName] ??
+                    defaultApproval,
+                },
+              )!,
             ]),
           ),
         },

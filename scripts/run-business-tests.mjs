@@ -68,6 +68,7 @@ if (lane !== "desktop") {
     "test/plugin-loader.test.ts",
     "test/code-service-mcp-server.test.ts",
     "test/expert-tools-mcp-server.test.ts",
+    "test/managed-tool-approval.test.ts",
     "test/expert-orchestrator-pagination.test.ts",
     "test/context-tools.test.ts",
     "test/file-lock.test.ts",

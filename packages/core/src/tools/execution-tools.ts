@@ -17,7 +17,11 @@ import type {
   ExpertAgentToolCallResult,
   ExpertToolExecutionContext,
 } from "./managed-tool.ts";
-import { createTextToolResult, resolveExpertAgentToolApprovalRequirement } from "./managed-tool.ts";
+import {
+  createTextToolResult,
+  mergeExpertAgentToolApprovals,
+  resolveExpertAgentToolApprovalRequirement,
+} from "./managed-tool.ts";
 import { resolveToolPolicy, type ResolvedTool, type ResolvedToolSet } from "./tool-resolver.ts";
 
 export interface ExecutionToolRuntimeState {
@@ -57,7 +61,15 @@ export function resolveExecutionTools(options: {
     tools: [
       ...defaultTools.map((tool) => resolvedTool("default", fromDefaultTool(tool))),
       ...(options.agent.tools ?? []).map((tool) => resolvedTool("managed", fromManagedTool(tool))),
-      ...createExecutionMcpTools(options.mcpTools ?? []).map((tool) => resolvedTool("mcp", tool)),
+      ...createExecutionMcpTools(options.mcpTools ?? []).map((tool) =>
+        resolvedTool("mcp", {
+          ...tool,
+          approval: mergeExpertAgentToolApprovals(
+            tool.approval,
+            options.agent.executionToolApprovals[tool.name],
+          ),
+        }),
+      ),
     ],
   });
 }
