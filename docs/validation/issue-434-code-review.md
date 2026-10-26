@@ -39,6 +39,12 @@
 
 另外复核了远端业务 CI 失败。完整本地 kernel 首轮运行 1307 项，1300 通过、2 跳过、5 失败：M10、Core acceptance recovery、terminal fencing 各一项超时；两个交互式 Revision 捕获用例没有提供来源判定所需的权威 job。为捕获用例补齐真实 Schema 校验的 owner 输入，保留原成功断言，并增加 owner 缺失时暂停、恢复后继续和旧自动来源排除场景。随后单 worker、文件串行重跑上述失败文件及来源判定文件，共 47 项全部通过。没有改变超时、删除用例或放宽断言。补齐夹具后没有再次运行整个 kernel，不能将此次串行复跑写成全量门禁通过。
 
+## PR #437 新增自动重试意见
+
+新增评论 `6417234895` 指出的自动重试分支遗漏属实：A 的可重试失败沿 job 传给 B，使 B 的首次执行触发 executor 的缺失 owner 检查。Knowledge/Skill 现仅在当前 key 明确无 admission、且完整任务执行索引可证时清除该 key 的重试标志；未知或不完整的 owner 仍保留原保护。没有删除或放宽 executor 的缺失 owner 检查。
+
+修复前，使用真实 Memory module、实际 direct executor 和 Interpreter 编译工具 binding，Knowledge/Skill 两个成功恢复用例均复现失败，两个缺失 owner 用例仍正确拒绝重投。修复后扩展为六个组合用例：两个种类各覆盖 A 原上下文重试后 B 首次执行、A owner 丢失、A 已完成但 B owner 丢失。六项均通过；整个 executor 文件 27 项与 Memory 两文件 97 项通过。Memory 构建、Desktop main 类型检查、变更文件 lint 通过。此组合回归使用测试 Runtime/应用适配，不属于真实模型验收。
+
 ## 未解除的验收限制
 
 真实 Codex Runtime 在此前尝试中因 HTTP 401 未完成验收；本次没有重做真实模型质量验收。共享 Local Host kernel 的完整运行与串行复跑结果见上；本次没有修改共享 Mission 内核，也没有将先前失败或未执行项目算作通过。因此不能据此宣称全量门禁或真实模型质量验收完成。具体环境证据见 [阶段验收记录](issue-434-memory-revision.md)。

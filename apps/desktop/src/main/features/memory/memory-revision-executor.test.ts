@@ -1,3 +1,9 @@
+import {
+  createKnowledgeMemoryModule,
+  createSkillMemoryModule,
+  createFileMemoryPolicyStore,
+  type MemoryRevisionExecutor,
+} from "@pragma/memory";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,7 +32,7 @@ import {
   type LocalHostMissionApplication,
 } from "@pragma/local-host";
 import type { PragmaProjectStore } from "@pragma/local-host/deployment";
-import { KnowledgeSourceSnapshotSchema } from "@pragma/shared";
+import { KnowledgeSourceSnapshotSchema, SkillSourceSnapshotSchema } from "@pragma/shared";
 import { createMemoryRevisionExecutor } from "./memory-revision-executor.ts";
 import type { createMemoryLearningRevisions } from "./memory-learning-revisions.ts";
 
@@ -855,3 +861,133 @@ it("requires every indexed Expert reservation before admitting more work during 
   f.reopen();
   expect(await f.api().executor.canObserveJob!(f.input.jobId)).toBe(false);
 });
+
+it.each([
+  ["knowledge", true, false],
+  ["skill", true, false],
+  ["knowledge", false, false],
+  ["skill", false, false],
+  ["knowledge", false, true],
+  ["skill", false, true],
+] as const)(
+  "scopes automatic retries to the failed %s Expert (owner present: %s, later Expert failed: %s)",
+  async (kind, ownerPresent, failedLater) => {
+    const f = await fixture(kind);
+    let clock = new Date();
+    await createFileMemoryPolicyStore({ pragmaHome: f.root, now: () => clock }).updateGlobal({
+      expectedRevision: 0,
+      policy: {
+        enabled: "enabled",
+        capture: "enabled",
+        recall: "enabled",
+        learning: "local-candidates",
+      },
+    });
+    const producerRefs = [
+      f.input.rootRef,
+      { type: "pragma.expert" as const, id: "0000000000000003" },
+    ];
+    const knowledgeSource = KnowledgeSourceSnapshotSchema.parse({
+      ...f.input.sources[0],
+      producerRefs,
+    });
+    const skillSource = SkillSourceSnapshotSchema.parse({
+      ...knowledgeSource,
+      hasSuccessfulRecovery: false,
+    });
+    const execute = vi.fn<MemoryRevisionExecutor["execute"]>((input) =>
+      f.api().executor.execute(input),
+    );
+    const shared = () => ({
+      pragmaHome: f.root,
+      now: () => clock,
+      executor: { ...f.api().executor, execute },
+      learningSink: { submit: vi.fn() },
+    });
+    const open = () =>
+      kind === "knowledge"
+        ? createKnowledgeMemoryModule({
+            ...shared(),
+            sourceReader: { listEligibleSources: async () => [knowledgeSource] },
+          })
+        : createSkillMemoryModule({
+            ...shared(),
+            sourceReader: { listEligibleSources: async () => [skillSource] },
+            targetReader: { listTargets: async () => [] },
+          });
+    let module = await open();
+    f.setStatus("failed");
+    if (failedLater)
+      f.setTurn(async (tools) => {
+        f.setStatus(f.application.startRun.mock.calls.length === 1 ? "succeeded" : "failed");
+        await call(tools, "finish_memory_learning", {
+          disposition: "accumulate",
+          reason: "No supported delta",
+        });
+      });
+    f.application.getTerminalRuntimeFailure.mockResolvedValue({
+      code: "provider_overloaded",
+      message: "Provider overloaded",
+      retryable: true,
+      failedAt: clock.toISOString(),
+    });
+    try {
+      await module.scheduleRoot(f.input.rootRef);
+      clock = new Date(clock.getTime() + 24 * 60 * 60_000);
+      await module.runBackgroundOnce?.();
+      expect((await module.store.listJobs())[0]).toMatchObject({
+        status: "pending",
+        lastFailure: { code: "provider_overloaded", retryable: true },
+      });
+      expect(f.application.startRun).toHaveBeenCalledTimes(failedLater ? 2 : 1);
+      const originalMission = f.application.startRun.mock.calls[failedLater ? 1 : 0]![0];
+      module.close();
+      if (!ownerPresent) {
+        const stateRoot = join(f.root, "state", "memory-direct-revisions-v1");
+        const states = await Promise.all(
+          (await readdir(stateRoot))
+            .filter((name) => name.endsWith(".json"))
+            .map(async (name) => ({
+              name,
+              state: JSON.parse(await readFile(join(stateRoot, name), "utf8")),
+            })),
+        );
+        const file = states.find(({ state }) => state.missionId === originalMission)!.name;
+        await rm(join(stateRoot, file));
+      }
+      f.reopen();
+      module = await open();
+      f.setStatus("succeeded");
+      clock = new Date(clock.getTime() + 24 * 60 * 60_000);
+      await module.runBackgroundOnce?.();
+      if (ownerPresent) {
+        expect((await module.store.listJobs())[0]).toMatchObject({
+          status: "completed",
+          attempts: 2,
+        });
+        expect(
+          execute.mock.calls.map(([input]) => [input.expertRef, input.retryFailedExecution]),
+        ).toEqual([
+          ["expert:0000000000000002", false],
+          ["expert:0000000000000002", true],
+          ["expert:0000000000000003", false],
+        ]);
+        expect(f.application.continueInternalMemoryMission).toHaveBeenCalledOnce();
+        expect(f.application.continueInternalMemoryMission).toHaveBeenCalledWith(
+          expect.objectContaining({ id: originalMission }),
+        );
+        expect(f.application.startRun).toHaveBeenCalledTimes(3);
+        expect(new Set(f.application.startRun.mock.calls.map(([id]) => id)).size).toBe(2);
+      } else {
+        expect((await module.store.listJobs())[0]).toMatchObject({
+          status: "needs_attention",
+          lastErrorCode: "memory_revision_owner_unconfirmed",
+        });
+        expect(f.application.startRun).toHaveBeenCalledTimes(failedLater ? 2 : 1);
+        expect(f.application.continueInternalMemoryMission).not.toHaveBeenCalled();
+      }
+    } finally {
+      module.close();
+    }
+  },
+);

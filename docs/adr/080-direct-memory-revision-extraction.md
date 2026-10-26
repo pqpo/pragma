@@ -20,6 +20,8 @@ Memory 仅声明 `MemoryRevisionExecutor` Host 端口。Built-in Agents 拥有�
 
 观察资格要求任务索引中的执行记录完整，不能用某个 Expert 的已完成回执掩盖另一个缺失的 admission。具体 admission 仍按任务、Expert 和来源摘要查询；已确认的原执行完成后，job 级观察标记不禁止其他 Expert 首次执行。索引或原 owner 缺失时继续禁止自动重投。
 
+自动失败重试同样按具体 Expert/来源确认。job 的 `lastFailure` 不能直接把后续 Expert 的首次执行变成重试：当前 key 明确没有 admission，且原任务完整执行索引可证时，按首次执行处理；否则保留重试标志，由 executor 的缺失 owner 检查拒绝不确定的重投。
+
 删除失败输入撤销其工具授权；闲时按保留任务索引回收无草稿执行元数据和专用 workspace。有草稿的执行保留有界来源/回执 provenance。维护不参与启动扫描。
 
 既有 job、binding、Episode/Fact、草稿及 decision Schema 均未改写，既有迁移链保持。新执行使用独立命名空间；旧数据不被当成新协议。观察恢复仅在存在新命名空间所有权证明时改变调度，不放宽旧未知执行的重放规则。

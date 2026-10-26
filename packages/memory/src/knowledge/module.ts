@@ -379,7 +379,12 @@ export async function createKnowledgeMemoryModule(options: {
               jobId: job.id,
               claimRevision: job.revision,
               manualRetry: job.attempts === 1 && job.lastFailure === undefined,
-              retryFailedExecution: job.lastFailure?.retryable === true,
+              // A job-level failure does not make a different Expert's first
+              // admission a retry. Missing owner proof must still fail closed.
+              retryFailedExecution:
+                job.lastFailure?.retryable === true &&
+                (existingExecution !== false ||
+                  !((await executor.canObserveJob?.(job.id)) ?? false)),
               onAdmission: (admitted) => {
                 modelRequested = admitted;
               },
