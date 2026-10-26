@@ -46,7 +46,7 @@
     "vitest": "latest"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "1.9.0",
+    "@agentclientprotocol/sdk": "2.0.1",
     "@cfworker/json-schema": "^4.1.1",
     "@jitl/quickjs-singlefile-cjs-release-sync": "^0.32.0",
     "@modelcontextprotocol/client": "2.3.1",
