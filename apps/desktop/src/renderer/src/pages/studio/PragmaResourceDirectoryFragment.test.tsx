@@ -450,7 +450,49 @@ describe("PragmaResourceDirectoryFragment", () => {
     );
 
     expect(html).toContain('placeholder="Search flows"');
-    expect(html).toContain("1 flow");
+    expect(html).toContain('class="studio-catalog-grid"');
+    expect(html).toContain("No steps added");
+    expect(html).not.toContain("studio-asset-icon");
+    expect(html).not.toContain("asset-git-sync-icon");
+  });
+
+  it("summarizes direct Flow participants once and keeps unresolved resource refs out of cards", () => {
+    const flow = createEmptyFlow("ffdfk2cczgqjda7q");
+    flow.spec.graph.steps = {
+      draft: { expert: { ref: "expert:0000000000000001" } },
+      revise: { expert: { ref: "expert:0000000000000001" } },
+      review: { team: { ref: "team:0000000000000002" } },
+      confirm: {
+        human: {
+          selectionMode: "single",
+          prompt: { segments: [{ text: "Approve the result?" }] },
+          options: [
+            { value: "yes", label: "Approve" },
+            { value: "no", label: "Reject" },
+          ],
+        },
+      },
+    };
+    const html = renderToStaticMarkup(
+      <PragmaResourceDirectoryFragment
+        kind="flow"
+        project={{
+          schemaVersion: "pragma.project-snapshot/v3",
+          projectId: "test-project",
+          revision: 0,
+          resources: [expert(1), flow],
+          diagnostics: [],
+        }}
+        onOpen={() => undefined}
+        onCreate={() => undefined}
+      />,
+    );
+    expect(html).toContain("Participants: Expert 001, unavailable");
+    expect(html).toContain("4 steps");
+    expect(html).toContain("1 human step");
+    expect(html).not.toContain("Expert 001, Expert 001");
+    expect(html).not.toContain("expert:0000000000000001");
+    expect(html).not.toContain("team:0000000000000002");
   });
 
   it("matches resource names, ids, descriptions, tags, and canonical refs", () => {

@@ -58,6 +58,7 @@ import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.t
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
+import { StudioCatalogCard } from "./StudioCatalogCard.tsx";
 import { desktopApi } from "./studio-model.ts";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import type { ExpertRecord } from "./studio-model.ts";
@@ -141,7 +142,6 @@ export function PragmaResourceDirectoryFragment(props: {
     matchesResourceDirectoryQuery(resource, query),
   );
 
-  const Icon = props.kind === "team" ? UsersThree : GitBranch;
   const headingId = props.kind === "team" ? "expert-teams-heading" : "flows-heading";
   const searchLabel = props.kind === "team" ? t("searchExpertTeams") : t("searchFlows");
   return (
@@ -175,7 +175,7 @@ export function PragmaResourceDirectoryFragment(props: {
         </header>
       }
     >
-      <div className="directory-controls">
+      <div className={props.kind === "flow" ? "studio-catalog-controls" : "directory-controls"}>
         <label className="directory-search">
           <MagnifyingGlass size={18} aria-hidden="true" />
           <span className="sr-only">{searchLabel}</span>
@@ -186,6 +186,11 @@ export function PragmaResourceDirectoryFragment(props: {
             placeholder={searchLabel}
           />
         </label>
+        {props.kind === "flow" ? (
+          <span className="studio-catalog-results-count">
+            {t("showingMatching", { visible: matchingResources.length, total: resources.length })}
+          </span>
+        ) : null}
       </div>
 
       {props.kind === "team" ? (
@@ -250,24 +255,55 @@ export function PragmaResourceDirectoryFragment(props: {
           })}
         </div>
       ) : (
-        <div className="studio-asset-rows">
-          {matchingResources.map((resource) => (
-            <button
-              className="studio-asset-row pragma-resource-row"
-              type="button"
-              key={canonicalPragmaResourceRef(resource)}
-              onClick={() => props.onOpen(resource)}
-            >
-              <span className="studio-asset-icon" aria-hidden="true">
-                <Icon size={24} />
-              </span>
-              <span className="studio-asset-copy">
-                <strong>{resource.metadata.name}</strong>
-                <span>{resource.metadata.description}</span>
-              </span>
-              <CaretRight size={17} aria-hidden="true" />
-            </button>
-          ))}
+        <div className="studio-catalog-grid" role="list" aria-label={t("flows")}>
+          {matchingResources.map((resource) => {
+            if (resource.kind !== "Flow") return null;
+            const steps = Object.values(resource.spec.graph.steps);
+            const humanSteps = steps.filter((step) => step.human !== undefined).length;
+            const subflows = steps.filter((step) => step.flow !== undefined).length;
+            const participantNames = [
+              ...new Map(
+                steps.flatMap((step) => {
+                  const ref = step.expert?.ref ?? step.team?.ref ?? step.flow?.ref;
+                  return ref === undefined
+                    ? []
+                    : [[ref, flowStepTarget(step, props.project, [], t).name] as const];
+                }),
+              ).values(),
+            ];
+            const participants = participantNames.join(t("flowParticipantSeparator"));
+            return (
+              <StudioCatalogCard
+                key={canonicalPragmaResourceRef(resource)}
+                name={resource.metadata.name}
+                description={resource.metadata.description}
+                summary={
+                  participants ? (
+                    <span
+                      className="flow-card-participants"
+                      title={t("flowParticipants", { names: participants })}
+                    >
+                      {t("flowParticipants", { names: participants })}
+                    </span>
+                  ) : undefined
+                }
+                footer={
+                  <>
+                    <span>
+                      {steps.length === 0
+                        ? t("flowNoSteps")
+                        : t("stepsCount", { count: steps.length })}
+                    </span>
+                    {humanSteps > 0 ? (
+                      <span>{t("flowHumanSteps", { count: humanSteps })}</span>
+                    ) : null}
+                    {subflows > 0 ? <span>{t("flowSubflows", { count: subflows })}</span> : null}
+                  </>
+                }
+                onOpen={() => props.onOpen(resource)}
+              />
+            );
+          })}
         </div>
       )}
       {matchingResources.length === 0 ? (
@@ -279,11 +315,11 @@ export function PragmaResourceDirectoryFragment(props: {
               })}
         </p>
       ) : null}
-      <p className="directory-count">
-        {props.kind === "team"
-          ? t("expertTeamCount", { count: matchingResources.length })
-          : t("flowCount", { count: matchingResources.length })}
-      </p>
+      {props.kind === "team" ? (
+        <p className="directory-count">
+          {t("expertTeamCount", { count: matchingResources.length })}
+        </p>
+      ) : null}
       {error ? (
         <p className="form-error" role="alert">
           {error}
