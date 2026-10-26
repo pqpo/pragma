@@ -629,12 +629,13 @@ export function SkillRevisionFragment(props: {
                     >
                       <span className="revision-task-summary">
                         <strong title={entry.job.request.prompt}>{entry.job.request.prompt}</strong>
-                        <small>
+                        <small title={capability?.manifest.name ?? entry.draft.name}>
                           {capability?.manifest.name ?? entry.draft.name} ·{` `}
                           {entry.draft.operation === "create"
                             ? t("newSkillRevision")
                             : t("baseRevision", { count: entry.draft.baseRevision })}
-                          {entry.draft.summary ? ` · ${entry.draft.summary}` : ""}
+                          {" · "}
+                          {t(`revisionSource.${entry.job.request.source}`)}
                         </small>
                       </span>
                       <span className="revision-task-result">

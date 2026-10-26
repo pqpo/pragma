@@ -295,7 +295,6 @@
 .memory-detail {
   min-width: 0;
   overflow: auto;
-  padding: 16px;
 }
 
 .memory-list {
@@ -307,6 +306,7 @@
 }
 
 .memory-detail {
+  padding: 16px;
   container: memory-detail / inline-size;
 }
 
@@ -314,6 +314,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+  padding: 0 16px 16px;
 }
 
 .memory-list-pagination {
@@ -365,6 +366,7 @@
 .memory-list-filter {
   flex-shrink: 0;
   margin-bottom: 12px;
+  padding: 16px 16px 0;
 }
 
 .memory-list-filter > .ui-select {

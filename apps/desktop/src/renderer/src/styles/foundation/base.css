@@ -4,23 +4,6 @@
   scrollbar-width: thin;
 }
 
-*::-webkit-scrollbar {
-  width: var(--ui-scrollbar-size);
-  height: var(--ui-scrollbar-size);
-}
-
-*::-webkit-scrollbar-track {
-  background: var(--ui-scrollbar-track);
-}
-
-*::-webkit-scrollbar-thumb {
-  background-color: var(--ui-scrollbar-thumb);
-}
-
-*::-webkit-scrollbar-thumb:hover {
-  background-color: var(--ui-scrollbar-thumb-hover);
-}
-
 html,
 body,
 #root {

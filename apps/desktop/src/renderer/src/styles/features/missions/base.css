@@ -242,20 +242,19 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  padding: 0 16px;
   background: var(--ui-rail-secondary);
 }
 
 .mission-rail-header {
   flex: none;
-  padding-top: 16px;
+  padding: 16px 16px 0;
 }
 
 .mission-rail-list {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding-bottom: 24px;
+  padding: 0 16px 24px;
   overflow-anchor: none;
 }
 

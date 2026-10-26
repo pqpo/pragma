@@ -450,7 +450,6 @@
   padding: 3px 2px 7px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  scrollbar-width: thin;
 }
 
 .mission-team-participant-list [role="listitem"] {
