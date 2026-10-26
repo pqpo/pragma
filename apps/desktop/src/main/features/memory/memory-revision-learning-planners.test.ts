@@ -245,7 +245,7 @@ it("inspects complete sources and repairs oversized descriptions and missing cit
   expect(f.continuation.mock.calls[4]![0]).toMatchObject({
     id: f.missionId,
     previousExecutionId: "execution-4",
-    content: expect.stringContaining('"path":["changes",0,"description"]'),
+    content: expect.stringContaining('"path":["changes",0,"sourceRefs"]'),
   });
   expect(f.continuation.mock.calls[4]![0].content).toContain('"path":["changes",0,"sourceRefs"]');
   expect(f.remove).toHaveBeenCalledWith(f.missionId);
@@ -704,3 +704,27 @@ it("repairs a wrong Knowledge source revision in the same Mission without requir
   expect(f.continuation.mock.calls[0]![0].content).toContain("Cite only exact supplied sourceRefs");
   expect(f.remove).toHaveBeenCalledWith(f.missionId);
 }, 15_000);
+
+it.each(["步骤".repeat(400), "😀".repeat(400)])(
+  "automatically bounds a long Skill summary while preserving citations and target",
+  async (description) => {
+    const sources = planningSources();
+    const change = {
+      name: "Workflow",
+      description,
+      normalizedKey: "workflow.test",
+      sourceRefs: sources.map((source) => source.ref),
+      target: { type: "create" },
+    };
+    const f = await planningFixture([JSON.stringify({ action: "apply", changes: [change] })]);
+    const plan = await f.planners.skill.plan({ ...f.input, sources });
+    expect(plan.action).toBe("apply");
+    if (plan.action !== "apply") throw new Error("Expected a reusable workflow");
+    expect(plan.changes[0]).toEqual({ ...change, description: expect.any(String) });
+    expect(plan.changes[0]!.description.length).toBeLessThanOrEqual(500);
+    expect(plan.changes[0]!.description.endsWith("…")).toBe(true);
+    expect(plan.changes[0]!.description).not.toMatch(/[\uD800-\uDBFF]…$/u);
+    expect(f.create).toHaveBeenCalledOnce();
+    expect(f.continuation).not.toHaveBeenCalled();
+  },
+);

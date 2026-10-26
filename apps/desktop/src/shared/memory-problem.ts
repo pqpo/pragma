@@ -33,7 +33,7 @@ export function classifyDesktopMemoryProblem(
   failureClass?: string | undefined,
 ): DesktopMemoryProblem {
   const code = technicalCode.toLowerCase();
-  if (code === "semantic_subject_context_missing") {
+  if (code === "semantic_subject_context_missing" || code === "memory_revision_pending") {
     return { kind: "dependency", technicalCode };
   }
   if (failureClass === "capacity" || code.includes("capacity")) {

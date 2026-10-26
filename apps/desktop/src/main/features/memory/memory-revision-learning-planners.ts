@@ -60,6 +60,7 @@ export function createMemoryRevisionLearningPlanners(options: {
       plan: T,
     ) => readonly { readonly index: number; readonly message: string }[];
     readonly settle?: (plan: T) => T;
+    readonly normalize?: (value: unknown) => unknown;
   }): Promise<T> => {
     input.signal.throwIfAborted();
     await mkdir(workspace, { recursive: true, mode: 0o700 });
@@ -178,7 +179,7 @@ export function createMemoryRevisionLearningPlanners(options: {
               });
             correction = "";
           } else {
-            const plan = input.schema.parse(value);
+            const plan = input.schema.parse(input.normalize?.(value) ?? value);
             const issues = input.validate?.(plan) ?? [];
             if (issues.length > 0) {
               if (repairs >= MAX_PLAN_REPAIRS && input.settle !== undefined) {
@@ -345,6 +346,7 @@ export function createMemoryRevisionLearningPlanners(options: {
         );
         return await run({
           schema: SkillLearningPlanSchema,
+          normalize: summarizeSkillDescriptions,
           validate: (plan) => inspectSkillLearningPlan(plan, input.sources, input.existingTargets),
           settle: (plan) => {
             input.onRejectedChanges?.(
@@ -360,6 +362,7 @@ export function createMemoryRevisionLearningPlanners(options: {
             "Plan one to three complete reusable workflows, or skip. Planning only: do not call tools or start a draft. Use inspection JSON requests as needed in this same conversation.",
             "Inspect existing targets and prefer revising a related mounted Skill, then another editable Skill. Read its full content and propose a real improvement; skip duplicates. Use only supplied target identities and current baseRevision/contentHash.",
             "One successfully validated complete workflow can qualify. Multiple independent experiences can also jointly establish a workflow. Episode valueScore is a ranking hint, never an admission requirement. Supporting Facts cannot replace executed workflow evidence. Cite at least one successfully completed Episode for EACH proposal; do not claim a recovery succeeded merely because recovery text exists.",
+            "Descriptions are discovery summaries, not workflow handoffs. Keep them concise; the Host bounds summaries to 500 UTF-16 units and hands the complete cited Memory projections to the revision Agent for implementation.",
             "Each workflow must retain a useful purpose after replacing task-specific names, paths and data. It needs applicability, inputs/preconditions, complete ordered steps, actual result verification, and supported limitations or failure handling. Reject single commands, vague advice, incomplete steps or invented validation. Read complete sources including their verification sections.",
             'Return {"action":"skip","disposition":"accumulate|duplicate|unsupported","reason":"..."} or {"action":"apply","changes":[{"name":"1–120 chars","description":"concise summary, 1–500 chars","normalizedKey":"1–300 lowercase ASCII chars matching ^[a-z0-9][a-z0-9._:/-]*$","sourceRefs":[{"kind":"episodic","id":"supplied ID","revision":1}],"target":{"type":"create"}}]}. Cite 1–8 distinct fully read supplied sources per change. All keys must be distinct. Before revising a Skill, understand its package layout and the scripts/references relevant to the proposed change. Record relevant files in targetFiles=["SKILL.md","scripts/relevant-file"]. Use the read mechanisms available in this planning conversation to understand target contents. For revise use target={"type":"revise","capabilityId":"supplied ID","baseRevision":1,"contentHash":"supplied hash"}.',
             'If the relevant target is pending review, do not create a duplicate or revise an unpublished target. Return {"action":"skip","disposition":"accumulate","reason":"waiting for related review","waitForTarget":"exact supplied pending target ID"}; the Host will resume this work after settlement.',
@@ -377,4 +380,45 @@ function planningObservationError(cause: unknown): Error {
     code: "memory_revision_planning_observation_failed",
     retryable: false,
   });
+}
+
+/** Only model output is normalized. Stored plans still pass the unchanged strict Schema. */
+function summarizeSkillDescriptions(value: unknown): unknown {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    !("action" in value) ||
+    value.action !== "apply" ||
+    !("changes" in value) ||
+    !Array.isArray(value.changes)
+  )
+    return value;
+  return {
+    ...value,
+    changes: value.changes.map((change: unknown) => {
+      if (
+        change === null ||
+        typeof change !== "object" ||
+        !("description" in change) ||
+        typeof change.description !== "string" ||
+        change.description.trim().length <= 500
+      )
+        return change;
+      // Never split a surrogate pair. Prefer a complete sentence when one fits;
+      // procedural details remain in the cited sources passed to the revision Agent.
+      let prefix = "";
+      for (const character of change.description.trim()) {
+        if (prefix.length + character.length > 499) break;
+        prefix += character;
+      }
+      const boundary = Math.max(
+        ...[...prefix.matchAll(/[。！？]|[.!?](?:\s|$)/gu)].map((match) => match.index! + 1),
+        -1,
+      );
+      return {
+        ...change,
+        description: boundary >= 120 ? prefix.slice(0, boundary) : prefix.trimEnd() + "…",
+      };
+    }),
+  };
 }

@@ -121,7 +121,17 @@ as rejected (no Skill extracted). This is a normal learning outcome and does not
 or start another planning Mission. Final rejected-change diagnostics are passed back to the Memory
 module before the planning Mission is removed, and committed atomically with completion to the
 existing failure-attempt history, including when other changes are retained. Runtime, cancellation, unreadable output and submission failures
-retain their existing failure handling. Description limits remain unchanged.
+retain their existing failure handling. Description limits remain unchanged. Skill descriptions are discovery summaries: before Schema
+validation, the Desktop planner bounds oversized model-authored summaries to 500 UTF-16 units,
+preferably at a sentence boundary and without splitting surrogate pairs. This local repair consumes
+no additional model turn. Citations, target identity and all other validation remain unchanged;
+the revision Agent receives complete cited Memory bodies in its task input. Stored plans
+continue to use the existing strict Schema. Historical attention jobs whose complete diagnostics
+prove that every issue was an oversized Skill description may resume through normal claims within
+the remaining attempt budget. Mixed, truncated or unrelated diagnostics and exhausted jobs remain
+parked; recovery preserves failure history and never resets consumed attempts. When historical
+records have no failure-attempt entry, recovery saves their last diagnostic and requeues the job
+in one SQLite transaction.
 
 The Skill learning database upgrades lazily from version 4 to 5 with a locked, backed-up SQLite
 transaction. Historical pending/needs-attention jobs whose last error is exactly
@@ -154,10 +164,13 @@ and target versions, so dependency wakes need not admit the planner again.
 Skill occupancy is checked only for the selected plan targets, after planning and again when submitting;
 an unrelated pending Skill must not block independent work for the same expert.
 A same-process preflight wait refunds only its current, unadmitted claim; earlier model attempts remain counted.
-A settled revision wakes only `memory_revision_pending` dependency waits, including historical waits
+The task board classifies `memory_revision_pending` as a dependency, including historical records
+marked as configuration failures. Dependency copy covers both missing context and outstanding
+revision review. A settled revision wakes only `memory_revision_pending` dependency waits, including historical waits
 marked nonretryable. This targeted wake preserves consumed attempts and cannot revive exhausted jobs,
 Runtime failures or cancellations. General configuration wakeups keep their existing retry guards.
-Settlement wakes are awaited before clearing durable revision-pending bindings. A failed wake or
+Settlement wakes are awaited before clearing durable revision-pending bindings, including when
+the same reconciliation also follows superseded Skill revisions. A failed wake or
 interrupted binding write therefore replays on reconciliation. The first reconciliation callback in
 each process also recovers historical missed wakes once, including when settlement already committed.
 

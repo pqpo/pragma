@@ -109,8 +109,9 @@ export const memory = {
       description: "Resolve the reported storage or draft limit before retrying.",
     },
     dependency: {
-      title: "Waiting for execution context",
-      description: "The system will continue automatically when the missing context is restored.",
+      title: "Waiting for a dependency",
+      description:
+        "Processing resumes automatically when the required context is restored or the related revision settles.",
     },
     invalid_output: {
       title: "The extraction result could not be verified",

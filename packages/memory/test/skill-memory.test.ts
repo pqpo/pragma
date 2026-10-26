@@ -1423,3 +1423,102 @@ it("reassesses sources completed under the old Skill learning policy", async () 
     module.close();
   }
 });
+
+it.each([
+  "oversized",
+  "legacy",
+  "legacy-text",
+  "legacy-interrupted",
+  "mixed",
+  "truncated",
+  "runtime",
+  "exhausted",
+] as const)(
+  "recovers only proven oversized-description failures within budget after restart: %s",
+  async (scenario) => {
+    const pragmaHome = await temporaryRoot();
+    let store = await createSkillLearningStore({ pragmaHome });
+    const issue = { code: "too_big", maximum: 500, path: ["changes", 0, "description"] };
+    try {
+      await store.schedule({
+        rootRef: ref("pragma.expert", "expert-summary"),
+        sourceDigest: "b".repeat(64),
+        now,
+      });
+      const job = (await store.claimDueJob(now))!;
+      await store.fail({
+        job,
+        retry: "transient",
+        now,
+        diagnostic: {
+          schemaVersion: "pragma.memory-extraction-failure/v1",
+          code: scenario === "runtime" ? "runtime_failed" : "skill_extraction_validation_failed",
+          message:
+            scenario === "truncated"
+              ? "[{"
+              : JSON.stringify(
+                  scenario === "mixed"
+                    ? [issue, { code: "invalid_type", path: ["changes", 0, "sourceRefs"] }]
+                    : [issue],
+                ),
+          phase: "validation",
+          failedAt: now.toISOString(),
+          retryable: false,
+        },
+      });
+      store.close();
+      if (scenario === "exhausted" || scenario.startsWith("legacy")) {
+        const path = join(
+          new PragmaPaths({ pragmaHome }).memoryModuleDataRoot("pragma.memory.skill-learning"),
+          "skill-learning.sqlite",
+        );
+        const db = new DatabaseSync(path);
+        if (scenario === "exhausted")
+          db.prepare("UPDATE jobs SET job_json=json_set(job_json, '$.attempts', 4)").run();
+        else {
+          db.prepare("DELETE FROM job_failure_attempts").run();
+          if (scenario === "legacy-text")
+            db.prepare("UPDATE jobs SET job_json=json_remove(job_json, '$.lastFailure')").run();
+          if (scenario === "legacy-interrupted")
+            db.exec(`CREATE TRIGGER interrupt_summary_recovery BEFORE UPDATE ON jobs
+              WHEN NEW.status='pending' BEGIN SELECT RAISE(ABORT, 'simulated recovery interruption'); END;`);
+        }
+        db.close();
+      }
+      store = await createSkillLearningStore({ pragmaHome });
+      if (scenario === "legacy-interrupted") {
+        await expect(store.claimDueJob(now)).rejects.toThrow("simulated recovery interruption");
+        expect((await store.listJobs())[0]).toMatchObject({
+          status: "needs_attention",
+          attempts: 1,
+        });
+        expect(await store.listFailureAttempts(job.id)).toHaveLength(0);
+        store.close();
+        const path = join(
+          new PragmaPaths({ pragmaHome }).memoryModuleDataRoot("pragma.memory.skill-learning"),
+          "skill-learning.sqlite",
+        );
+        const db = new DatabaseSync(path);
+        db.exec("DROP TRIGGER interrupt_summary_recovery");
+        db.close();
+        store = await createSkillLearningStore({ pragmaHome });
+      }
+      const recovered = await store.claimDueJob(now);
+      if (scenario === "oversized" || scenario.startsWith("legacy")) {
+        expect(recovered).toMatchObject({ status: "running", attempts: 2 });
+        expect(await store.listFailureAttempts(recovered!.id)).toHaveLength(1);
+        await store.complete(recovered!, "retained", now);
+        expect((await store.listJobs())[0]).toMatchObject({
+          status: "completed",
+          completion: "retained",
+        });
+        expect(await store.claimDueJob(now)).toBeUndefined();
+      } else {
+        expect(recovered).toBeUndefined();
+        expect((await store.listJobs())[0]?.status).toBe("needs_attention");
+      }
+    } finally {
+      store.close();
+    }
+  },
+);

@@ -1146,3 +1146,104 @@ it("submits complete maximum-sized Unicode sources to both Knowledge and Skill r
     expect.anything(),
   );
 });
+
+it("hands the complete cited workflow to Skill revision independently of its bounded summary", async () => {
+  const f = await fixture();
+  const sourceRef = { kind: "episodic" as const, id: "episode-handoff", revision: 1 };
+  const body =
+    "Complete workflow step. ".repeat(100) + "Verify the final result and handle partial failure.";
+  await f.service.submitSkills({
+    expertRef: f.expertRef,
+    sourceDigest: "d".repeat(64),
+    plan: {
+      action: "apply",
+      changes: [
+        {
+          name: "Workflow",
+          description: "Discovery summary…",
+          normalizedKey: "workflow.handoff",
+          sourceRefs: [sourceRef],
+          target: { type: "create" },
+        },
+      ],
+    },
+    sources: [
+      {
+        ref: sourceRef,
+        rootRef: { type: "pragma.expert", id: "expert-a" },
+        producerRefs: [],
+        sourceExecutionIds: [],
+        title: "Verified workflow",
+        body,
+        outcome: "succeeded",
+        hasSuccessfulRecovery: false,
+        observedAt: "2026-10-22T00:00:00.000Z",
+        verified: true,
+        visibility: { mode: "host-private" },
+        sensitivity: "internal",
+      },
+    ],
+  });
+  expect(f.skillStart).toHaveBeenCalledWith(
+    expect.objectContaining({
+      resourceDescription: "Discovery summary…",
+      prompt: expect.stringContaining(body),
+      sourceRefs: [sourceRef],
+    }),
+    expect.anything(),
+  );
+});
+
+it("keeps a settled Knowledge dependency replayable when a Skill replacement is reconciled before a failed wake", async () => {
+  const f = await fixture();
+  const wake = vi.fn(async () => undefined);
+  await f.service.reconcile(wake);
+  await f.service.submitKnowledge({
+    expertRef: f.expertRef,
+    sourceDigest: "a".repeat(64),
+    plan: { action: "apply", ...knowledgePlanFields(), name: "Knowledge", description: "Guidance" },
+    sources: [],
+  });
+  await f.service.submitSkills({
+    expertRef: f.expertRef,
+    sourceDigest: "c".repeat(64),
+    plan: {
+      action: "apply",
+      changes: [
+        {
+          name: "Workflow",
+          description: "Reusable workflow",
+          normalizedKey: "workflow.replacement",
+          sourceRefs: [{ kind: "episodic", id: "episode", revision: 1 }],
+          target: { type: "create" },
+        },
+      ],
+    },
+    sources: [],
+  });
+  f.mergeKnowledge();
+  const replacementId = randomUUID();
+  f.setSkillJob(f.skillJobId, { state: "superseded", supersededBy: replacementId });
+  f.setSkillJob(replacementId, {
+    state: "pending_review",
+    request: { source: "memory-learning", capabilityId: randomUUID() },
+  });
+  wake.mockRejectedValueOnce(new Error("wake interrupted"));
+  await expect(f.service.reconcile(wake)).rejects.toThrow("wake interrupted");
+  await expect(
+    f.service.assertKnowledgeAvailable({
+      expertRef: f.expertRef,
+      sourceDigest: "b".repeat(64),
+    }),
+  ).rejects.toThrow("memory_revision_pending");
+  expect(await f.service.reconcile(wake)).toBe(true);
+  expect(wake).toHaveBeenCalledTimes(3);
+  await expect(
+    f.service.assertKnowledgeAvailable({
+      expertRef: f.expertRef,
+      sourceDigest: "b".repeat(64),
+    }),
+  ).resolves.toBeUndefined();
+  expect(await f.service.reconcile(wake)).toBe(false);
+  expect(wake).toHaveBeenCalledTimes(3);
+});

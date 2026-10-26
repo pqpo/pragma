@@ -9,6 +9,8 @@ describe("classifyDesktopMemoryProblem", () => {
     ["semantic_extraction_validation_failed", undefined, "invalid_output"],
     ["semantic_fact_duplicate", "transient-exhausted", "invalid_output"],
     ["semantic_subject_context_missing", "configuration", "dependency"],
+    ["memory_revision_pending", "configuration", "dependency"],
+    ["memory_revision_pending", "transient-exhausted", "dependency"],
     ["memory_extractor_profile_invalid", "configuration", "configuration"],
     ["knowledge_learning_sink_unavailable", undefined, "configuration"],
     ["knowledge_candidate_capacity_exceeded", "capacity", "capacity"],

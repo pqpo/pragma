@@ -231,6 +231,50 @@ export async function createSkillLearningStore(
       return job;
     },
     async claimDueJob(now) {
+      // These terminal validation failures are repairable by the current planner's
+      // summary normalization. Keep their consumed budget and failure history.
+      for (const row of database
+        .prepare(
+          "SELECT job_json FROM jobs WHERE status='needs_attention' AND json_extract(job_json, '$.lastErrorCode')='skill_extraction_validation_failed'",
+        )
+        .all() as { job_json: string }[]) {
+        const job = parse(row.job_json);
+        if (job.attempts >= MAX_EXTRACTION_ATTEMPTS || !hasOversizedDescriptionFailure(job))
+          continue;
+        database.exec("BEGIN IMMEDIATE;");
+        try {
+          const current = read(job.id);
+          // Another Host may have already recovered or changed this candidate.
+          if (current?.revision === job.revision && current.status === "needs_attention") {
+            const diagnostic: MemoryExtractionFailureDiagnostic = job.lastFailure ?? {
+              schemaVersion: "pragma.memory-extraction-failure/v1",
+              code: job.lastErrorCode!,
+              message: job.lastErrorMessage!,
+              phase: "validation",
+              failedAt: job.updatedAt,
+              retryable: false,
+            };
+            if (
+              !listExtractionFailureAttempts(database, job.id).some(
+                (attempt) =>
+                  attempt.diagnostic.code === diagnostic.code &&
+                  attempt.diagnostic.failedAt === diagnostic.failedAt,
+              )
+            )
+              insertExtractionFailureAttempt(database, {
+                jobId: job.id,
+                jobRevision: Math.max(1, job.revision - 1),
+                attempt: Math.max(1, job.attempts),
+                diagnostic,
+              });
+            write({ ...reset(job, now), attempts: job.attempts });
+          }
+          database.exec("COMMIT;");
+        } catch (error) {
+          database.exec("ROLLBACK;");
+          throw error;
+        }
+      }
       const timestamp = now.toISOString();
       const row = database
         .prepare(
@@ -694,4 +738,31 @@ function stableId(...parts: readonly string[]): string {
 }
 function conflict(): Error {
   return Object.assign(new Error("skill_job_conflict"), { code: "revision_conflict" });
+}
+
+function hasOversizedDescriptionFailure(job: SkillLearningJob): boolean {
+  try {
+    const issues: unknown = JSON.parse(job.lastFailure?.message ?? job.lastErrorMessage ?? "");
+    return (
+      Array.isArray(issues) &&
+      issues.length > 0 &&
+      issues.every((issue: unknown) => {
+        if (issue === null || typeof issue !== "object") return false;
+        const { code, maximum, path } = issue as Record<string, unknown>;
+        return (
+          code === "too_big" &&
+          maximum === 500 &&
+          Array.isArray(path) &&
+          path.length === 3 &&
+          path[0] === "changes" &&
+          Number.isInteger(path[1]) &&
+          Number(path[1]) >= 0 &&
+          path[2] === "description"
+        );
+      })
+    );
+  } catch {
+    // Truncated diagnostics or unrelated failures never authorize model replay.
+    return false;
+  }
 }

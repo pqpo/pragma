@@ -101,8 +101,8 @@ export const memory = {
       description: "請先解決診斷中報告的儲存或草稿容量限制，再重試。",
     },
     dependency: {
-      title: "正在等待執行上下文",
-      description: "缺少的上下文恢復後，系統會自動繼續處理。",
+      title: "正在等待依賴恢復",
+      description: "所需上下文恢復或相關修訂結束後，系統會自動繼續處理。",
     },
     invalid_output: {
       title: "提煉結果無法驗證",

@@ -101,8 +101,8 @@ export const memory = {
       description: "请先解决诊断中报告的存储或草稿容量限制，再重试。",
     },
     dependency: {
-      title: "正在等待执行上下文",
-      description: "缺失的上下文恢复后，系统会自动继续处理。",
+      title: "正在等待依赖恢复",
+      description: "所需上下文恢复或相关修订结束后，系统会自动继续处理。",
     },
     invalid_output: {
       title: "提炼结果无法验证",

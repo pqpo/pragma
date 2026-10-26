@@ -888,7 +888,7 @@ export function createMemoryLearningRevisions(options: {
                 candidate === previous ? binding : candidate,
               ),
             };
-            await write(next);
+            // Commit replacement tracking together with all settlements after the wake.
             job = replacement;
           }
           if (job.state === "rejected") {
