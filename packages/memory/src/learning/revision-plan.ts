@@ -6,6 +6,12 @@ import {
   SkillPackageFileSchema,
 } from "@pragma/shared";
 
+/** Scheduling identity used only when draining anonymous historical Planner markers. */
+export interface LegacyLearningTaskIdentity {
+  readonly taskCreatedAt: string;
+  readonly mayHaveRun: boolean;
+}
+
 export const MEMORY_LEARNING_POLICY_VERSION = "learning-v2";
 
 const reason = z.string().trim().min(1).max(2000);

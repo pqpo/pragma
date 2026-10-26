@@ -1,20 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { readdir, readFile, writeFile, rename } from "node:fs/promises";
+import { writeFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import {
   KnowledgeLearningPlanSchema,
   SkillLearningPlanSchema,
   type KnowledgeLearningPlanner,
   type SkillLearningPlanner,
+  type LegacyLearningTaskIdentity,
 } from "@pragma/memory";
 import { extractStructuredJson } from "@pragma/built-in-agents";
 import {
-  MissionStoreError,
   waitForInternalMissionRetry,
   type MissionStore,
   type LocalHostMissionApplication,
 } from "@pragma/local-host";
-import { isMemoryRevisionPlanningRun } from "./memory-revision-planning-resource.ts";
+import { createLegacyMemoryRevisionRegistry } from "./legacy-memory-revision-registry.ts";
 
 /** Read-only drain of registered pre-#434 Missions. Never dispatches or corrects a Planner. */
 export function createLegacyMemoryRevisionObserver(options: {
@@ -23,51 +23,10 @@ export function createLegacyMemoryRevisionObserver(options: {
   readonly application: LocalHostMissionApplication;
 }) {
   const registry = join(options.pragmaHome, "state", "memory-revision-planning");
-  const find = async (kind: "knowledge" | "skill", digest: string) => {
-    let ids: string[];
-    try {
-      ids = await readdir(join(options.pragmaHome, "state", "memory-revision-planning"));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    }
-    for (const id of ids.filter((id) => /^[0-9a-f-]{36}$/u.test(id))) {
-      try {
-        try {
-          const settled = JSON.parse(await readFile(join(registry, `${id}.settled`), "utf8")) as {
-            schemaVersion?: string;
-            missionId?: string;
-          };
-          if (
-            settled.schemaVersion !== "pragma.memory-legacy-plan-settlement/v1" ||
-            settled.missionId !== id
-          )
-            throw new Error("memory_legacy_revision_settlement_invalid");
-          continue;
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-        const mission = await options.missions.get(id);
-        if (
-          isMemoryRevisionPlanningRun(mission.origin, mission.executor.ref) &&
-          mission.origin.type === "system-memory" &&
-          mission.origin.jobId === `${kind}-plan:${digest}`
-        )
-          return mission;
-      } catch (error) {
-        if (!(error instanceof MissionStoreError) || error.code !== "mission_not_found")
-          throw error;
-        // A missing registered Mission has an unknown outcome; it does not authorize replacement.
-        throw Object.assign(new Error("memory_legacy_revision_owner_missing"), {
-          retryable: false,
-        });
-      }
-    }
-    return undefined;
-  };
+  const { find } = createLegacyMemoryRevisionRegistry(options);
   const observe = async (kind: "knowledge" | "skill", digest: string, signal: AbortSignal) => {
     signal.throwIfAborted();
-    const mission = await find(kind, digest);
+    const mission = await find(kind, digest, undefined, true);
     if (mission?.execution === undefined)
       throw Object.assign(new Error("memory_legacy_revision_owner_unconfirmed"), {
         retryable: false,
@@ -115,8 +74,12 @@ export function createLegacyMemoryRevisionObserver(options: {
     // A cleanup failure cannot revoke the durable handoff settlement.
     await options.application.delete(mission.id).catch(() => undefined);
   };
-  const prepareDirectRetry = async (kind: "knowledge" | "skill", digest: string) => {
-    const mission = await find(kind, digest);
+  const prepareDirectRetry = async (
+    kind: "knowledge" | "skill",
+    digest: string,
+    task?: LegacyLearningTaskIdentity,
+  ) => {
+    const mission = await find(kind, digest, task, task === undefined);
     if (
       mission !== undefined &&
       (mission.execution === undefined ||
@@ -128,9 +91,11 @@ export function createLegacyMemoryRevisionObserver(options: {
   };
   return {
     knowledge: {
-      hasPending: async (digest) => (await find("knowledge", digest)) !== undefined,
+      hasPending: async (digest, task?: LegacyLearningTaskIdentity) =>
+        (await find("knowledge", digest, task)) !== undefined,
       settle: (digest) => settle("knowledge", digest),
-      prepareDirectRetry: (digest) => prepareDirectRetry("knowledge", digest),
+      prepareDirectRetry: (digest, task?: LegacyLearningTaskIdentity) =>
+        prepareDirectRetry("knowledge", digest, task),
       async plan(input) {
         return KnowledgeLearningPlanSchema.parse(
           await observe("knowledge", input.sourceDigest, input.signal),
@@ -138,9 +103,11 @@ export function createLegacyMemoryRevisionObserver(options: {
       },
     } satisfies KnowledgeLearningPlanner,
     skill: {
-      hasPending: async (digest) => (await find("skill", digest)) !== undefined,
+      hasPending: async (digest, task?: LegacyLearningTaskIdentity) =>
+        (await find("skill", digest, task)) !== undefined,
       settle: (digest) => settle("skill", digest),
-      prepareDirectRetry: (digest) => prepareDirectRetry("skill", digest),
+      prepareDirectRetry: (digest, task?: LegacyLearningTaskIdentity) =>
+        prepareDirectRetry("skill", digest, task),
       async plan(input) {
         return SkillLearningPlanSchema.parse(
           normalizeLegacySkillDescriptions(

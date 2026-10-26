@@ -101,6 +101,11 @@ created extraction jobs and published Memory are preserved.
 New learning work uses the Revision Agent directly: source reads, target discovery, value judgment,
 editing and draft submission share one Mission and Native context. Knowledge/Skill retain their
 independent scheduling; Curator Episode/Fact extraction is unchanged. See [ADR 080](../adr/080-direct-memory-revision-extraction.md).
+Observation ownership is checked for each Expert/source admission against the complete durable job
+index. Finishing one observed Expert permits the next Expert's first admission; an incomplete index
+does not authorize replay. Legacy Planner source identities are retained separately from historical
+empty markers so a missing owner can be isolated. Anonymous deleted owners conservatively block only
+potentially affected historical attempts; task creation time and first-claim history distinguish new work.
 There is no new-task Planner, JSON inspection conversation, intermediate plan, correction loop,
 plan cache or plan-to-prompt conversion. Necessary source qualifications and deterministic checks
 run at the reading and draft boundaries; source/target completeness remains an Agent instruction.

@@ -383,8 +383,12 @@ export function createMemoryRevisionExecutor(options: {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
         throw error;
       }
-      for (const key of keys) {
-        const state = await read(key);
+      const states = await Promise.all(keys.map(read));
+      // An index entry without its reservation is an unknown admission, even if
+      // another Expert has a completed receipt. Never use that receipt as proof.
+      if (states.some((state) => state === undefined || state.jobId !== jobId)) return false;
+      let confirmed = false;
+      for (const state of states) {
         if (
           state?.jobId !== jobId ||
           state.retired ||
@@ -392,23 +396,28 @@ export function createMemoryRevisionExecutor(options: {
           !state.admitted
         )
           continue;
-        if (state.result !== undefined) return true;
+        if (state.result !== undefined) {
+          confirmed = true;
+          continue;
+        }
         let mission;
         try {
           mission = await options.missions.get(state.missionId);
         } catch (error) {
-          if (error instanceof MissionStoreError && error.code === "mission_not_found") continue;
+          if (error instanceof MissionStoreError && error.code === "mission_not_found")
+            return false;
           throw error;
         }
         if (
           isMemoryDirectRevision(mission) &&
           mission.origin.type === "system-memory" &&
-          mission.origin.jobId === `${state.kind}-revision:${key}` &&
+          mission.origin.jobId === `${state.kind}-revision:${state.key}` &&
           mission.execution !== undefined
         )
-          return true;
+          confirmed = true;
+        else return false;
       }
-      return false;
+      return confirmed;
     },
     async execute(input) {
       input.signal.throwIfAborted();

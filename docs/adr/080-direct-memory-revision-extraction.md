@@ -18,6 +18,8 @@ Memory 仅声明 `MemoryRevisionExecutor` Host 端口。Built-in Agents 拥有�
 
 观察超时排队观察同一 Mission，保持预算。过期 lease 的恢复须有该任务的持久执行索引和原 Mission 所有权证明；缺少证明保持 needs-attention。明确可重试的终态 Runtime 失败沿用现有有界尝试预算；显式重试在原 Native Context 通过 Local Host 的幂等 continuation 恢复未完成工作，不重新生成已提交草稿。待审依赖结算也继续原上下文。结果先持久化；无草稿的 Mission 才可清理，草稿 owner 保留供审批和返工。
 
+观察资格要求任务索引中的执行记录完整，不能用某个 Expert 的已完成回执掩盖另一个缺失的 admission。具体 admission 仍按任务、Expert 和来源摘要查询；已确认的原执行完成后，job 级观察标记不禁止其他 Expert 首次执行。索引或原 owner 缺失时继续禁止自动重投。
+
 删除失败输入撤销其工具授权；闲时按保留任务索引回收无草稿执行元数据和专用 workspace。有草稿的执行保留有界来源/回执 provenance。维护不参与启动扫描。
 
 既有 job、binding、Episode/Fact、草稿及 decision Schema 均未改写，既有迁移链保持。新执行使用独立命名空间；旧数据不被当成新协议。观察恢复仅在存在新命名空间所有权证明时改变调度，不放宽旧未知执行的重放规则。
@@ -28,6 +30,8 @@ Memory 仅声明 `MemoryRevisionExecutor` Host 端口。Built-in Agents 拥有�
 - 有持久失败历史证明的显式重试可转入新路径：只有旧 Planner 已终态或不存在时才结算其标记并丢弃旧计划缓存；运行中和未知 owner 不转移。
 - 已有缓存计划仍由隔离的旧交接逻辑完成；已注册 Planner 仅观察原执行并读取该 execution 的终态输出，不投递、不纠错，不删除结果未知的 Mission。
 - 旧计划交接成功后，先保存业务 decision，再写 `pragma.memory-legacy-plan-settlement/v1` 标记，最后尝试清理 Planner。清理失败不撤销结算，不重新规划。
+- 首次访问仍存在的旧 Planner 时，在独立的 `state/memory-legacy-planner-identities-v1/` 原子保存 Mission、提炼种类和来源摘要；历史空注册标记原样保留。已记录身份的 owner 删除后，仅对应来源失败。身份写入中断可由原 Mission 重建，未来版本或身份冲突拒绝读取且保留原文件。
+- 已删除且没有任何来源身份的历史空标记无法反推出原任务，不能猜测归属或直接删除。调度器传入任务创建时间及执行历史：创建晚于标记的任务，以及能证明从未尝试的首次 claim，不可能拥有该旧 Mission，可以继续；可能已执行的较早任务仍以 `memory_legacy_revision_owner_missing` 保持关注状态，显式重试也不绕过保护。此保守限制只适用于无法归属的历史任务；它不构成对新学习任务的全局门禁。
 - 历史 `KnowledgeLearningPlan`/`SkillLearningPlan`、计划缓存读写和规划专用资源仅服务该兼容路径。新任务不写计划缓存。
 - 支持窗口结束，且旧 Planner、缓存计划交接和待审绑定全部结算后，才能移除兼容业务路径；历史 Schema、writer fixture 与支持中的升级链继续保留。未知 owner 或损坏结果不能以自动新建会话代替恢复。
 

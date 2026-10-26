@@ -1604,3 +1604,79 @@ it("runs new Skill work through the direct Revision port without a plan handoff"
     module.close();
   }
 });
+
+it.each([true, false])(
+  "recovers one Expert without blocking another first admission (owner proof: %s)",
+  async (proof) => {
+    const pragmaHome = await temporaryRoot();
+    let clock = new Date(now.getTime() + 24 * 60 * 60_000);
+    const producerRefs = [ref("pragma.expert", "expert-a"), ref("pragma.expert", "expert-b")];
+    const snapshots = sources().map((source) => ({ ...source, producerRefs }));
+    const owned = new Set<string>();
+    let observing = true;
+    const execute = vi.fn(
+      async (
+        input: Parameters<
+          import("../src/learning/revision-execution.ts").MemoryRevisionExecutor["execute"]
+        >[0],
+      ) => {
+        await input.assertCurrent();
+        owned.add(input.expertRef);
+        if (observing) throw new Error("memory_revision_observation_pending");
+        return {
+          submitted: false,
+          decision: { outcome: "accumulate" as const, reason: "No supported delta", targets: [] },
+        };
+      },
+    );
+    const open = () =>
+      createSkillMemoryModule({
+        pragmaHome,
+        now: () => clock,
+        sourceReader: { listEligibleSources: async () => snapshots },
+        targetReader: { listTargets: async () => [] },
+        learningSink: { submit: vi.fn() },
+        executor: {
+          execute,
+          hasExecution: async ({ expertRef }) => owned.has(expertRef),
+          canObserveJob: async () => proof,
+        },
+      });
+    let module = await open();
+    try {
+      await module.scheduleRoot(producerRefs[0]!);
+      clock = new Date(clock.getTime() + 24 * 60 * 60_000);
+      await module.runBackgroundOnce?.();
+      expect(execute).toHaveBeenCalledOnce();
+      expect((await module.store.listJobs())[0]).toMatchObject({
+        status: "pending",
+        lastErrorCode: "memory_revision_observation_pending",
+      });
+      module.close();
+      module = await open();
+      observing = false;
+      if (!proof) owned.clear();
+      clock = new Date(clock.getTime() + 5001);
+      await module.runBackgroundOnce?.();
+      if (proof) {
+        expect(execute.mock.calls.map(([input]) => input.expertRef)).toEqual([
+          "expert:expert-a",
+          "expert:expert-a",
+          "expert:expert-b",
+        ]);
+        expect((await module.store.listJobs())[0]).toMatchObject({
+          status: "completed",
+          attempts: 1,
+        });
+      } else {
+        expect(execute).toHaveBeenCalledOnce();
+        expect((await module.store.listJobs())[0]).toMatchObject({
+          status: "needs_attention",
+          lastErrorCode: "memory_revision_owner_unconfirmed",
+        });
+      }
+    } finally {
+      module.close();
+    }
+  },
+);

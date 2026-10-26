@@ -14,12 +14,14 @@ export interface MemoryRevisionExecutionResult {
 export interface MemoryRevisionExecutor {
   retireJob?(jobId: string): Promise<void>;
   maintain?(retainedJobIds: readonly string[]): Promise<void>;
+  /** Keyed admission fact for this Expert and source digest; false proves no admission for this key. */
   hasExecution?(input: {
     readonly kind: "knowledge" | "skill";
     readonly jobId: string;
     readonly expertRef: string;
     readonly sourceDigest: string;
   }): Promise<boolean>;
+  /** Confirms the complete job index: partial or missing reservation/owner records are not proof. */
   canObserveJob?(jobId: string): Promise<boolean>;
   execute(input: {
     readonly kind: "knowledge" | "skill";

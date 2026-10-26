@@ -841,3 +841,17 @@ it("recovers a Skill submission receipt before retrying a lost response", async 
   expect(await f.api().executor.execute(f.input)).toMatchObject({ submitted: true });
   expect(f.skillPort.submitDraft).toHaveBeenCalledOnce();
 });
+
+it("requires every indexed Expert reservation before admitting more work during observation", async () => {
+  const f = await fixture();
+  await f.api().executor.execute(f.input);
+  expect(await f.api().executor.canObserveJob!(f.input.jobId)).toBe(true);
+  await f.api().executor.execute({ ...f.input, expertRef: "expert:0000000000000003" });
+  expect(await f.api().executor.canObserveJob!(f.input.jobId)).toBe(true);
+  const root = join(f.root, "state", "memory-direct-revisions-v1");
+  const files = (await readdir(root)).filter((name) => name.endsWith(".json"));
+  expect(files).toHaveLength(2);
+  await rm(join(root, files[1]!));
+  f.reopen();
+  expect(await f.api().executor.canObserveJob!(f.input.jobId)).toBe(false);
+});

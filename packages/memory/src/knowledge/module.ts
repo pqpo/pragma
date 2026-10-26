@@ -2,6 +2,7 @@ import type { MemoryRevisionExecutor } from "../learning/revision-execution.ts";
 import {
   KnowledgeLearningPlanSchema,
   MEMORY_LEARNING_POLICY_VERSION,
+  type LegacyLearningTaskIdentity,
 } from "../learning/revision-plan.ts";
 import { createLearningDecisionStore, learningFingerprint } from "../learning/decision-store.ts";
 import { createHash } from "node:crypto";
@@ -66,8 +67,8 @@ export interface KnowledgeLearningSink {
 }
 
 export interface KnowledgeLearningPlanner {
-  hasPending?(sourceDigest: string): Promise<boolean>;
-  prepareDirectRetry?(sourceDigest: string): Promise<boolean>;
+  hasPending?(sourceDigest: string, task?: LegacyLearningTaskIdentity): Promise<boolean>;
+  prepareDirectRetry?(sourceDigest: string, task?: LegacyLearningTaskIdentity): Promise<boolean>;
   settle?(sourceDigest: string): Promise<void>;
   plan(input: {
     readonly rootRef: MemorySubjectRef;
@@ -329,38 +330,47 @@ export async function createKnowledgeMemoryModule(options: {
             });
             continue;
           }
+          const existingExecution = await executor?.hasExecution?.({
+            kind: "knowledge",
+            jobId: job.id,
+            expertRef,
+            sourceDigest: expertDigest,
+          });
+          const hasFailureHistory = (await store.listFailureAttempts(job.id)).length > 0;
+          const legacyTask = {
+            taskCreatedAt: job.createdAt,
+            mayHaveRun:
+              existingExecution !== true &&
+              (job.revision > 2 ||
+                job.attempts > 1 ||
+                hasFailureHistory ||
+                job.lastErrorCode === "memory_revision_observation_pending"),
+          };
           const explicitLegacyRetry =
             executor !== undefined &&
             job.attempts === 1 &&
             job.lastFailure === undefined &&
-            (await store.listFailureAttempts(job.id)).length > 0;
+            hasFailureHistory;
           const directRetry =
-            explicitLegacyRetry && (await planner?.prepareDirectRetry?.(expertDigest)) === true;
+            explicitLegacyRetry &&
+            (await planner?.prepareDirectRetry?.(expertDigest, legacyTask)) === true;
           if (directRetry) decisions.discardPlan(evaluationKey);
           if (
             executor !== undefined &&
             (directRetry ||
               (decisions.readPlan(evaluationKey) === undefined &&
-                !((await planner?.hasPending?.(expertDigest)) ?? false)))
+                !((await planner?.hasPending?.(expertDigest, legacyTask)) ?? false)))
           ) {
             phase = "revision_submit";
-            modelRequested = !(
-              (await executor.hasExecution?.({
-                kind: "knowledge",
-                jobId: job.id,
-                expertRef,
-                sourceDigest: expertDigest,
-              })) ?? false
-            );
+            modelRequested = existingExecution !== true;
+            // The keyed admission receipt is per Expert. A proven job observation may
+            // finish one Expert and proceed to another Expert's first admission.
+            // Without the original owner proof, retain the no-redispatch guard.
             if (
-              !modelRequested &&
               job.lastErrorCode === "memory_revision_observation_pending" &&
-              executor.hasExecution === undefined
+              (existingExecution === undefined ||
+                (modelRequested && !ownedObservations.has(job.id)))
             )
-              throw Object.assign(new Error("memory_revision_owner_unconfirmed"), {
-                retryable: false,
-              });
-            if (modelRequested && job.lastErrorCode === "memory_revision_observation_pending")
               throw Object.assign(new Error("memory_revision_owner_unconfirmed"), {
                 retryable: false,
               });
