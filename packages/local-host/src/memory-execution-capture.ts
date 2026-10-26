@@ -1,5 +1,12 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { PragmaPaths } from "@pragma/core";
-import { SKILL_REVISION_EXPERT_REF, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
+import {
+  ContextStoreRevisionJobSchema,
+  ManagedSkillRevisionJobSchema,
+  SKILL_REVISION_EXPERT_REF,
+  STORE_REVISION_EXPERT_REF,
+} from "@pragma/built-in-agents";
 import { MissionSchema, type CanonicalEventEnvelope } from "@pragma/shared";
 import { z } from "zod";
 import { createMissionDeliveryReceiptStore } from "./mission-delivery-receipt-store.ts";
@@ -28,7 +35,39 @@ export async function excludeInternalMemoryExecution(
     try {
       const link = await receipts.link(event.correlationId);
       if (link === undefined) throw new Error("Mission admission link pending");
-      return LinkSchema.parse(JSON.parse(link.payload)).mission.origin.type === "system-memory";
+      const mission = LinkSchema.parse(JSON.parse(link.payload)).mission;
+      if (mission.origin.type === "system-memory") return true;
+      // Historical background drafts predate the dedicated immutable Memory origin.
+      // Read their authority job; unavailable/old/future data is deferred, never guessed.
+      const origin = mission.origin;
+      const paths = new PragmaPaths({ pragmaHome });
+      if (origin.type === "system-store-revision") {
+        const job = ContextStoreRevisionJobSchema.parse(
+          JSON.parse(
+            await readFile(
+              join(paths.stateRoot(), "context-store-revisions", "jobs", `${origin.jobId}.json`),
+              "utf8",
+            ),
+          ),
+        );
+        if (job.id !== origin.jobId || job.request.storeId !== origin.storeId)
+          throw new Error("Memory revision identity mismatch");
+        return job.request.source === "memory-learning";
+      }
+      if (origin.type === "system-skill-revision") {
+        const job = ManagedSkillRevisionJobSchema.parse(
+          JSON.parse(
+            await readFile(
+              join(paths.stateRoot(), "skill-revisions", "jobs", `${origin.jobId}.json`),
+              "utf8",
+            ),
+          ),
+        );
+        if (job.id !== origin.jobId || job.request.capabilityId !== origin.capabilityId)
+          throw new Error("Memory revision identity mismatch");
+        return job.request.source === "memory-learning";
+      }
+      return false;
     } finally {
       await receipts.close();
     }

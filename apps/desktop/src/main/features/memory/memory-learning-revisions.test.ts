@@ -1247,3 +1247,25 @@ it("keeps a settled Knowledge dependency replayable when a Skill replacement is 
   expect(await f.service.reconcile(wake)).toBe(false);
   expect(wake).toHaveBeenCalledTimes(3);
 });
+
+it("does not reopen a settled direct binding when its Mission recompiles", async () => {
+  const f = await fixture();
+  const input = {
+    kind: "knowledge" as const,
+    expertRef: f.expertRef,
+    sourceDigest: "a".repeat(64),
+    targetId: randomUUID(),
+    name: "Verified guidance",
+    jobId: randomUUID(),
+    draftId: randomUUID(),
+  };
+  await f.service.trackDirectDraft(input);
+  f.mergeKnowledge();
+  await f.service.reconcile();
+  await f.service.trackDirectDraft(input);
+  expect(
+    (await f.service.listKnowledgeTargets({ expertRef: f.expertRef })).every(
+      (target) => !target.pending,
+    ),
+  ).toBe(true);
+});

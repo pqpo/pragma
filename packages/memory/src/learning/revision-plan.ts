@@ -1,3 +1,4 @@
+/** Legacy pre-#434 plan handoff only. New learning work uses MemoryRevisionExecutor. */
 import { z } from "zod";
 import {
   KnowledgeSourceRevisionRefSchema,

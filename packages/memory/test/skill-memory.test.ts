@@ -1522,3 +1522,85 @@ it.each([
     }
   },
 );
+
+it("preserves the model budget while observing an owned Revision execution", async () => {
+  const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-skill-observation-"));
+  roots.push(pragmaHome);
+  const store = await createSkillLearningStore({ pragmaHome });
+  const rootRef = { type: "pragma.expert" as const, id: "expert-observe" };
+  const time = new Date("2026-10-26T00:00:00.000Z");
+  try {
+    await store.schedule({ rootRef, sourceDigest: "a".repeat(64), now: time });
+    let clock = new Date(time.getTime() + 24 * 60 * 60_000);
+    let claim = (await store.claimDueJob(clock))!;
+    expect(claim.attempts).toBe(1);
+    await store.deferObservation(claim, clock);
+    for (let step = 0; step < 5; step++) {
+      clock = new Date(clock.getTime() + 5001);
+      claim = (await store.claimDueJob(clock, new Set([claim.id])))!;
+      expect(claim.attempts).toBe(1);
+      await store.deferObservation(claim, clock);
+    }
+    expect((await store.listJobs())[0]!.attempts).toBe(1);
+    clock = new Date(clock.getTime() + 5001);
+    claim = (await store.claimDueJob(clock, new Set([claim.id])))!;
+    clock = new Date(clock.getTime() + 6 * 60_000);
+    expect(await store.claimDueJob(clock)).toBeUndefined();
+    expect((await store.listJobs())[0]!.lastErrorCode).toBe(
+      "memory_extraction_execution_unconfirmed",
+    );
+    await store.resumeObservation(claim.id, clock);
+    const resumed = (await store.claimDueJob(clock, new Set([claim.id])))!;
+    expect(resumed.attempts).toBe(1);
+  } finally {
+    store.close();
+  }
+});
+
+it("runs new Skill work through the direct Revision port without a plan handoff", async () => {
+  let clock = now;
+  const execute = vi.fn(
+    async (
+      input: Parameters<
+        import("../src/learning/revision-execution.ts").MemoryRevisionExecutor["execute"]
+      >[0],
+    ) => {
+      await input.assertCurrent();
+      return {
+        submitted: false,
+        decision: {
+          outcome: "accumulate" as const,
+          reason: "No supported workflow delta.",
+          targets: [],
+        },
+      };
+    },
+  );
+  const plan = vi.fn(async () => {
+    throw new Error("New work must not use a Planner");
+  });
+  const submit = vi.fn();
+  const module = await createSkillMemoryModule({
+    pragmaHome: await temporaryRoot(),
+    now: () => clock,
+    sourceReader: { listEligibleSources: async () => sources() },
+    targetReader: { listTargets: async () => [] },
+    executor: { execute },
+    planner: { plan },
+    learningSink: { submit },
+  });
+  try {
+    await module.scheduleRoot({ type: "pragma.expert", id: "expert-a" });
+    clock = new Date(now.getTime() + 24 * 60 * 60_000);
+    await module.runBackgroundOnce?.();
+    expect(execute).toHaveBeenCalled();
+    expect(plan).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      status: "completed",
+      completion: "rejected",
+    });
+  } finally {
+    module.close();
+  }
+});

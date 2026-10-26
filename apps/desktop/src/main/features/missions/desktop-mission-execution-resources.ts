@@ -79,6 +79,10 @@ import { createDesktopAdapterHost } from "./mission-adapter-host.ts";
 import { createMissionBranchContext } from "@pragma/local-host";
 import { MissionStatusService } from "@pragma/local-host";
 import type { MissionStore } from "@pragma/local-host";
+import {
+  isMemoryDirectRevision,
+  isUnattendedMemoryRevision,
+} from "../memory/memory-revision-executor.ts";
 import { isMemoryRevisionPlanningRun } from "../memory/memory-revision-planning-resource.ts";
 
 interface ExecutorMetadata {
@@ -143,6 +147,7 @@ export interface DesktopMissionExecutionResourceOptions {
   readonly runtimes: RuntimeResolver;
   readonly usage?: DesktopUsageStore | undefined;
   readonly loggerProvider?: import("@pragma/core").PragmaLoggerProvider | undefined;
+  readonly isUnattendedRevision?: ((mission: Mission) => Promise<boolean>) | undefined;
   readonly automaticHumanInteractionHandler?:
     ExpertAgentAutomaticHumanInteractionHandler | undefined;
   readonly systemExecutorSource?:
@@ -241,6 +246,10 @@ export function createDesktopMissionExecutionResources(
         expertSessionStore,
       }) => {
         const systemMission = !isUserFacingMissionOrigin(mission.origin);
+        const unattendedRevision =
+          purpose !== "stop" &&
+          (isUnattendedMemoryRevision(mission) ||
+            (await options.isUnattendedRevision?.(mission)) === true);
 
         const runtimes: RuntimeResolver = {
           getDefaultRuntimeId: async () => await options.runtimes.getDefaultRuntimeId(),
@@ -569,9 +578,12 @@ export function createDesktopMissionExecutionResources(
             automaticHumanInteractionHandler: async (request) => {
               // Native Runtime questions/approvals bypass the managed tool list.
               // Settle them here before Core enters a durable human-input wait.
-              if (isMemoryRevisionPlanningRun(mission.origin, mission.executor.ref)) {
+              if (
+                unattendedRevision ||
+                isMemoryRevisionPlanningRun(mission.origin, mission.executor.ref)
+              ) {
                 const reason =
-                  "Memory revision planning is unattended. Human interaction is disabled. Use only the supplied evidence; do not treat this rejection as insufficient evidence.";
+                  "Memory revision extraction is unattended. Human interaction is disabled. Use only the supplied evidence; do not treat this rejection as insufficient evidence.";
                 return request.kind === "user_question"
                   ? { kind: "user_question", answered: false, reason }
                   : { kind: "tool_approval", approved: false, updatedInput: request.input, reason };
@@ -639,6 +651,9 @@ export function createDesktopMissionExecutionResources(
                   project: options.project,
                   contextStores: options.contextStores,
                   revisions: options.contextStoreRevisions,
+                  ...(isMemoryDirectRevision(mission) && mission.origin.type === "system-memory"
+                    ? { memoryLearning: { sourceDigest: mission.origin.jobId } }
+                    : {}),
                   additionalMountResources: options.knowledgeRevisionMountResources,
                   inlineMission: {
                     id: mission.id,

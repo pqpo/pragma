@@ -387,6 +387,128 @@ export function createMemoryLearningRevisions(options: {
     await withFileLock(lockPath, async () => await callback(await read()));
 
   return {
+    async recoverDirectDrafts(missionId: string) {
+      const knowledge = (await options.knowledgeRevisions.list()).filter(
+        (job) => job.missionId === missionId && job.request.source === "memory-learning",
+      );
+      const skills = (await options.skillRevisions.list()).filter(
+        (job) => job.missionId === missionId && job.request.source === "memory-learning",
+      );
+      return [
+        ...(await Promise.all(
+          knowledge.map(async (job) => {
+            const draft = await options.knowledgeRevisions.getDraft(job.draftId);
+            return {
+              draftId: draft.id,
+              jobId: job.id,
+              targetId: draft.storeId,
+              name: draft.resourceName ?? draft.name,
+              operation: job.request.operation,
+              submitted: draft.submittedRevision !== undefined,
+            };
+          }),
+        )),
+        ...(await Promise.all(
+          skills.map(async (job) => {
+            const draft = await options.skillRevisions.getDraft(job.draftId);
+            return {
+              draftId: draft.id,
+              jobId: job.id,
+              targetId: draft.capabilityId,
+              name: draft.name,
+              operation: job.request.operation,
+              submitted: draft.submittedRevision !== undefined,
+            };
+          }),
+        )),
+      ];
+    },
+    async trackDirectDraft(input: {
+      readonly kind: "knowledge" | "skill";
+      readonly expertRef: string;
+      readonly sourceDigest: string;
+      readonly targetId: string;
+      readonly name: string;
+      readonly jobId: string;
+      readonly draftId: string;
+    }): Promise<void> {
+      await locked(async (state) => {
+        if (input.kind === "knowledge") {
+          const previous = state.knowledge.find(
+            (item) => item.storeId === input.targetId && item.expertRef === input.expertRef,
+          );
+          if (
+            previous?.revisionJobId === input.jobId &&
+            previous.sourceDigest === input.sourceDigest
+          )
+            return;
+          await write({
+            ...state,
+            knowledge: [
+              ...state.knowledge.filter((item) => item !== previous),
+              {
+                expertRef: input.expertRef,
+                storeId: input.targetId,
+                topicKey: topicKey(input.name),
+                topicName: input.name,
+                sourceDigest: input.sourceDigest,
+                revisionJobId: input.jobId,
+                mounted: previous?.mounted ?? false,
+                revisionPending: true,
+              },
+            ],
+          });
+        } else {
+          const previous = state.skills.find(
+            (item) => item.capabilityId === input.targetId && item.expertRef === input.expertRef,
+          );
+          if (
+            previous?.revisionJobId === input.jobId &&
+            previous.sourceDigest === input.sourceDigest
+          )
+            return;
+          await write({
+            ...state,
+            skills: [
+              ...state.skills.filter((item) => item !== previous),
+              {
+                expertRef: input.expertRef,
+                capabilityId: input.targetId,
+                normalizedKey: previous?.normalizedKey ?? `skill:${input.targetId}`,
+                sourceDigest: input.sourceDigest,
+                revisionJobId: input.jobId,
+                mounted: previous?.mounted ?? false,
+                revisionPending: true,
+              },
+            ],
+          });
+        }
+      });
+    },
+    async getDirectDraftVersion(kind: "knowledge" | "skill", draftId: string) {
+      if (kind === "knowledge") {
+        const draft = await options.knowledgeRevisions.getDraft(draftId);
+        return { id: draft.storeId, revision: draft.baseRevision, hash: draft.baseSnapshotHash };
+      }
+      const draft = await options.skillRevisions.getDraft(draftId);
+      return { id: draft.capabilityId, revision: draft.baseRevision, hash: draft.baseContentHash };
+    },
+    async getDirectKnowledgeDraft(draftId: string): Promise<boolean> {
+      const draft = await options.knowledgeRevisions.getDraft(draftId);
+      return (
+        draft.submittedRevision !== undefined &&
+        ["pending_review", "merging", "merged", "needs_rebase"].includes(draft.state)
+      );
+    },
+    async getDirectSkillDraft(draftId: string): Promise<boolean> {
+      const draft = await options.skillRevisions.getDraft(draftId);
+      return (
+        draft.submittedRevision !== undefined &&
+        ["pending_review", "publishing", "completed", "needs_rebase", "rejected"].includes(
+          draft.state,
+        )
+      );
+    },
     async clearExpertBinding(expertRef: string): Promise<void> {
       await locked(
         async (state) =>

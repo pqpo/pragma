@@ -32,6 +32,12 @@ describe("execution service composition", () => {
   it.each(
     [
       { ref: MEMORY_CURATOR_REF, jobId: "job", allowed: true },
+      {
+        ref: STORE_REVISION_EXPERT_REF,
+        jobId: `knowledge-revision:${"b".repeat(64)}`,
+        allowed: true,
+      },
+      { ref: SKILL_REVISION_EXPERT_REF, jobId: `skill-revision:${"b".repeat(64)}`, allowed: true },
       { ref: STORE_REVISION_EXPERT_REF, jobId: `knowledge-plan:${"a".repeat(64)}`, allowed: true },
       { ref: SKILL_REVISION_EXPERT_REF, jobId: `skill-plan:${"a".repeat(64)}`, allowed: true },
       { ref: STORE_REVISION_EXPERT_REF, jobId: "job", allowed: false },

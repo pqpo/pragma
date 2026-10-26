@@ -43,11 +43,14 @@ import {
   isMemoryRevisionPlanningRun,
   memoryRevisionPlanningResource,
 } from "../memory/memory-revision-planning-resource.ts";
+import { isMemoryDirectRevision } from "../memory/memory-revision-executor.ts";
 import { createDesktopAdapterHost } from "./mission-adapter-host.ts";
 
 it.each([
   [STORE_REVISION_EXPERT_REF, "knowledge-plan"],
   [SKILL_REVISION_EXPERT_REF, "skill-plan"],
+  [STORE_REVISION_EXPERT_REF, "knowledge-revision"],
+  [SKILL_REVISION_EXPERT_REF, "skill-revision"],
 ] as const)(
   "keeps %s Memory planning noninteractive on first execution, manual retry and correction",
   async (ref, jobPrefix) => {
@@ -136,9 +139,11 @@ it.each([
       getSystemExecutorResource: () => resource,
       systemExecutorSource: async ({ mission: current }) => ({
         ref,
-        expertResource: isMemoryRevisionPlanningRun(current.origin, current.executor.ref)
-          ? planning
-          : resource,
+        expertResource:
+          isMemoryDirectRevision(current) ||
+          isMemoryRevisionPlanningRun(current.origin, current.executor.ref)
+            ? planning
+            : resource,
         adapterHost: interactiveAdapterHost,
         environmentId: "desktop-memory-revision-planning",
         definitionStateRoot: join(root, "definitions"),

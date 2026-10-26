@@ -1,3 +1,5 @@
+import { unattendedMemoryRevisionResource } from "@pragma/built-in-agents";
+import { createLegacyMemoryRevisionObserver } from "../features/memory/legacy-memory-revision-observer.ts";
 import { desktopCapabilityResourceId } from "../platform/bindings/desktop-bound-resource-policy.ts";
 import { createBundleExecutorReadiness } from "../features/bundles/bundle-executor-readiness.ts";
 import { createSkillRevisionMissionRestorer } from "../features/capabilities/skill-revision-mission-restore.ts";
@@ -147,7 +149,11 @@ import {
 } from "../features/memory/memory-curator.ts";
 import { createMemoryLearningRevisions } from "../features/memory/memory-learning-revisions.ts";
 import { installMemoryPolicyHandlers } from "../features/memory/memory-policy-ipc.ts";
-import { createMemoryRevisionLearningPlanners } from "../features/memory/memory-revision-learning-planners.ts";
+import {
+  createMemoryRevisionExecutor,
+  isMemoryDirectRevision,
+  isUnattendedMemoryRevision,
+} from "../features/memory/memory-revision-executor.ts";
 import {
   isMemoryRevisionPlanningRun,
   memoryRevisionPlanningResource,
@@ -1333,6 +1339,12 @@ export async function createDesktopApplicationContainer(
         { missionId, error },
       ),
     execution: createDesktopMissionExecutionResources({
+      isUnattendedRevision: async (mission) =>
+        mission.origin.type === "system-store-revision"
+          ? (await storeRevisions.get(mission.origin.jobId)).request.source === "memory-learning"
+          : mission.origin.type === "system-skill-revision"
+            ? (await skillRevisions.get(mission.origin.jobId)).request.source === "memory-learning"
+            : false,
       get deferTerminalProjection() {
         return missionDeliveryRef.current !== undefined;
       },
@@ -1444,6 +1456,16 @@ export async function createDesktopApplicationContainer(
         pinnedSource,
       }) => {
         const planningRef = mission.executor.ref;
+        const unattendedRevision =
+          purpose !== "stop" &&
+          (isUnattendedMemoryRevision(mission) ||
+            (mission.origin.type === "system-store-revision"
+              ? (await storeRevisions.get(mission.origin.jobId)).request.source ===
+                "memory-learning"
+              : mission.origin.type === "system-skill-revision"
+                ? (await skillRevisions.get(mission.origin.jobId)).request.source ===
+                  "memory-learning"
+                : false));
         if (purpose === "stop") {
           const resource = systemExperts.getResource(planningRef);
           if (resource === undefined) return undefined;
@@ -1528,7 +1550,7 @@ export async function createDesktopApplicationContainer(
             },
             mission.workspace.path,
           );
-          return await storeRevisionAgentRef.current.source({
+          const source = await storeRevisionAgentRef.current.source({
             runtimeDefaults: pinnedSource?.rootExecutionOverride,
             profile:
               storeRevisionDefinition.executionProfile.mode === "pinned"
@@ -1547,9 +1569,24 @@ export async function createDesktopApplicationContainer(
                   },
             runtimes: scopedRuntimes,
             adapterHost: managementHost,
-            expertResource: systemExperts.getResource(STORE_REVISION_EXPERT_REF),
+            expertResource: unattendedRevision
+              ? unattendedMemoryRevisionResource(
+                  systemExperts.getResource(STORE_REVISION_EXPERT_REF)!,
+                )
+              : systemExperts.getResource(STORE_REVISION_EXPERT_REF),
             additionalResources: systemExperts.getAdditionalResources(STORE_REVISION_EXPERT_REF),
           });
+          return isMemoryDirectRevision(mission)
+            ? {
+                ...source,
+                ...(await memoryRevisionExecutions.source(
+                  mission,
+                  source.expertResource!,
+                  managementHost,
+                  { knowledgeRevisions },
+                )),
+              }
+            : source;
         }
         if (mission.executor.ref === SKILL_REVISION_EXPERT_REF) {
           if (skillAgentsRef.current === undefined) {
@@ -1561,6 +1598,14 @@ export async function createDesktopApplicationContainer(
           const skillRevisionPort = createDesktopSkillRevisionSubmissionPort({
             capabilities: capabilityStore,
             revisions: skillRevisions,
+            ...(isMemoryDirectRevision(mission) && mission.origin.type === "system-memory"
+              ? {
+                  memoryLearning: {
+                    sourceDigest: mission.origin.jobId,
+                    sourceRefs: () => memoryRevisionExecutions.sourceRefs(mission),
+                  },
+                }
+              : {}),
             inlineMissionId: mission.id,
             inlineWorkspacePath: mission.workspace.path,
             mountDraft: async (input) => {
@@ -1628,10 +1673,14 @@ export async function createDesktopApplicationContainer(
               await missionStore.unmountSkillRevisionDraft({ id: mission.id, draftId });
             }
           }
-          const expertResource = systemExperts.getResource(SKILL_REVISION_EXPERT_REF);
+          const baseExpertResource = systemExperts.getResource(SKILL_REVISION_EXPERT_REF);
+          const expertResource =
+            baseExpertResource !== undefined && unattendedRevision
+              ? unattendedMemoryRevisionResource(baseExpertResource)
+              : baseExpertResource;
           const additionalResources =
             systemExperts.getAdditionalResources(SKILL_REVISION_EXPERT_REF);
-          return await skillAgentsRef.current.source({
+          const source = await skillAgentsRef.current.source({
             runtimeDefaults: pinnedSource?.rootExecutionOverride,
             runtimes: scopedRuntimes,
             workspace: mission.workspace.path,
@@ -1650,6 +1699,17 @@ export async function createDesktopApplicationContainer(
             ...(expertResource === undefined ? {} : { expertResource }),
             ...(additionalResources === undefined ? {} : { additionalResources }),
           });
+          return isMemoryDirectRevision(mission)
+            ? {
+                ...source,
+                ...(await memoryRevisionExecutions.source(
+                  mission,
+                  source.expertResource!,
+                  source.adapterHost!,
+                  { skillRevisions: skillRevisionPort },
+                )),
+              }
+            : source;
         }
         if (mission.executor.ref === EVALUATION_JUDGE_EXPERT_REF) {
           if (mission.origin.type !== "system-evaluation" || mission.origin.phase !== "judge") {
@@ -2045,15 +2105,22 @@ export async function createDesktopApplicationContainer(
     memoryPlane.setEpisodicExtractor(memoryCurator.episodicExtractor),
     memoryPlane.setSemanticExtractor(memoryCurator.semanticExtractor),
   ]);
-  const memoryRevisionPlanners = createMemoryRevisionLearningPlanners({
+  const memoryRevisionExecutions = createMemoryRevisionExecutor({
     pragmaHome: pragmaPaths.root,
     missions: missionStore,
     application: missionApplication,
     project: pragmaProjectStore,
+    revisions: memoryLearningRevisions,
+  });
+  await memoryPlane.setRevisionExecutor(memoryRevisionExecutions.executor);
+  const legacyMemoryRevisionObserver = createLegacyMemoryRevisionObserver({
+    pragmaHome: pragmaPaths.root,
+    missions: missionStore,
+    application: missionApplication,
   });
   await Promise.all([
-    memoryPlane.setKnowledgePlanner(memoryRevisionPlanners.knowledge),
-    memoryPlane.setSkillPlanner(memoryRevisionPlanners.skill),
+    memoryPlane.setKnowledgePlanner(legacyMemoryRevisionObserver.knowledge),
+    memoryPlane.setSkillPlanner(legacyMemoryRevisionObserver.skill),
   ]);
   const unsubscribeTokenCounter = tokenCounter.subscribe(() => {
     void missionApplication.invalidateEstimatedContextWindows().catch((error: unknown) => {
@@ -2350,13 +2417,6 @@ export async function createDesktopApplicationContainer(
         mainLogger.warn(
           "desktop.memory_curator_orphan_cleanup_failed",
           "Orphaned Memory Curator Missions could not be cleaned up.",
-          { error },
-        );
-      });
-      void memoryRevisionPlanners.recoverOrphans().catch((error: unknown) => {
-        mainLogger.warn(
-          "desktop.memory_revision_planning_orphan_cleanup_failed",
-          "Orphaned Memory revision planning Missions could not be cleaned up.",
           { error },
         );
       });

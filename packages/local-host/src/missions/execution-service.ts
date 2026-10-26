@@ -7070,14 +7070,14 @@ function hasPromptAttachments(value: unknown): boolean {
   return Array.isArray(attachments) && attachments.length > 0;
 }
 
-/** Only Curator and read-only revision planning may continue an owned Memory context. */
+/** Curator and unattended Revision work may continue only their owned Memory context. */
 function isMemoryContinuationMission(mission: Mission): boolean {
   if (mission.origin.type !== "system-memory") return false;
   return (
     mission.executor.ref === MEMORY_CURATOR_REF ||
     (mission.executor.ref === STORE_REVISION_EXPERT_REF &&
-      /^knowledge-plan:[a-f0-9]{64}$/u.test(mission.origin.jobId)) ||
+      /^knowledge-(?:plan|revision):[a-f0-9]{64}$/u.test(mission.origin.jobId)) ||
     (mission.executor.ref === SKILL_REVISION_EXPERT_REF &&
-      /^skill-plan:[a-f0-9]{64}$/u.test(mission.origin.jobId))
+      /^skill-(?:plan|revision):[a-f0-9]{64}$/u.test(mission.origin.jobId))
   );
 }

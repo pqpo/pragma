@@ -1,3 +1,4 @@
+import { ContextStoreRevisionRequestSchema } from "@pragma/built-in-agents";
 import { describe, expect, it, vi } from "vitest";
 import { PRAGMA_DSL_WRITE_API_VERSION, PragmaExpertResourceSchema } from "@pragma/interpreter/ast";
 
@@ -12,7 +13,12 @@ const EXPERT_ID = "0000000000000002";
 const STORE_ID = "00000000-0000-4000-8000-000000000201";
 const UNMOUNTED_STORE_ID = "00000000-0000-4000-8000-000000000202";
 
-function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: string) {
+function fixture(
+  inline = false,
+  activeSourceDigest?: string,
+  ownerMissionId?: string,
+  memoryLearning = false,
+) {
   const contextResource = createDesktopContextResource({
     owner: "project-expert",
     storeId: STORE_ID,
@@ -164,6 +170,7 @@ function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: s
       project,
       contextStores,
       revisions,
+      ...(memoryLearning ? { memoryLearning: { sourceDigest: "a".repeat(64) } } : {}),
       continueMission,
       additionalMountResources: () => [systemExpert, systemContextResource],
       ...(inline
@@ -724,4 +731,25 @@ describe("Desktop Pragma management knowledge revision tools", () => {
       previousMissionId,
     });
   });
+});
+
+it("writes valid automatic Knowledge requests and reuses their identity across continuation", async () => {
+  const f = fixture(true, undefined, undefined, true);
+  const input = {
+    ...invocation,
+    create: { name: "Automatic guide", description: "Supported source" },
+    prompt: "Extract a supported guide",
+  };
+  await f.port.start(input);
+  await f.port.start({ ...input, executionId: "continued-execution", operationId: "call-2" });
+  const first = ContextStoreRevisionRequestSchema.parse(
+    f.startForMission.mock.calls[0]![0].request,
+  );
+  const second = ContextStoreRevisionRequestSchema.parse(
+    f.startForMission.mock.calls[1]![0].request,
+  );
+  expect(first.source).toBe("memory-learning");
+  expect(first.provenance).toBeUndefined();
+  expect(second.storeId).toBe(first.storeId);
+  expect(second.sourceDigest).toBe(first.sourceDigest);
 });

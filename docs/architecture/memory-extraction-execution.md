@@ -96,92 +96,56 @@ references remain pending; internal work never receives invented user/project su
 The existing Curator exclusion remains in place. This changes future capture only; previously
 created extraction jobs and published Memory are preserved.
 
-Knowledge/Skill planning is unattended. Before Interpreter compilation, the Host removes revision
-capabilities and applies an explicit `askUserQuestion` denial, covering
-Core default tools on first execution, corrections and manual retries. Ordinary interactive revision
-Agents retain their question tools. The Host also declines native Runtime questions and approvals
-through its automatic interaction handler, before entering a durable human-input wait; these native
-requests do not pass through managed tool filtering. Planning uses only supplied Memory projections and target lists;
-missing evidence yields `skip` without asking for confirmation. Runtime, read and tool failures keep
-their failure handling and must not be disguised as insufficient evidence.
+## Direct Knowledge/Skill Revision extraction
 
-Knowledge/Skill planning declares the complete output constraints before admission. Invalid JSON or
-plan Schema errors allow at most two correction turns, five seconds apart, in the same Mission,
-ExpertSession and owned Native Runtime Context. Each continuation observes its own execution ID;
-cancellation and Runtime failures stop correction. Exhausted correction is nonretryable rather than
-starting a fresh planning Mission automatically. Successful result reads retry at most four times,
-five seconds apart, without admitting another model. Only non-streaming assistant output belonging
-to the observed execution is eligible. Unavailable terminal observations, diagnostics or exhausted
-result reads are nonretryable; cancellation is checked again after reading and before Skill submission.
-Skill planning also validates citations, per-change evidence thresholds, distinct keys and target ownership
-inside those same correction turns. Each Skill requires at least one succeeded Episode, regardless
-of salience score, with exact distinct citations and current target versions. After business
-correction exhaustion, the Host submits only qualifying changes; if none qualify, the job completes
-as rejected (no Skill extracted). This is a normal learning outcome and does not enter needs-attention
-or start another planning Mission. Final rejected-change diagnostics are passed back to the Memory
-module before the planning Mission is removed, and committed atomically with completion to the
-existing failure-attempt history, including when other changes are retained. Runtime, cancellation, unreadable output and submission failures
-retain their existing failure handling. Description limits remain unchanged. Skill descriptions are discovery summaries: before Schema
-validation, the Desktop planner bounds oversized model-authored summaries to 500 UTF-16 units,
-preferably at a sentence boundary and without splitting surrogate pairs. This local repair consumes
-no additional model turn. Citations, target identity and all other validation remain unchanged;
-the revision Agent receives complete cited Memory bodies in its task input. Stored plans
-continue to use the existing strict Schema. Historical attention jobs whose complete diagnostics
-prove that every issue was an oversized Skill description may resume through normal claims within
-the remaining attempt budget. Mixed, truncated or unrelated diagnostics and exhausted jobs remain
-parked; recovery preserves failure history and never resets consumed attempts. When historical
-records have no failure-attempt entry, recovery saves their last diagnostic and requeues the job
-in one SQLite transaction.
+New learning work uses the Revision Agent directly: source reads, target discovery, value judgment,
+editing and draft submission share one Mission and Native context. Knowledge/Skill retain their
+independent scheduling; Curator Episode/Fact extraction is unchanged. See [ADR 080](../adr/080-direct-memory-revision-extraction.md).
+There is no new-task Planner, JSON inspection conversation, intermediate plan, correction loop,
+plan cache or plan-to-prompt conversion. Necessary source qualifications and deterministic checks
+run at the reading and draft boundaries; source/target completeness remains an Agent instruction.
 
-The Skill learning database upgrades lazily from version 4 to 5 with a locked, backed-up SQLite
-transaction. Historical pending/needs-attention jobs whose last error is exactly
-`skill_learning_plan_invalid` or `skill_learning_plan_duplicate_key` complete as rejected without
-model replay. Consumed attempts and failure-attempt diagnostics remain available; unrelated failures
-and running claims are unchanged. When an older job has no failure-attempt entry, migration preserves
-its last structured diagnostic (or legacy error text) there before clearing active error fields.
-Interrupted settlement rolls back and replays on the next open.
+Task-scoped tools page authorized Memory, search existing assets, and read pinned Knowledge/Skill
+contents and related package files. They validate identity, current policy and source revisions on
+every call. Managed inspection/draft calls share 128 requests and 8 MiB of delivered response bytes;
+submission and final no-change receipts have a control reserve. Consumed counters survive reopening.
+A target must be read before starting an incremental revision; changed versions require rereading.
+Skill citations still need a succeeded Episode; new Knowledge needs cross-conversation support or a
+successful artifact. Missing evidence means accumulating, while tool/runtime/budget failures remain failures.
 
-Source admission now separates evidence from value: one succeeded Episode can support a Skill
-proposal regardless of salience score. Knowledge plans explicitly select supplied target IDs and
-source revisions, explain the delta, and use stricter maturity gates for creation. Existing targets
-include ordinary editable assets and outstanding Memory drafts, with mounted assets preferred.
-Read-only JSON inspection continuations page/search catalogs and read complete selected documents
-in the same planning Mission (128 requests, 8 MiB of delivered bytes); they are distinct from the two
-invalid-output correction turns. Exhaustion is nonretryable, not a skip. Revision descriptions retain
-their existing length limits.
+The Agent uses existing Revision and Context tools in this same Mission. Selected pending targets
+produce a dependency wait, never a duplicate asset; unrelated pending targets do not block work.
+Submitted drafts, no-change decisions, waits and execution failures remain distinct. Tool validation
+feedback can be repaired within the current execution. Submission uses existing ownership, version/CAS
+and validation checks, and always leaves automatic Knowledge/Skill drafts for human approval.
 
-Checking existing assets, preferring reuse, reading complete cited sources and understanding target
-content before revision are prompt requirements. The prompt requires verification, outcomes,
-limitations and contradictory evidence to be read before citation; titles and partial excerpts are
-insufficient. Plan acceptance does not require source/target inspection records, catalog traversal
-or document/file read coverage. Source authorization and exact source revisions remain mandatory,
-as do target identity/version, pending-review and submission conflict checks. Inspection request
-and delivery budgets still bound resource usage.
+Automatic drafting carries immutable `system-memory` origin throughout execution and writing, so it
+cannot become user Evidence. Managed questions are denied before compilation and native Runtime
+questions/approvals are rejected before a durable human-input wait. Interactive Revision keeps its
+question tools and capture behavior. Historical draft-owning Missions use their persisted Revision
+job source to recover the same unattended execution and Evidence exclusion constraints. Missing,
+invalid or unsupported historical authority records defer capture rather than inventing user evidence.
 
-Knowledge and Skill sinks check outstanding work for the selected targets after planning and again
-under the submission lock. Validated plans waiting on a revision are cached against effective input
-and target versions, so dependency wakes need not admit the planner again.
-Skill occupancy is checked only for the selected plan targets, after planning and again when submitting;
-an unrelated pending Skill must not block independent work for the same expert.
-A same-process preflight wait refunds only its current, unadmitted claim; earlier model attempts remain counted.
-The task board classifies `memory_revision_pending` as a dependency, including historical records
-marked as configuration failures. Dependency copy covers both missing context and outstanding
-revision review. A settled revision wakes only `memory_revision_pending` dependency waits, including historical waits
-marked nonretryable. This targeted wake preserves consumed attempts and cannot revive exhausted jobs,
-Runtime failures or cancellations. General configuration wakeups keep their existing retry guards.
-Settlement wakes are awaited before clearing durable revision-pending bindings, including when
-the same reconciliation also follows superseded Skill revisions. A failed wake or
-interrupted binding write therefore replays on reconciliation. The first reconciliation callback in
-each process also recovers historical missed wakes once, including when settlement already committed.
+The new `state/memory-direct-revisions-v1/` namespace stores bounded admission/owner metadata,
+consumed budgets, exact source handles, per-draft receipts, results and continuation commands. It does
+not copy source bodies or change existing job, binding, Memory or draft Schemas. Existing migration
+chains remain supported. Unknown creation/dispatch outcomes never authorize a new model conversation.
+Only Local Host's single-use unstarted-preparation proof may withdraw an admission.
 
-Knowledge and Skill revision jobs allow three automatic retries after the initial attempt (four total execution
-attempts), with a fixed five-second delay after each retryable failure. Their job stores
-persist the attempt counter and retry deadline. Claiming, configuration wakeups, conversation
-lifecycle refreshes and process restarts cannot reset or bypass an exhausted budget. The explicit
-manual retry action resets the budget; genuinely new Evidence can create new eligible work.
-Cancelled executions never automatically replay, including when Runtime diagnostics mark an error
-retryable. Runtime-provided non-retryable failures and configuration/capacity failures still require inspection
-or a configuration change rather than repeatedly executing an unchanged request.
+Timeout observes the original execution again after five seconds. An expired job lease can recover
+observation only with durable ownership proof; missing proof stays parked. Observation does not reset
+the model budget. Explicit retries, bounded explicitly retryable terminal Runtime failures, and settled target dependencies use persisted idempotent commands
+in the original Native context. Submitted work survives partial failure and is not resubmitted.
+Authority submissions are reconciled after an uncertain tool response. Results precede cleanup;
+draft-owning Missions remain available for approval/rework. Deleting failed input revokes its tools;
+idle maintenance reclaims orphan no-draft state/workspaces without startup owner scans.
+
+Legacy task compatibility is a drain, not another new-task path. Existing cached plans finish their
+old handoff, and registered Planner Missions are only observed/read. No new Planner or correction is
+admitted. A durable business decision precedes the legacy settlement marker and cleanup. Missing owner,
+invalid output or unknown execution cannot silently start over. Legacy plan types/cache and resource
+recognition retire only after the support window and all legacy execution/handoff/review dependencies
+settle; historical data migrations are retained.
 
 An observation timeout (`memory_curator_timeout`, including historical
 `memory_curator_result_unavailable` records whose message is exactly that timeout) returns a

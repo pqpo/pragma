@@ -86,6 +86,9 @@ export function createLearningDecisionStore(
             .strict()
             .parse(JSON.parse(row.payload)).plan;
     },
+    discardPlan(fingerprint: string): void {
+      db.prepare("DELETE FROM plans WHERE fingerprint=?").run(fingerprint);
+    },
     writePlan(fingerprint: string, value: unknown): void {
       db.prepare(
         "INSERT INTO plans(fingerprint,payload) VALUES(?,?) ON CONFLICT(fingerprint) DO NOTHING",
