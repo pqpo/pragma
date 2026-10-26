@@ -1108,8 +1108,13 @@
   text-align: left;
 }
 
-.mission-row.has-loading .mission-row-open {
+.mission-row.has-loading .mission-row-open,
+.mission-row.is-pinned .mission-row-open {
   padding-right: 40px;
+}
+
+.mission-row.is-pinned.has-loading .mission-row-open {
+  padding-right: 72px;
 }
 
 .mission-row-open:focus-visible {
@@ -1169,6 +1174,10 @@
   transition: opacity 140ms ease-out;
 }
 
+.mission-row.is-pinned .mission-row-loading {
+  right: 44px;
+}
+
 .mission-row-loading > svg {
   animation: mission-thinking-spin 900ms linear infinite;
 }
@@ -1182,9 +1191,7 @@
   align-items: center;
   gap: 0;
   padding-left: 0;
-  opacity: 0;
   pointer-events: none;
-  transition: opacity 140ms ease-out;
 }
 
 .mission-row-icon-action {
@@ -1198,11 +1205,19 @@
   background: transparent;
   color: var(--faint);
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease-out;
 }
 
 .mission-row:hover .mission-row-actions,
 .mission-row:has(:focus-visible) .mission-row-actions {
   background: var(--ui-surface-subtle);
+}
+
+.mission-row:hover .mission-row-icon-action,
+.mission-row:has(:focus-visible) .mission-row-icon-action,
+.mission-row-icon-action[aria-pressed="true"] {
   opacity: 1;
   pointer-events: auto;
 }

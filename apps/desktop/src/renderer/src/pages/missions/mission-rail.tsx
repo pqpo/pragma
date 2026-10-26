@@ -823,6 +823,18 @@ export function MissionRailRow(props: {
             <button
               className="mission-row-icon-action"
               type="button"
+              title={i18n.t("markComplete", { ns: "missions" })}
+              aria-label={i18n.t("markCompleteNamed", {
+                ns: "missions",
+                title: props.mission.title,
+              })}
+              onClick={() => void props.onMarkComplete(props.mission)}
+            >
+              <CheckCircle size={16} aria-hidden="true" />
+            </button>
+            <button
+              className="mission-row-icon-action"
+              type="button"
               title={
                 props.pinned
                   ? i18n.t("unpinMission", { ns: "missions" })
@@ -835,19 +847,7 @@ export function MissionRailRow(props: {
               aria-pressed={props.pinned}
               onClick={() => props.onTogglePin(props.mission)}
             >
-              <PushPin size={18} weight={props.pinned ? "fill" : "regular"} aria-hidden="true" />
-            </button>
-            <button
-              className="mission-row-icon-action"
-              type="button"
-              title={i18n.t("markComplete", { ns: "missions" })}
-              aria-label={i18n.t("markCompleteNamed", {
-                ns: "missions",
-                title: props.mission.title,
-              })}
-              onClick={() => void props.onMarkComplete(props.mission)}
-            >
-              <CheckCircle size={18} aria-hidden="true" />
+              <PushPin size={16} weight={props.pinned ? "fill" : "regular"} aria-hidden="true" />
             </button>
           </>
         ) : (
