@@ -1,5 +1,6 @@
 import {
   Archive,
+  ArrowClockwise,
   CaretDown,
   Circle,
   ClockCounterClockwise,
@@ -13,7 +14,6 @@ import {
   Plus,
   RadioButton,
   Trash,
-  Wrench,
   X,
 } from "@phosphor-icons/react";
 import { useId, useState } from "react";
@@ -42,7 +42,7 @@ import { desktopApi, fixedSkillCapabilityIds, type ExpertRecord } from "./studio
 import { AssetGitImportForm } from "./AssetGitControls.tsx";
 import { StudioCatalogCard } from "./StudioCatalogCard.tsx";
 
-type Filter = "mcp" | "http" | "function";
+type Filter = "all" | "mcp" | "http" | "function";
 type CapabilityMode = "skill" | "mcp" | "http" | "code";
 export function directCapabilityCreateMode(kind: "connectors" | "skills"): CapabilityMode | null {
   return kind === "skills" ? "skill" : null;
@@ -59,6 +59,14 @@ export function capabilityEditMode(kind: CapabilityDefinition["kind"]): Capabili
     case "code_service":
       return "code";
   }
+}
+
+function capabilityConnectionOrigin(definition: CapabilityDefinition): string | undefined {
+  if (definition.kind === "http_service") return new URL(definition.baseUrl).origin;
+  if (definition.kind === "mcp_server" && definition.connection.transport !== "stdio") {
+    return new URL(definition.connection.url).origin;
+  }
+  return undefined;
 }
 
 const emptyMcp = {
@@ -139,9 +147,9 @@ export function CapabilityDirectoryFragment(props: {
   const { t } = useTranslation("studio");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>(() => {
-    if (typeof window === "undefined") return "mcp";
+    if (typeof window === "undefined") return "all";
     const stored = window.localStorage.getItem("pragma.studio.connector-filter");
-    return stored === "http" || stored === "function" ? stored : "mcp";
+    return stored === "mcp" || stored === "http" || stored === "function" ? stored : "all";
   });
   const [menuOpen, setMenuOpen] = useState(false);
   const [mode, setMode] = useState<CapabilityMode | null>(null);
@@ -154,6 +162,7 @@ export function CapabilityDirectoryFragment(props: {
   const [codePreview, setCodePreview] = useState<PreviewCodeServiceResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const searchLabel = t(props.kind === "connectors" ? "searchConnectors" : "searchCapabilities");
   const normalizedQuery = query.trim().toLowerCase();
   const catalog = props.capabilities.filter((capability) =>
     props.kind === "skills"
@@ -163,6 +172,7 @@ export function CapabilityDirectoryFragment(props: {
   const matching = catalog.filter((capability) => {
     const typeMatches =
       props.kind === "skills" ||
+      filter === "all" ||
       (filter === "mcp" && capability.definition.kind === "mcp_server") ||
       (filter === "http" && capability.definition.kind === "http_service") ||
       (filter === "function" && capability.definition.kind === "code_service");
@@ -172,6 +182,12 @@ export function CapabilityDirectoryFragment(props: {
       capability.manifest.runtimeKey,
       capability.definition.kind,
       capability.definition.description,
+      capabilityConnectionOrigin(capability.definition),
+      ...(capability.definition.kind === "skill"
+        ? []
+        : capability.definition.kind === "code_service"
+          ? [capability.definition.tool.name, capability.definition.tool.description]
+          : capability.definition.tools.flatMap((tool) => [tool.name, tool.description])),
     ].join(" ");
     return typeMatches && searchable.toLowerCase().includes(normalizedQuery);
   });
@@ -509,52 +525,42 @@ export function CapabilityDirectoryFragment(props: {
         </header>
       }
     >
-      <div className="capability-controls">
+      <div className="studio-catalog-controls">
         <label className="directory-search">
           <MagnifyingGlass size={18} />
-          <span className="sr-only">{t("searchCapabilities")}</span>
+          <span className="sr-only">{searchLabel}</span>
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder={t("searchCapabilities")}
+            placeholder={searchLabel}
           />
         </label>
-        {props.kind === "connectors" ? (
-          <div className="capability-filters" aria-label={t("capabilityType")}>
-            {(["mcp", "http", "function"] as const).map((value) => (
-              <button
-                key={value}
-                className={filter === value ? "is-active" : ""}
-                type="button"
-                onClick={() => {
-                  setFilter(value);
-                  window.localStorage.setItem("pragma.studio.connector-filter", value);
-                }}
-              >
-                {t(value)}
-              </button>
-            ))}
-          </div>
-        ) : null}
-        <span className="capability-results-count">
+        <span className="studio-catalog-results-count">
           {t("showingMatching", { visible: matching.length, total: catalog.length })}
         </span>
       </div>
 
-      <div
-        className={props.kind === "skills" ? "studio-catalog-grid" : "capability-table"}
-        role="list"
-      >
-        {props.kind === "connectors" ? (
-          <div className="capability-table-heading" aria-hidden="true">
-            <span className="capability-column-name">{t("name")}</span>
-            <span className="capability-column-type">{t("type")}</span>
-            <span className="capability-column-source">{t("sourceConnection")}</span>
-            <span className="capability-column-status">{t("status")}</span>
-            <span className="capability-column-actions" />
-          </div>
-        ) : null}
+      {props.kind === "connectors" ? (
+        <div className="connector-filters" aria-label={t("capabilityType")}>
+          {(["all", "mcp", "http", "function"] as const).map((value) => (
+            <button
+              key={value}
+              className={filter === value ? "is-active" : ""}
+              aria-pressed={filter === value}
+              type="button"
+              onClick={() => {
+                setFilter(value);
+                window.localStorage.setItem("pragma.studio.connector-filter", value);
+              }}
+            >
+              {t(value)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="studio-catalog-grid" role="list">
         {matching.map((capability) =>
           props.kind === "skills" ? (
             <SkillCard
@@ -564,9 +570,10 @@ export function CapabilityDirectoryFragment(props: {
               onOpen={() => props.onOpen(capability)}
             />
           ) : (
-            <CapabilityRow
+            <ConnectorCard
               key={capability.manifest.id}
               capability={capability}
+              experts={props.experts}
               onOpen={() => props.onOpen(capability)}
               onEdit={
                 capability.definition.kind === "skill"
@@ -781,7 +788,8 @@ function SkillCard(props: {
   );
 }
 
-function CapabilityRow(props: {
+function ConnectorCard(props: {
+  readonly experts?: readonly ExpertRecord[] | undefined;
   readonly capability: Capability;
   readonly onOpen: () => void;
   readonly onEdit?: (() => void) | undefined;
@@ -794,33 +802,24 @@ function CapabilityRow(props: {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const { capability } = props;
   const isBuiltIn = capability.managedBy === "system";
-  const source = isBuiltIn
-    ? t("builtIn")
-    : capability.definition.kind === "skill"
-      ? t("uploadedPackage")
-      : capability.definition.kind === "http_service"
-        ? `${capability.definition.baseUrl} · ${t("localMcpWrapper")}`
-        : capability.definition.kind === "code_service"
-          ? `JavaScript · ${capability.definition.tool.name}`
-          : capability.definition.connection.transport === "stdio"
-            ? `stdio · ${capability.definition.connection.command}`
-            : `${capability.definition.connection.transport === "sse" ? "SSE" : "Streamable HTTP"} · ${capability.definition.connection.url}`;
+  const definition = capability.definition;
   const type =
-    capability.definition.kind === "skill"
-      ? t("skill")
-      : capability.definition.kind === "http_service"
-        ? t("httpService")
-        : capability.definition.kind === "code_service"
-          ? t("codeService")
-          : t("mcpServer");
-  const Icon =
-    capability.definition.kind === "skill"
-      ? Archive
-      : capability.definition.kind === "http_service"
-        ? Globe
-        : capability.definition.kind === "code_service"
-          ? Code
-          : Wrench;
+    definition.kind === "mcp_server"
+      ? t("mcp")
+      : definition.kind === "http_service"
+        ? t("http")
+        : "JavaScript";
+  const linkedExperts = props.experts?.filter(
+    (expert) =>
+      expert.capabilities.some(
+        (reference) =>
+          reference.kind === "tools" && reference.capabilityId === capability.manifest.id,
+      ) ||
+      expert.persisted?.opaqueCapabilities?.some(
+        (reference) =>
+          reference.kind === "tools" && reference.ref === `capability:${capability.manifest.id}`,
+      ),
+  );
   const retry = async () => {
     const api = desktopApi();
     if (!api) return;
@@ -861,61 +860,40 @@ function CapabilityRow(props: {
   };
   return (
     <>
-      <div
-        className="capability-row"
-        role="listitem"
-        onClick={(event) => {
-          if (
-            event.target instanceof Element &&
-            event.target.closest("[data-capability-row-action]")
-          ) {
-            return;
-          }
-          props.onOpen();
-        }}
-      >
-        <button
-          className="capability-name capability-open-button capability-column-name"
-          type="button"
-        >
-          <span className="studio-asset-icon">
-            <Icon size={22} />
+      <StudioCatalogCard
+        name={capability.manifest.name}
+        description={definition.description}
+        updatedAt={capability.manifest.updatedAt}
+        expertNames={linkedExperts?.map((expert) => expert.name)}
+        badge={
+          <span className="connector-card-badges">
+            <span>{type}</span>
+            {isBuiltIn ? <span>{t("builtIn")}</span> : null}
           </span>
-          <span>
-            <span className="capability-name-title-row">
-              <strong title={capability.manifest.name}>{capability.manifest.name}</strong>
-              {isBuiltIn ? <span className="capability-built-in-chip">{t("builtIn")}</span> : null}
+        }
+        footer={
+          error ? (
+            <span className="connector-card-attention connector-card-error" role="alert">
+              {error}
             </span>
-            <small>{capability.definition.description}</small>
-            {error ? (
-              <em role="alert" title={error}>
-                {error}
-              </em>
-            ) : null}
-          </span>
-        </button>
-        <span className="capability-column-type">
-          <em className="capability-type">{type}</em>
-        </span>
-        <span className="capability-source capability-column-source">{source}</span>
-        <span className="capability-status capability-column-status">
-          <i className={capability.health.status === "ready" ? "is-ready" : "is-warning"} />
-          {capability.health.status === "ready" ? t("ready") : t("needsAttention")}
-        </span>
-        <span
-          className="capability-row-actions capability-column-actions"
-          data-capability-row-action
-          onBlur={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget)) setMenuOpen(false);
-          }}
-        >
-          {isBuiltIn || capability.definition.kind === "skill" ? null : (
-            <>
-              {capability.health.status === "needs_attention" ? (
-                <button type="button" disabled={busy} onClick={() => void retry()}>
-                  {t("common:actions.retry")}
-                </button>
-              ) : null}
+          ) : undefined
+        }
+        onOpen={props.onOpen}
+        actions={
+          isBuiltIn ? undefined : (
+            <span
+              className="capability-row-actions"
+              data-capability-row-action
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) setMenuOpen(false);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setMenuOpen(false);
+                  event.currentTarget.querySelector("button")?.focus();
+                }
+              }}
+            >
               <button
                 type="button"
                 disabled={busy}
@@ -924,10 +902,24 @@ function CapabilityRow(props: {
                 aria-expanded={menuOpen}
                 onClick={() => setMenuOpen((open) => !open)}
               >
-                <DotsThree size={20} />
+                <DotsThree size={20} aria-hidden="true" />
               </button>
               {menuOpen ? (
                 <div className="capability-row-menu" role="menu">
+                  {capability.health.status === "needs_attention" ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={busy}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void retry();
+                      }}
+                    >
+                      <ArrowClockwise size={16} aria-hidden="true" />
+                      {t("common:actions.retry")}
+                    </button>
+                  ) : null}
                   {props.onEdit ? (
                     <button
                       type="button"
@@ -956,10 +948,10 @@ function CapabilityRow(props: {
                   </button>
                 </div>
               ) : null}
-            </>
-          )}
-        </span>
-      </div>
+            </span>
+          )
+        }
+      />
       {confirmOpen ? (
         <div className="capability-confirm-backdrop">
           <section

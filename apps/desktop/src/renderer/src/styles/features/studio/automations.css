@@ -3,35 +3,6 @@
   container-type: inline-size;
 }
 
-.automation-card-state {
-  flex: 0 0 auto;
-  color: var(--ui-text-secondary);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.45;
-}
-
-.automation-card-state.is-error,
-.automation-card-run-error {
-  color: var(--ui-danger);
-}
-
-.automation-card-facts {
-  display: grid;
-  gap: 4px;
-  color: var(--ui-text-secondary);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.automation-card-facts > span {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow-wrap: anywhere;
-}
-
 .automation-card-time {
   display: flex;
   flex-wrap: wrap;

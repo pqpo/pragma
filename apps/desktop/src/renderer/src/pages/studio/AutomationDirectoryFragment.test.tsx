@@ -16,8 +16,7 @@ import {
   validateAutomationEditor,
 } from "./AutomationDirectoryFragment.tsx";
 import { AutomationDetailFragment } from "./AutomationDetailFragment.tsx";
-import { AutomationCatalogCard, automationScheduleSummary } from "./AutomationCatalogCard.tsx";
-import { i18n } from "../../i18n/index.ts";
+import { AutomationCatalogCard } from "./AutomationCatalogCard.tsx";
 
 const automation: AutomationSummary = {
   ref: "automation:hrxn3mv2e991j2rj",
@@ -96,7 +95,7 @@ describe("AutomationDirectoryFragment", () => {
     expect(html).toContain("Automations");
     expect(html).toContain("Connections");
     expect(html).toContain("Daily review");
-    expect(html).toContain("Loading…");
+    expect(html).toContain("Reviews work every day");
     expect(html).not.toContain("expert:3sfd30h5017wd17d");
   });
 
@@ -122,26 +121,25 @@ describe("AutomationDirectoryFragment", () => {
             },
           },
         }}
-        executorName="Reviewer"
         onOpen={() => undefined}
       />,
     );
-    expect(html).toContain("Day 15 of each month 09:00");
+    expect(html).not.toContain("Day 15 of each month");
     expect(html).toMatch(/9:00.*GMT\+8/);
-    expect(html).toContain("Runs: Reviewer");
+    expect(html).not.toContain("Runs: Reviewer");
     expect(html).not.toContain("Scheduled");
     expect(html).not.toContain("studio-asset-icon");
   });
 
-  it("distinguishes paused automations from dispatch failures and queued events", () => {
+  it("keeps paused, failed and queued statuses out of list cards while retaining descriptions", () => {
     const paused = renderToStaticMarkup(
       <AutomationCatalogCard
         automation={{ ...automation, status: "disabled" }}
-        executorName="Reviewer"
         onOpen={() => undefined}
       />,
     );
-    expect(paused).toContain("Disabled");
+    expect(paused).not.toContain("Disabled");
+    expect(paused).toContain("Reviews work every day");
     expect(paused).not.toContain("Next run");
     const failed = renderToStaticMarkup(
       <AutomationCatalogCard
@@ -157,36 +155,17 @@ describe("AutomationDirectoryFragment", () => {
             updatedAt: "2026-10-26T09:00:00.000Z",
           },
         }}
-        executorName="Reviewer"
         onOpen={() => undefined}
       />,
     );
-    expect(failed).toContain("Last dispatch failed");
-    expect(failed).toContain("3 queued events");
-  });
-
-  it("keeps weekly days and interval units meaningful in schedule summaries", () => {
-    const t = i18n.getFixedT("en", "studio");
-    expect(
-      automationScheduleSummary(
-        { kind: "interval", every: 1, unit: "hours", anchorAt: "2026-10-26T00:00:00Z" },
-        "en",
-        t,
-      ),
-    ).toBe("Every 1 hour");
-    expect(
-      automationScheduleSummary(
-        {
-          kind: "calendar",
-          frequency: "weekly",
-          weekdays: ["mon", "fri"],
-          time: "09:30",
-          timezone: "UTC",
-        },
-        "en",
-        t,
-      ),
-    ).toContain("Monday, Friday 09:30");
+    expect(failed).not.toContain("Last dispatch failed");
+    const queued = renderToStaticMarkup(
+      <AutomationCatalogCard
+        automation={{ ...automation, queueDepth: 3 }}
+        onOpen={() => undefined}
+      />,
+    );
+    expect(queued).not.toContain("3 queued events");
   });
 
   it("resolves an Automation executor ref to its user-facing name", () => {

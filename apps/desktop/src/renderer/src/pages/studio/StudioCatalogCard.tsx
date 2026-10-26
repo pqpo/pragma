@@ -13,6 +13,7 @@ export function StudioCatalogCard(props: {
   readonly badge?: ReactNode;
   readonly summary?: ReactNode;
   readonly footer?: ReactNode;
+  readonly actions?: ReactNode;
   readonly builtIn?: boolean | undefined;
   readonly needsAttention?: boolean | undefined;
   readonly onOpen: () => void;
@@ -27,7 +28,7 @@ export function StudioCatalogCard(props: {
       }).format(updatedAt)
     : null;
   return (
-    <div className="studio-catalog-card" role="listitem">
+    <div className={`studio-catalog-card${props.actions ? " has-actions" : ""}`} role="listitem">
       <button className="studio-catalog-card-open" type="button" onClick={props.onOpen}>
         <span className="studio-catalog-card-heading">
           <span className="studio-catalog-card-name" title={props.name}>
@@ -61,6 +62,7 @@ export function StudioCatalogCard(props: {
           ) : null}
         </span>
       </button>
+      {props.actions ? <div className="studio-catalog-card-actions">{props.actions}</div> : null}
     </div>
   );
 }

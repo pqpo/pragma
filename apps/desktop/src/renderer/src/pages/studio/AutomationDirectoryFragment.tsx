@@ -113,14 +113,12 @@ export function AutomationDirectoryFragment(props: {
   readonly onChanged: () => Promise<void>;
 }) {
   const { t } = useTranslation("studio");
-  const { t: tCommon } = useTranslation("common");
   const { t: tMissions } = useTranslation("missions");
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<"automations" | "connections">("automations");
   const [selectedAutomation, setSelectedAutomation] = useState<AutomationSummary | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [executors, setExecutors] = useState<readonly MissionExecutorOption[]>([]);
-  const [executorCatalogLoaded, setExecutorCatalogLoaded] = useState(false);
   const [missionDefaults, setMissionDefaults] = useState<MissionCreationDefaults>();
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<readonly string[]>([]);
@@ -141,9 +139,6 @@ export function AutomationDirectoryFragment(props: {
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(errorMessage(loadError));
-      })
-      .finally(() => {
-        if (!cancelled) setExecutorCatalogLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -939,15 +934,6 @@ export function AutomationDirectoryFragment(props: {
                 <AutomationCatalogCard
                   key={automation.ref}
                   automation={automation}
-                  executorName={
-                    resolveAutomationExecutorName(
-                      automation.resource.spec.route.executor.ref,
-                      executors,
-                    ) ??
-                    (executorCatalogLoaded
-                      ? t("automationExecutorUnavailable")
-                      : tCommon("actions.loading"))
-                  }
                   onOpen={() => setSelectedAutomation(automation)}
                 />
               ))}

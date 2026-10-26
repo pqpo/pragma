@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { User } from "@phosphor-icons/react";
+import { emptyDraft } from "./studio-model.ts";
 import type { Capability } from "../../../../shared/contracts/index.ts";
 import {
   CapabilityDirectoryFragment,
@@ -212,6 +214,89 @@ describe("capability row actions", () => {
     expect(html).not.toContain("studio-asset-icon");
     expect(html).not.toContain("Ready");
     expect(html).not.toContain("Uploaded package");
+  });
+
+  it("shows connector descriptions and usage without tool lists, connection targets, or ready states", () => {
+    const connector: Capability = {
+      ...capability,
+      manifest: { ...capability.manifest, kind: "http_service", name: "Customer lookup" },
+      health: { ...capability.health, status: "needs_attention" },
+      definition: {
+        kind: "http_service",
+        name: "Customer lookup",
+        description: "Find customer records.",
+        baseUrl: "https://test-user:fake-credential@api.example.test/v1?token=fake-token",
+        auth: { type: "none" },
+        timeoutMs: 30000,
+        tools: [
+          {
+            name: "find_customer",
+            description: "Find a customer",
+            method: "GET",
+            path: "/customers",
+            parameters: [],
+          },
+        ],
+      },
+    };
+    const html = renderToStaticMarkup(
+      <CapabilityDirectoryFragment
+        kind="connectors"
+        capabilities={[connector]}
+        experts={[
+          {
+            ...emptyDraft(),
+            name: "Support assistant",
+            icon: User,
+            capabilities: [
+              { kind: "tools", capabilityId: connector.manifest.id, toolNames: ["find_customer"] },
+            ],
+          },
+        ]}
+        onOpen={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+    expect(html).toContain("Find customer records.");
+    expect(html).not.toContain("1 tool");
+    expect(html).not.toContain("find_customer");
+    expect(html).not.toContain("api.example.test");
+    expect(html).toContain("Used by 1 expert");
+    expect(html).toContain('aria-label="More actions for Customer lookup"');
+    expect(html).not.toContain("fake-credential");
+    expect(html).not.toContain("fake-token");
+    expect(html).not.toContain("test-user");
+    expect(html).not.toContain("Ready");
+    expect(html).not.toContain("Needs attention");
+    expect(html).not.toContain("studio-asset-icon");
+  });
+
+  it("keeps built-in connector cards read-only without tool inventory metadata", () => {
+    const html = renderToStaticMarkup(
+      <CapabilityDirectoryFragment
+        kind="connectors"
+        capabilities={[
+          {
+            ...capability,
+            managedBy: "system",
+            manifest: { ...capability.manifest, name: "Built-in connector", kind: "mcp_server" },
+            definition: {
+              kind: "mcp_server",
+              name: "Built-in connector",
+              description: "Managed tools.",
+              connection: { transport: "stdio", command: "node", args: [], env: {}, secretEnv: {} },
+              timeoutMs: 30000,
+              tools: [],
+            },
+          },
+        ]}
+        onOpen={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+    expect(html).toContain("Built-in");
+    expect(html).not.toContain("No tools available");
+    expect(html).not.toContain("More actions for Built-in connector");
   });
 
   it("shows active revision tasks with the shared revision badge", () => {

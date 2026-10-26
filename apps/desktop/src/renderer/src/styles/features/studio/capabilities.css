@@ -99,6 +99,56 @@
   color: var(--text);
 }
 
+.connector-filters {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 24px;
+}
+
+.connector-filters button {
+  min-width: 64px;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.connector-filters button:hover,
+.connector-filters button.is-active {
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
+}
+
+.connector-filters button:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.connector-card-badges {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.8;
+}
+
+.connector-card-error {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+}
+
+.connector-card-attention {
+  color: var(--ui-danger);
+}
+
 .capability-table {
   border-top: 1px solid var(--border);
 }
@@ -234,18 +284,30 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 7px;
+  gap: 8px;
   cursor: default;
 }
 
 .capability-row-actions button {
-  padding: 5px 7px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px;
   border: 0;
+  border-radius: var(--ui-radius-md);
   background: transparent;
   color: var(--ui-text);
   cursor: pointer;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 500;
+}
+
+.capability-row-actions > button:hover {
+  background: var(--ui-surface-subtle);
+}
+
+.capability-row-actions > button:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
 }
 
 .context-store-revisions.skill-revision-page {
@@ -256,14 +318,14 @@
 .capability-row-menu {
   position: absolute;
   z-index: 8;
-  top: calc(100% + 5px);
+  top: calc(100% + 8px);
   right: 0;
-  width: 185px;
-  padding: 5px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
+  width: 192px;
+  padding: 4px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
   background: var(--ui-surface);
-  box-shadow: var(--shadow-panel);
+  box-shadow: var(--ui-shadow-overlay);
 }
 
 .capability-row-actions .capability-row-menu button {
@@ -272,9 +334,9 @@
   min-height: 36px;
   align-items: center;
   gap: 8px;
-  padding: 8px 9px;
-  border-radius: 6px;
-  color: var(--text);
+  padding: 8px 12px;
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text);
   text-align: left;
 }
 
@@ -289,12 +351,12 @@
 }
 
 .capability-row-actions .capability-row-menu button.is-danger {
-  color: #a14c3b;
+  color: var(--ui-danger);
 }
 
 .capability-row-actions .capability-row-menu button.is-danger:hover,
 .capability-row-actions .capability-row-menu button.is-danger:focus-visible {
-  background: #fff2ee;
+  background: var(--ui-danger-subtle);
 }
 
 .capability-confirm-backdrop {
@@ -1192,57 +1254,14 @@
   container-type: inline-size;
 }
 
-.capability-catalog .capability-table-heading,
-.capability-catalog .capability-row {
-  grid-template-columns:
-    minmax(220px, 1.4fr) minmax(92px, 0.45fr) minmax(160px, 0.9fr)
-    minmax(105px, 0.55fr) 110px;
-}
-
-.capability-catalog .capability-column-actions {
-  justify-self: end;
-}
-
-@container capability-catalog (max-width: 850px) {
-  .capability-catalog .capability-table-heading,
-  .capability-catalog .capability-row {
-    grid-template-columns: minmax(210px, 1fr) minmax(92px, 0.4fr) minmax(105px, 0.45fr) 110px;
-  }
-
-  .capability-catalog .capability-column-source {
-    display: none;
-  }
-}
-
 @container capability-catalog (max-width: 640px) {
-  .capability-catalog .capability-controls {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .capability-catalog .capability-controls .directory-search {
-    width: 100%;
-    max-width: none;
-    flex: none;
-  }
-
-  .capability-catalog .capability-filters {
+  .capability-catalog .connector-filters {
     width: 100%;
   }
 
-  .capability-catalog .capability-filters button {
+  .capability-catalog .connector-filters button {
     min-width: 0;
     flex: 1 1 0;
-  }
-
-  .capability-catalog .capability-table-heading,
-  .capability-catalog .capability-row {
-    grid-template-columns: minmax(180px, 1fr) minmax(92px, 0.4fr) 110px;
-  }
-
-  .capability-catalog .capability-column-status {
-    display: none;
   }
 }
 
@@ -1256,16 +1275,6 @@
   .capability-catalog .studio-create-wrap {
     align-self: flex-start;
     justify-content: flex-start;
-  }
-
-  .capability-catalog .capability-table-heading,
-  .capability-catalog .capability-row {
-    grid-template-columns: minmax(0, 1fr) 110px;
-    gap: 10px;
-  }
-
-  .capability-catalog .capability-column-type {
-    display: none;
   }
 }
 
