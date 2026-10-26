@@ -596,3 +596,111 @@ it("reads a pinned Skill script in the same planning Mission before submitting a
   expect(f.create).toHaveBeenCalledOnce();
   expect(f.continuation).toHaveBeenCalledTimes(4);
 });
+
+it.each([
+  ["knowledge", "create"],
+  ["knowledge", "revise"],
+  ["skill", "create"],
+  ["skill", "revise"],
+] as const)(
+  "accepts a %s %s plan without source or target inspection in the planning Mission",
+  async (kind, operation) => {
+    const source = planningSources()[0]!;
+    const storeId = randomUUID();
+    const capabilityId = "1h2j3k4m5n6p7q8r";
+    const hash = "a".repeat(64);
+    const plan =
+      kind === "knowledge"
+        ? {
+            action: "apply",
+            name: "Knowledge",
+            description: "Guide",
+            rationale: "Add verified guidance",
+            maturity: operation === "create" ? "validated-artifact" : "incremental",
+            sourceRefs: [source.ref],
+            target:
+              operation === "create"
+                ? { type: "create", justification: "A distinct complete validated artifact." }
+                : { type: "revise", storeId, baseRevision: 1, snapshotHash: hash },
+          }
+        : {
+            action: "apply",
+            changes: [
+              {
+                name: "Workflow",
+                description: "Reusable workflow",
+                normalizedKey: "workflow.test",
+                sourceRefs: [source.ref],
+                target:
+                  operation === "create"
+                    ? { type: "create" }
+                    : { type: "revise", capabilityId, baseRevision: 1, contentHash: hash },
+              },
+            ],
+          };
+    const f = await planningFixture([JSON.stringify(plan)]);
+    const result =
+      kind === "knowledge"
+        ? await f.planners.knowledge.plan({
+            ...f.input,
+            sources: [
+              { ...source, ref: { ...source.ref, kind: "episodic" }, outcome: "succeeded" },
+            ],
+            existingTargets: [
+              {
+                storeId,
+                name: "Knowledge",
+                description: "Guide",
+                mounted: true,
+                baseRevision: 1,
+                snapshotHash: hash,
+              },
+            ],
+          })
+        : await f.planners.skill.plan({
+            ...f.input,
+            sources: [source],
+            existingTargets: [
+              {
+                bindingId: randomUUID(),
+                capabilityId,
+                name: "Workflow",
+                description: "Reusable workflow",
+                normalizedKeys: operation === "revise" ? ["workflow.test"] : [],
+                baseRevision: 1,
+                contentHash: hash,
+              },
+            ],
+          });
+    expect(result).toEqual(plan);
+    expect(f.create).toHaveBeenCalledOnce();
+    expect(f.continuation).not.toHaveBeenCalled();
+  },
+);
+
+it("repairs a wrong Knowledge source revision in the same Mission without requiring inspections", async () => {
+  const source = planningSources()[0]!;
+  const plan = {
+    action: "apply",
+    name: "Knowledge",
+    description: "Guide",
+    rationale: "Add verified guidance",
+    maturity: "validated-artifact",
+    sourceRefs: [source.ref],
+    target: { type: "create", justification: "A distinct complete validated artifact." },
+  };
+  const f = await planningFixture([
+    JSON.stringify({ ...plan, sourceRefs: [{ ...source.ref, revision: source.ref.revision + 1 }] }),
+    JSON.stringify(plan),
+  ]);
+  await expect(
+    f.planners.knowledge.plan({
+      ...f.input,
+      sources: [{ ...source, ref: { ...source.ref, kind: "episodic" }, outcome: "succeeded" }],
+    }),
+  ).resolves.toEqual(plan);
+  expect(f.create).toHaveBeenCalledOnce();
+  expect(f.continuation).toHaveBeenCalledOnce();
+  expect(f.continuation.mock.calls[0]![0].content).toContain("Cite only exact supplied sourceRefs");
+  expect(f.remove).toHaveBeenCalledWith(f.missionId);
+}, 15_000);

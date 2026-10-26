@@ -730,7 +730,7 @@ export function createMemoryLearningRevisions(options: {
         document: document.content,
         files,
         instruction:
-          "Read related scripts and references with a target path inspection before proposing an incremental revision. Declare all files used in targetFiles.",
+          "Understand related scripts and references before proposing an incremental revision, using the available read mechanisms. Declare the relevant files in targetFiles.",
       });
     },
     async readSkillTargetFile(target: ExistingMemorySkillTarget, path: string): Promise<string> {

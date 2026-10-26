@@ -127,6 +127,14 @@ in the same planning Mission (128 requests, 8 MiB of delivered bytes); they are 
 invalid-output correction turns. Exhaustion is nonretryable, not a skip. Revision descriptions retain
 their existing length limits.
 
+Checking existing assets, preferring reuse, reading complete cited sources and understanding target
+content before revision are prompt requirements. The prompt requires verification, outcomes,
+limitations and contradictory evidence to be read before citation; titles and partial excerpts are
+insufficient. Plan acceptance does not require source/target inspection records, catalog traversal
+or document/file read coverage. Source authorization and exact source revisions remain mandatory,
+as do target identity/version, pending-review and submission conflict checks. Inspection request
+and delivery budgets still bound resource usage.
+
 Knowledge and Skill sinks check outstanding work for the selected targets after planning and again
 under the submission lock. Validated plans waiting on a revision are cached against effective input
 and target versions, so dependency wakes need not admit the planner again.
@@ -440,7 +448,7 @@ sources. V6 pending notifications receive a fresh CAS generation during upgrade.
 Knowledge source conversation identities are retained with Semantic Evidence, using the extraction
 job's conversation identity when capture has not yet been bound. They survive Episode rejection and
 extraction job cleanup. Skill inspection may discover package files and read related scripts or
-references by pinned path; targetFiles declarations are checked for complete coverage. The same shared
+references by pinned path; targetFiles records the relevant files without enforcing inspection coverage. The same shared
 8 MiB budget applies through Memory revision request validation; ordinary prompt limits are unchanged.
 
 Large Revision prompts are staged temporarily and copied into Mission-owned file attachments during
