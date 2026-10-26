@@ -118,6 +118,42 @@ A target must be read before starting an incremental revision; changed versions 
 Skill citations still need a succeeded Episode; new Knowledge needs cross-conversation support or a
 successful artifact. Missing evidence means accumulating, while tool/runtime/budget failures remain failures.
 
+Revision instructions have two parts. The built-in Knowledge/Skill DSL owns each Agent's shared
+professional requirements (organization/applicability/metadata or complete reusable workflows and
+validation, plus draft ownership, conflicts, submission and recovery). Default registration and
+materialization append interactive instructions: clarify uncertain requirements/sensitivity and
+confirm Skill conflict resolutions with the user. An explicit user revision is not optional learning.
+For a single unattended execution, `unattendedMemoryRevisionResource` assembles the same professional
+requirements with Memory learning instructions instead; it does not concatenate the interactive
+instructions or rewrite the global Agent/customized definition. The direct executor explicitly opts into
+learning-tool instructions with `learningTools: true` after assembling the task-scoped binding. Retained
+historical draft executions use the default brief without `select_learning_sources`, `finish_memory_learning`
+or `waitForTarget`, since their ordinary Revision binding does not provide that protocol. Both retain
+the same quality policy and noninteractive constraints. Unknown revision identities are rejected.
+Task-mode instructions and the composed resource participate in existing bundle fingerprints;
+no persisted Schema, migration chain or execution engine changes.
+
+Background learning optimizes review value, not output count or extraction coverage. Compare actual
+existing assets first; prefer a few meaningful incremental edits and combine related improvements.
+One-time reports, scattered advice, cosmetic changes and already-covered content warrant no draft.
+New assets need a clear independent use and greater value than incremental revision. Knowledge adds
+stable definitions, constraints, reference knowledge or corrections with scope and historical/current
+status. Skills need complete reusable methods, actual validation, failure handling and limitations;
+a succeeded task does not validate every step or recovery. Complete verified new-domain outcomes can
+still justify creation. Source minimums and deterministic guards remain unchanged.
+
+Before submission, the existing revision summary explains the concrete delta, future use/error or
+repeated work avoided, evidence support and unverified limitations; creation also explains why related
+assets cannot serve the purpose and why an independent asset is valuable. Formal content excludes
+raw Evidence, internal source IDs and sensitive paths. No extra plan or approval protocol is introduced.
+
+A normal no-draft outcome calls `finish_memory_learning` with a concrete accumulate/duplicate/unsupported
+reason. `accumulate` means defer extraction and retain underlying Episode/Fact under existing retention
+and permission rules. Future relevant effective changes may trigger reevaluation with old and new
+sources; there is no promise of later extraction, scheduled rechecks or permanent topic tracking.
+Identical effective inputs retain existing deduplication/recovery behavior. Reading, permission,
+Runtime and budget failures remain failures, not no-value judgments.
+
 The Agent uses existing Revision and Context tools in this same Mission. Selected pending targets
 produce a dependency wait, never a duplicate asset; unrelated pending targets do not block work.
 Submitted drafts, no-change decisions, waits and execution failures remain distinct. Tool validation

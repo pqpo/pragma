@@ -2,7 +2,7 @@ import type { DesktopTranslationResource } from "../en/index.ts";
 
 export const memory = {
   learningDecisions: {
-    accumulate: "继续积累",
+    accumulate: "暂不提炼，保留记忆",
     duplicate: "没有新增内容",
     unsupported: "依据不足",
     create: "提出新建",
