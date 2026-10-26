@@ -2484,12 +2484,19 @@ export function createSkillRevisionService(options: {
             }));
             try {
               const draft = await readDraft(running.draftId);
-              const baseSnapshot = await readSkillPackage(
-                options.capabilities,
-                draft.capabilityId,
-                worktreePath(draft),
-              );
-              const base = baseSnapshot.package;
+              const base: SkillPackage =
+                draft.operation === "create"
+                  ? await readSkillCreationBase(worktreePath(draft), {
+                      name: draft.name,
+                      description: draft.resourceDescription!,
+                    })
+                  : (
+                      await readSkillPackage(
+                        options.capabilities,
+                        draft.capabilityId,
+                        worktreePath(draft),
+                      )
+                    ).package;
               const changeSet = await options.generator.generate({
                 jobId: running.id,
                 draftId: draft.id,
@@ -2573,6 +2580,41 @@ function diffSnapshots(
   return changes;
 }
 
+async function readSkillCreationBase(
+  root: string,
+  creation: { readonly name: string; readonly description: string },
+): Promise<SkillPackage> {
+  // Creation may be incomplete after an interrupted attempt; submission validates the full package.
+  const snapshot = await scanSkillWorkingTree(root, { allowMissingSkillDocument: true });
+  return { ...creation, files: await readSkillTextFiles(root, snapshot) };
+}
+
+async function readSkillTextFiles(
+  root: string,
+  snapshot: SkillWorkingTreeSnapshot,
+): Promise<SkillPackage["files"]> {
+  const files: SkillPackage["files"] = [];
+  for (const entry of snapshot.entries) {
+    // Binary payloads are omitted from the text package, but must obey the same path rules.
+    const parsedPath = SkillBundleFileSchema.shape.path.safeParse(entry.path);
+    if (!parsedPath.success) {
+      throw new SkillRevisionValidationError({
+        passed: false,
+        diagnostics: parsedPath.error.issues.map((issue) => ({
+          path: entry.path,
+          code: issue.code,
+          message: issue.message,
+        })),
+      });
+    }
+    const bytes = await readFile(join(root, ...entry.path.split("/")));
+    const content = bytes.toString("utf8");
+    if (!Buffer.from(content, "utf8").equals(bytes)) continue;
+    files.push({ path: entry.path, content });
+  }
+  return files;
+}
+
 async function readSkillPackage(
   capabilities: CapabilityStore,
   capabilityId: string,
@@ -2610,25 +2652,7 @@ async function readSkillPackage(
   const executablePaths = new Set(
     snapshot.entries.filter((entry) => entry.executable).map((entry) => entry.path),
   );
-  const files: { path: string; content: string }[] = [];
-  for (const entry of snapshot.entries) {
-    // Binary payloads are omitted from the text package below, but must obey the same path rules.
-    const parsedPath = SkillBundleFileSchema.shape.path.safeParse(entry.path);
-    if (!parsedPath.success) {
-      throw new SkillRevisionValidationError({
-        passed: false,
-        diagnostics: parsedPath.error.issues.map((issue) => ({
-          path: entry.path,
-          code: issue.code,
-          message: issue.message,
-        })),
-      });
-    }
-    const bytes = await readFile(join(root, ...entry.path.split("/")));
-    const content = bytes.toString("utf8");
-    if (!Buffer.from(content, "utf8").equals(bytes)) continue;
-    files.push({ path: entry.path, content });
-  }
+  const files = await readSkillTextFiles(root, snapshot);
   const skillDocument = files.find((file) => file.path === "SKILL.md")?.content ?? "";
   const metadata = readSkillFrontmatter(skillDocument);
   const parsedPackage = SkillPackageSchema.safeParse({

@@ -2043,6 +2043,145 @@ describe("Skill revision service", () => {
     await expect(fixture.service.list()).resolves.toEqual([]);
   });
 
+  it.each([false, true])(
+    "generates a new Skill without a published capability (retry=%s)",
+    async (retry) => {
+      const targetId = randomUUID();
+      const generate = vi.fn<
+        NonNullable<Parameters<typeof createSkillRevisionService>[0]["generator"]>["generate"]
+      >(async (input) => {
+        expect(input.current).toEqual({
+          name: "new-workflow",
+          description: "New workflow.",
+          files: [],
+        });
+        expect(input.revision).toBe(0);
+        expect(input.contentHash).toMatch(/^[a-f0-9]{64}$/u);
+        if (retry && generate.mock.calls.length === 1) {
+          throw Object.assign(new Error("Generation interrupted."), { code: "generation_failed" });
+        }
+        return {
+          schemaVersion: "pragma.skill-revision-change-set/v2",
+          operation: "create",
+          capabilityId: targetId,
+          baseRevision: input.revision,
+          baseContentHash: input.contentHash,
+          name: "new-workflow",
+          description: "New workflow.",
+          summary: "Create the workflow.",
+          operations: [
+            {
+              operation: "upsert",
+              path: "SKILL.md",
+              content:
+                "---\nname: new-workflow\ndescription: New workflow.\n---\n\nFollow the workflow.\n",
+            },
+          ],
+        };
+      });
+      const fixture = await createService({ generator: { generate } });
+      const get = vi.spyOn(fixture.capabilities, "get").mockRejectedValue(
+        Object.assign(new Error("The capability no longer exists."), {
+          code: "capability_not_found",
+        }),
+      );
+      const job = await fixture.service.start({
+        ...request("memory-learning"),
+        operation: "create",
+        capabilityId: targetId,
+        resourceName: "new-workflow",
+        resourceDescription: "New workflow.",
+      });
+      const initial = await fixture.service.inspectDraft(job.draftId);
+      expect(await readdir(initial.draftPath!)).toEqual([]);
+
+      await fixture.service.processPending();
+      if (retry) {
+        const failed = await fixture.service.get(job.id);
+        expect(failed).toMatchObject({
+          state: "needs_attention",
+          error: { code: "generation_failed" },
+        });
+        await fixture.service.retry(failed.id, failed.revision);
+        await fixture.service.processPending();
+      }
+
+      const pending = await fixture.service.get(job.id);
+      expect(pending).toMatchObject({ id: job.id, draftId: job.draftId, state: "pending_review" });
+      expect(generate).toHaveBeenCalledTimes(retry ? 2 : 1);
+      expect(get).not.toHaveBeenCalled();
+      expect(fixture.publishNew).not.toHaveBeenCalled();
+      await fixture.service.approve(pending.id, pending.revision);
+      expect(fixture.publishNew).toHaveBeenCalledWith(expect.objectContaining({ id: targetId }));
+      expect(fixture.publish).not.toHaveBeenCalled();
+      await expect(fixture.service.get(job.id)).resolves.toMatchObject({ state: "completed" });
+    },
+  );
+
+  it("preserves partially generated creation files when retrying", async () => {
+    const serviceRef: { current?: ReturnType<typeof createSkillRevisionService> } = {};
+    const content = "Keep this generated guidance.\n";
+    let attempt = 0;
+    const generate: NonNullable<
+      Parameters<typeof createSkillRevisionService>[0]["generator"]
+    >["generate"] = async (input) => {
+      attempt += 1;
+      if (attempt === 1) {
+        const inspection = await serviceRef.current!.inspectDraft(input.draftId);
+        await writeFile(join(inspection.draftPath!, "notes.md"), content);
+        throw Object.assign(new Error("Generation interrupted."), { code: "generation_failed" });
+      }
+      expect(input.current.files).toEqual([{ path: "notes.md", content }]);
+      return {
+        schemaVersion: "pragma.skill-revision-change-set/v2",
+        operation: "create",
+        capabilityId: input.request.capabilityId,
+        baseRevision: input.revision,
+        baseContentHash: input.contentHash,
+        name: input.current.name,
+        description: input.current.description,
+        summary: "Resume creation using the preserved draft.",
+        operations: [
+          { operation: "rename", path: "notes.md", nextPath: "guide.md" },
+          {
+            operation: "upsert",
+            path: "SKILL.md",
+            content: "---\nname: new-workflow\ndescription: New workflow.\n---\n",
+          },
+        ],
+      };
+    };
+    const fixture = await createService({ generator: { generate } });
+    serviceRef.current = fixture.service;
+    const get = vi.spyOn(fixture.capabilities, "get").mockRejectedValue(
+      Object.assign(new Error("The capability no longer exists."), {
+        code: "capability_not_found",
+      }),
+    );
+    const job = await fixture.service.start({
+      ...request("memory-learning"),
+      operation: "create",
+      capabilityId: randomUUID(),
+      resourceName: "new-workflow",
+      resourceDescription: "New workflow.",
+    });
+    await fixture.service.processPending();
+    const failed = await fixture.service.get(job.id);
+    expect(failed).toMatchObject({
+      state: "needs_attention",
+      error: { code: "generation_failed" },
+    });
+    await fixture.service.retry(failed.id, failed.revision);
+    await fixture.service.processPending();
+    await expect(fixture.service.get(job.id)).resolves.toMatchObject({ state: "pending_review" });
+    const inspection = await fixture.service.inspectDraft(job.draftId);
+    await expect(readFile(join(inspection.referencePath!, "guide.md"), "utf8")).resolves.toBe(
+      content,
+    );
+    expect(get).not.toHaveBeenCalled();
+    expect(attempt).toBe(2);
+  });
+
   it("applies generated deletions to the managed worktree", async () => {
     const fixture = await createService({
       generator: {
@@ -2122,36 +2261,55 @@ describe("Skill revision service", () => {
     expect(attempt).toBe(2);
   });
 
-  it("accepts a managed Skill Revision Mission that submits its mounted draft", async () => {
-    const serviceRef: { current?: ReturnType<typeof createSkillRevisionService> } = {};
-    const missionId = randomUUID();
-    const fixture = await createService({
-      generator: {
-        async generate(input) {
-          if (serviceRef.current === undefined) throw new Error("service unavailable");
-          await serviceRef.current.attachMission(input.jobId, missionId);
-          const inspection = await serviceRef.current.inspectDraft(input.draftId, missionId);
-          await serviceRef.current.submitDraft({
-            draftId: input.draftId,
-            expectedRevision: inspection.draft.revision,
-            expectedWorkingTreeHash: inspection.workingTree.hash,
-            summary: "Submit the mounted Memory revision.",
-            missionId,
-          });
-          return undefined;
+  it.each(["revise", "create"] as const)(
+    "accepts a managed Skill Mission submitting a %s draft",
+    async (operation) => {
+      const serviceRef: { current?: ReturnType<typeof createSkillRevisionService> } = {};
+      const missionId = randomUUID();
+      const fixture = await createService({
+        generator: {
+          async generate(input) {
+            if (serviceRef.current === undefined) throw new Error("service unavailable");
+            await serviceRef.current.attachMission(input.jobId, missionId);
+            let inspection = await serviceRef.current.inspectDraft(input.draftId, missionId);
+            if (operation === "create") {
+              await writeFile(
+                join(inspection.draftPath!, "SKILL.md"),
+                "---\nname: new-workflow\ndescription: New workflow.\n---\n",
+              );
+              inspection = await serviceRef.current.inspectDraft(input.draftId, missionId);
+            }
+            await serviceRef.current.submitDraft({
+              draftId: input.draftId,
+              expectedRevision: inspection.draft.revision,
+              expectedWorkingTreeHash: inspection.workingTree.hash,
+              summary: "Submit the mounted Memory revision.",
+              missionId,
+            });
+            return undefined;
+          },
         },
-      },
-    });
-    serviceRef.current = fixture.service;
+      });
+      serviceRef.current = fixture.service;
 
-    const started = await fixture.service.submit(legacyRequest());
-    await fixture.service.processPending();
+      const started =
+        operation === "revise"
+          ? await fixture.service.submit(legacyRequest())
+          : await fixture.service.start({
+              ...request("memory-learning"),
+              operation: "create",
+              capabilityId: randomUUID(),
+              resourceName: "new-workflow",
+              resourceDescription: "New workflow.",
+            });
+      await fixture.service.processPending();
 
-    await expect(fixture.service.get(started.id)).resolves.toMatchObject({
-      state: "pending_review",
-      missionId,
-    });
-  });
+      await expect(fixture.service.get(started.id)).resolves.toMatchObject({
+        state: "pending_review",
+        missionId,
+      });
+    },
+  );
 
   it("preserves needs_rebase when a managed revision becomes stale during generation", async () => {
     const serviceRef: { current?: ReturnType<typeof createSkillRevisionService> } = {};
