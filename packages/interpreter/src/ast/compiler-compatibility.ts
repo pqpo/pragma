@@ -1,4 +1,4 @@
-export const PRAGMA_COMPILER_WRITE_VERSION = "pragma.dsl/v11";
+export const PRAGMA_COMPILER_WRITE_VERSION = "pragma.dsl/v12";
 
 export const PRAGMA_COMPILER_DIRECT_READ_VERSIONS = [PRAGMA_COMPILER_WRITE_VERSION] as const;
 
@@ -12,6 +12,7 @@ export const PRAGMA_COMPILER_UPGRADE_FROM_VERSIONS = [
   "pragma.dsl/v8",
   "pragma.dsl/v9",
   "pragma.dsl/v10",
+  "pragma.dsl/v11",
 ] as const;
 
 export function isPragmaCompilerVersionDirectlyReadable(version: string): boolean {

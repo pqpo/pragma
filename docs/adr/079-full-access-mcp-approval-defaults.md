@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted, 2026-10-26. Refines ADR 078 for fallback MCP approvals.
+Accepted, 2026-10-26. Refines ADR 078 for fallback MCP approvals. Internal Expert
+lifecycle tools are exempt under [ADR 080](080-expert-lifecycle-without-approval.md).
 
 ## Decision
 

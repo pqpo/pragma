@@ -1,7 +1,7 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PragmaExpertResourceSchema } from "@pragma/interpreter/ast";
+import { PragmaExpertResourceSchema, PragmaToolBindingSchema } from "@pragma/interpreter/ast";
 import { User } from "@phosphor-icons/react";
 
 import type { Capability, ContextStore } from "../../../../shared/contracts/index.ts";
@@ -391,32 +391,64 @@ it("preserves grouped delegate policy when reselecting or removing a target", ()
   expect(updateResourceToolSelection(bindings, [], []).resourceTools).toEqual([]);
 });
 
-it("creates one approved launcher for ten Experts and keeps Flow calls separate", () => {
-  const experts = Array.from({ length: 10 }, (_, index) => ({
-    ref: `expert:000000000000000${index}`,
-    name: `Expert ${index}`,
-    kind: "expert" as const,
-  }));
-  const flow = { ref: "flow:0000000000000001", name: "Flow", kind: "flow" as const };
-  const next = updateResourceToolSelection(
-    [],
-    [...experts.map((expert) => expert.ref), flow.ref],
-    [...experts, flow],
-  );
-  expect(next.resourceTools).toEqual([
-    expect.objectContaining({
-      adapter: "pragma.tool.call@v1",
-      target: { ref: flow.ref },
-      tool: expect.objectContaining({ approval: "ask" }),
-    }),
-    {
-      adapter: "pragma.tool.delegate@v1",
-      targets: experts.map(({ ref }) => ({ ref })),
-      policy: { maxConcurrency: 4, maxDepth: 3, runtimes: {} },
-    },
-  ]);
-  expect(next.toolApprovals).toEqual({ spawn_expert: "ask", continue_expert: "ask" });
-});
+it.each(["flow", "team"] as const)(
+  "adds a %s call without injecting approval alongside Expert delegation",
+  (kind) => {
+    const experts = Array.from({ length: 10 }, (_, index) => ({
+      ref: `expert:000000000000000${index}`,
+      name: `Expert ${index}`,
+      kind: "expert" as const,
+    }));
+    const flow = {
+      ref: `${kind}:0000000000000001`,
+      name: "Resource",
+      kind,
+    };
+    const next = updateResourceToolSelection(
+      [],
+      [...experts.map((expert) => expert.ref), flow.ref],
+      [...experts, flow],
+    );
+    expect(next.resourceTools).toEqual([
+      expect.objectContaining({
+        adapter: "pragma.tool.call@v1",
+        target: { ref: flow.ref },
+        tool: expect.objectContaining({ approval: "none" }),
+      }),
+      {
+        adapter: "pragma.tool.delegate@v1",
+        targets: experts.map(({ ref }) => ({ ref })),
+        policy: { maxConcurrency: 4, maxDepth: 3, runtimes: {} },
+      },
+    ]);
+    expect(next.toolApprovals).toEqual({});
+    for (const binding of next.resourceTools) {
+      expect(PragmaToolBindingSchema.safeParse(binding).success).toBe(true);
+    }
+  },
+);
+
+it.each(["ask", "required"] as const)(
+  "preserves an existing resource call's explicit %s approval",
+  (approval) => {
+    const ref = "flow:0000000000000001";
+    const bindings = [
+      {
+        adapter: "pragma.tool.call@v1",
+        target: { ref },
+        tool: {
+          name: "call_flow_0000000000000001",
+          description: "Call Flow.",
+          approval,
+        },
+      },
+    ];
+    expect(
+      updateResourceToolSelection(bindings, [ref], [{ ref, name: "Flow", kind: "flow" }])
+        .resourceTools,
+    ).toEqual(bindings);
+  },
+);
 
 it("extends an existing launcher without changing its policy or explicit approvals", () => {
   const first = "expert:0000000000st0rev";
@@ -467,7 +499,7 @@ it("readds removed Revision Experts through delegation instead of resource calls
   expect(readded.resourceTools).toEqual([
     expect.objectContaining({ adapter: "pragma.tool.delegate@v1", targets: [{ ref }] }),
   ]);
-  expect(readded.toolApprovals).toEqual({ spawn_expert: "ask", continue_expert: "ask" });
+  expect(readded.toolApprovals).toEqual({});
 });
 
 it("removes Runtime overrides for deselected Experts while retaining valid overrides", () => {

@@ -203,7 +203,7 @@ describe("built-in Pragma Agent DSL", () => {
     ]);
     for (const name of ["spawn_expert", "continue_expert"]) {
       expect(compiled.value.tools?.find((tool) => tool.name === name)?.approval).toEqual({
-        mode: "ask",
+        mode: "none",
       });
     }
     for (const name of [
@@ -291,7 +291,6 @@ describe("built-in Pragma Agent DSL", () => {
       else expect(hidden.value.tools ?? []).toEqual([]);
     }
 
-    let approved = false;
     const approvalRequests: string[] = [];
     const spawnExpert = vi.fn(async () => ({
       contextId: "revision-context",
@@ -316,7 +315,7 @@ describe("built-in Pragma Agent DSL", () => {
       humanInteractionHandler: async (request) => {
         if (request.kind !== "tool_approval") throw new Error("Unexpected interaction");
         approvalRequests.push(request.toolName);
-        return { kind: "tool_approval", approved, updatedInput: request.input };
+        return { kind: "tool_approval", approved: false, updatedInput: request.input };
       },
       logger: createPragmaLogger(undefined, {
         component: "runtime.adapter",
@@ -342,17 +341,11 @@ describe("built-in Pragma Agent DSL", () => {
         const toolName = catalog.tools.find(
           (tool) => tool.name === name || tool.name.endsWith(`_${name}`),
         )!.name;
-        approved = false;
-        expect(await client.callTool({ name: toolName, arguments: args })).toMatchObject({
-          isError: true,
-        });
-        expect(execute).not.toHaveBeenCalled();
-        approved = true;
         expect(await client.callTool({ name: toolName, arguments: args })).not.toMatchObject({
           isError: true,
         });
         expect(execute).toHaveBeenCalledOnce();
-        expect(approvalRequests.filter((tool) => tool === name)).toHaveLength(2);
+        expect(approvalRequests).toEqual([]);
       }
 
       for (const name of [

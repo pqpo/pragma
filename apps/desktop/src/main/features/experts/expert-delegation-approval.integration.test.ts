@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 it.each(["ask", "required", "migrated"] as const)(
-  "keeps %s delegation approvals after clearing Tools, saving and reopening",
+  "ignores historical %s delegation approvals after clearing Tools, saving and reopening",
   async (scenario) => {
     const mode = scenario === "required" ? "required" : "ask";
     const root = await mkdtemp(join(tmpdir(), "pragma-delegation-approval-"));
@@ -43,7 +43,7 @@ it.each(["ask", "required", "migrated"] as const)(
             [],
             [STORE_REVISION_EXPERT_REF],
             [{ ref: STORE_REVISION_EXPERT_REF, name: "Store Revision Agent", kind: "expert" }],
-            mode === "required" ? { spawn_expert: mode, continue_expert: mode } : {},
+            { spawn_expert: mode, continue_expert: mode },
           );
     expect(selected.resourceTools).toEqual([
       expect.objectContaining({ adapter: "pragma.tool.delegate@v1" }),
@@ -138,7 +138,6 @@ it.each(["ask", "required", "migrated"] as const)(
         };
       },
     });
-    let approved = false;
     const approvalRequests: string[] = [];
     const spawnExpert = vi.fn(async () => ({
       contextId: "revision-context",
@@ -165,7 +164,7 @@ it.each(["ask", "required", "migrated"] as const)(
       humanInteractionHandler: async (request) => {
         if (request.kind !== "tool_approval") throw new Error("Unexpected interaction");
         approvalRequests.push(request.toolName);
-        return { kind: "tool_approval", approved, updatedInput: request.input };
+        return { kind: "tool_approval", approved: false, updatedInput: request.input };
       },
     });
     const client = new Client(
@@ -183,17 +182,15 @@ it.each(["ask", "required", "migrated"] as const)(
         ],
       ] as const) {
         expect(compiled.value.tools?.find((tool) => tool.name === name)?.approval).toEqual({
-          mode,
+          mode: "none",
         });
-        approved = false;
+        execute.mockRejectedValueOnce(new Error("Transient delegation failure"));
         expect(await client.callTool({ name, arguments: args })).toMatchObject({ isError: true });
-        expect(execute).not.toHaveBeenCalled();
-        approved = true;
         expect(await client.callTool({ name, arguments: args })).not.toMatchObject({
           isError: true,
         });
-        expect(execute).toHaveBeenCalledOnce();
-        expect(approvalRequests.filter((tool) => tool === name)).toHaveLength(2);
+        expect(execute).toHaveBeenCalledTimes(2);
+        expect(approvalRequests).toEqual([]);
       }
     } finally {
       await client.close();

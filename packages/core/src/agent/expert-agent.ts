@@ -1,4 +1,5 @@
 import { ContextManager } from "./context-manager.ts";
+import { isAgentDelegationTool } from "./agent-launcher.ts";
 import type { ContextAssemblerOptions, ExpertAgentContext } from "./context-manager.ts";
 import type { AgentMessageUsage } from "@pragma/shared";
 import { ContextSystem } from "../context-system/context-system.ts";
@@ -394,16 +395,17 @@ function applyToolApprovals(
     return undefined;
   }
 
-  if (approvals === undefined || approvals.length === 0) {
-    return tools;
-  }
-
   const approvalByTool = new Map(
-    approvals.map((approval) => [approval.toolName, approval.approval]),
+    (approvals ?? []).map((approval) => [approval.toolName, approval.approval]),
   );
 
   return tools.map((tool) => {
-    const approval = mergeExpertAgentToolApprovals(tool.approval, approvalByTool.get(tool.name));
+    // Lifecycle actions are already scoped by the delegation contract. Historical
+    // Expert/plugin approval entries must not add a second human decision boundary.
+    if (isAgentDelegationTool(tool)) return { ...tool, approval: { mode: "none" } };
+    const configured = approvalByTool.get(tool.name);
+    if (configured === undefined) return tool;
+    const approval = mergeExpertAgentToolApprovals(tool.approval, configured);
 
     return {
       ...tool,

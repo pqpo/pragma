@@ -27,12 +27,14 @@ MCP 的“已连接”不等于工具对模型可用，验收必须实际调用�
 - Adapter descriptor 的 `permissionModes` 是模式目录的唯一来源；不可用模式必须给出原因，未知或不可用 ID 必须拒绝。
 - 模式必须参与 Adapter cache、编译身份和 Runtime Context 身份；不同模式不得复用同一原生 Session。
 - 只读必须由 Harness 原生边界实施；受管 MCP 工具仍遵守各自 allowlist 与业务审批。Pi 不额外模拟只读或审批。
+- 未配置审批的进程内 Capability 工具与 MCP 工具共用 Runtime 模式声明的默认审批策略；完全访问默认免审，显式业务策略及条件继续生效。
+- Expert 生命周期工具（spawn/continue/wait/list/steer/interrupt）不请求工具审批，历史审批配置不再生效；
+  委派目标、并发、深度、ownership 与 allowlist 仍按原规则校验，见 [ADR 080](../adr/080-expert-lifecycle-without-approval.md)。
 - 首期目录与迁移边界见 [ADR 078](../adr/078-expert-native-harness-permissions.md)。
 
 Codex 在首次创建和恢复时都必须重新提交当前 `sandbox` 与 `approvalPolicy`。
 回归覆盖各 Harness 支持模式的首次执行、恢复、切换，以及审批拒绝无副作用和批准重试。
 Pi 的旧显式策略仅保留用于兼容历史 Adapter binding；新建产品配置只公开原生完全访问。
-
 
 ## 接入验收
 

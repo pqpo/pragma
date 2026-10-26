@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { loadPragmaProject, formatPragmaYaml } from "@pragma/interpreter";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { createRuntimeTestFeatures } from "@pragma/core/testing";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -373,6 +373,195 @@ describe("Node resource readers shared with Desktop", () => {
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
+  });
+
+  it("compiles Host managed-tool defaults without MCP and preserves explicit and conditional approvals on retry", async () => {
+    const { home, resources } = await fixture();
+    const host = resources.adapterHost({ id: "mission", workspace: { path: home } });
+    const call = vi.fn(async () => ({ content: [{ type: "text" as const, text: "done" }] }));
+    const approve = vi.fn(async () => ({ kind: "tool_approval" as const, approved: false }));
+    const compile = async (
+      mode?: "full-access" | "request-approval",
+      explicit?: "none" | "ask" | "required",
+      declared?: "none" | "ask" | "required",
+      conditional = false,
+    ) => {
+      const entry = join(home, "pragma.yaml");
+      await writeFile(
+        entry,
+        formatPragmaYaml({
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+          kind: "Bundle",
+          imports: [],
+          resources: [
+            {
+              apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+              kind: "Expert",
+              metadata: {
+                id: "1xddvess309a6gme",
+                name: "Managed",
+                description: "Host managed tools",
+                tags: [],
+              },
+              spec: {
+                scope: "application",
+                instructions: "Use Host tools",
+                tools: [],
+                plugins: [],
+                contextStores: [],
+                capabilities: [
+                  { ref: "capability:pcr7npvx0gv8fpka", kind: "tools", tools: ["read_managed"] },
+                ],
+                toolApprovals: explicit === undefined ? {} : { read_managed: explicit },
+              },
+            },
+            {
+              apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+              kind: "Capability",
+              metadata: {
+                id: "pcr7npvx0gv8fpka",
+                name: "Managed",
+                description: "Host managed tools",
+                tags: [],
+              },
+              spec: {
+                adapter: "pragma.capability.host@v1",
+                binding: "binding:managed-tools",
+                config: { key: "managed" },
+              },
+            },
+          ],
+        }),
+      );
+      const descriptor = {
+        name: "read_managed",
+        description: "Read managed data",
+        inputSchema: { type: "object", properties: {} },
+        ...(declared === undefined ? {} : { approval: { mode: declared } }),
+      };
+      const project = await loadPragmaProject(entry);
+      try {
+        const compiled = await project.compile<Expert>("expert:1xddvess309a6gme", {
+          workspace: home,
+          adapterHost: {
+            ...host,
+            resolveBinding: async (ref, pin) =>
+              ref !== "binding:managed-tools"
+                ? host.resolveBinding(ref, pin)
+                : {
+                    ref,
+                    revision: "1",
+                    fingerprint: createHash("sha256")
+                      .update(JSON.stringify({ descriptor, conditional }))
+                      .digest("hex"),
+                    value: {
+                      contribution: {
+                        tools: [
+                          {
+                            ...descriptor,
+                            ...(conditional
+                              ? { approval: { mode: "required", when: () => false } }
+                              : {}),
+                            call,
+                          },
+                        ],
+                      },
+                    },
+                  },
+          },
+          ...(mode === undefined
+            ? {}
+            : {
+                expertExecutionProfiles: {
+                  "1xddvess309a6gme": { runtimeId: "test", permissionModeId: mode },
+                },
+              }),
+          runtimes: createStaticRuntimeResolver({
+            defaultRuntimeId: "test",
+            runtimes: [
+              {
+                features: snapshotRuntimeFeatures(createRuntimeTestFeatures()),
+                descriptor: {
+                  id: "test",
+                  kind: "test",
+                  displayName: "Test",
+                  permissionModes: {
+                    defaultModeId: "full-access",
+                    modes: [
+                      {
+                        id: "full-access",
+                        label: "Full",
+                        description: "Full",
+                        available: true,
+                        defaultMcpApproval: "none",
+                      },
+                      { id: "request-approval", label: "Ask", description: "Ask", available: true },
+                    ],
+                  },
+                },
+                canUse: () => ({ usable: true }),
+              },
+            ],
+          }),
+        });
+        return compiled.value;
+      } finally {
+        await project.dispose();
+      }
+    };
+    const execute = async (agent: Expert) => {
+      const tool = resolveExecutionTools({ agent, getContext: () => undefined }).tools.find(
+        (candidate) => candidate.name === "read_managed",
+      )!.tool;
+      return executeExecutionTool({
+        agent,
+        tool,
+        toolCallId: "managed",
+        args: {},
+        signal: undefined,
+        humanInteractionHandler: approve,
+        logger: createPragmaLogger(undefined, { component: "test" }),
+        state: {},
+      });
+    };
+    call.mockRejectedValueOnce(new Error("Transient managed-tool failure"));
+    await expect(execute(await compile())).rejects.toThrow("Transient managed-tool failure");
+    await expect(execute(await compile())).resolves.toMatchObject({ content: [{ text: "done" }] });
+    expect(approve).not.toHaveBeenCalled();
+    expect(call).toHaveBeenCalledTimes(2);
+    for (const [mode, explicit, declared, expected] of [
+      ["full-access", undefined, undefined, "none"],
+      ["request-approval", undefined, undefined, "ask"],
+      ["full-access", "ask", undefined, "ask"],
+      ["full-access", "required", undefined, "required"],
+      ["request-approval", "none", undefined, "none"],
+      ["full-access", undefined, "required", "required"],
+      ["full-access", "none", "required", "required"],
+      ["full-access", "none", "ask", "ask"],
+      ["request-approval", undefined, "none", "none"],
+    ] as const) {
+      const agent = await compile(mode, explicit, declared);
+      expect(agent.tools?.find((tool) => tool.name === "read_managed")?.approval?.mode).toBe(
+        expected,
+      );
+      call.mockClear();
+      approve.mockClear();
+      const result = await execute(agent);
+      if (expected === "none") {
+        expect(result.isError).not.toBe(true);
+        expect(call).toHaveBeenCalledOnce();
+        expect(approve).not.toHaveBeenCalled();
+      } else {
+        expect(result.isError).toBe(true);
+        expect(approve).toHaveBeenCalledOnce();
+        expect(call).not.toHaveBeenCalled();
+      }
+    }
+    approve.mockClear();
+    await expect(
+      execute(await compile("full-access", undefined, "required", true)),
+    ).resolves.toMatchObject({ content: [{ text: "done" }] });
+    expect(approve).not.toHaveBeenCalled();
   });
 
   it("opens and upgrades a real historical ContextStore without Desktop running", async () => {

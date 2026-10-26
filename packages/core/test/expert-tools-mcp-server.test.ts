@@ -1,6 +1,6 @@
 import { createTextToolResult } from "../src/tools/managed-tool.ts";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createPragmaLogger,
@@ -24,88 +24,117 @@ describe("Expert tools MCP Gateway", { concurrent: false }, () => {
     registrations.clear();
   });
 
-  it("serves all model tools without Host details or duplicate structuredContent", async () => {
-    const worker = await defineExpert({
-      id: "worker",
-      name: "Worker",
-      description: "Worker",
-      tags: [],
-      scope: "test",
-      workspace: process.cwd(),
-    });
-    const agent = await defineExpert({
-      id: "lead",
-      name: "Lead",
-      description: "Lead",
-      tags: [],
-      scope: "test",
-      workspace: process.cwd(),
-      tools: createAgentLauncher({ experts: [worker] }).tools,
-    });
-    const identity = { agentId: "internal", contextId: "context", invocationId: "task" };
-    const registration = await registerExpertToolsMcpSession({
-      agent,
-      getContext: () => undefined,
-      logger: createPragmaLogger(undefined, { component: "test" }),
-      state: {},
-      executionContext: {
-        executionId: "execution",
-        invocationId: "root",
-        depth: 0,
-        spawnExpert: async () => ({ ...identity, expertId: "worker", status: "queued" }),
-        continueExpert: async () => ({
-          ...identity,
-          invocationId: "next",
-          status: "queued",
-          agentDisposition: "reused",
-        }),
-        waitExperts: async () => ({
-          returnWhen: "all",
-          timedOut: false,
-          waitedMs: 7,
-          completed: [{ ...identity, status: "succeeded", output: "Review done" }],
-          pending: [],
-        }),
-        listAgents: async () => ({
-          availableExperts: [{ expertId: "worker", canSpawn: true }],
-          contexts: [{ ...identity, canContinue: true }],
-        }),
-        steerExpert: async () => ({
-          ...identity,
-          outcome: "accepted",
-          delivery: "after_current",
-          messageId: "guidance",
-        }),
-        interruptExpert: async () => ({ ...identity, outcome: "already_terminal" }),
-      },
-    });
-    registrations.add(registration);
-    const client = await connectClient(registration.url, "lifecycle");
-    for (const [name, args] of [
-      ["spawn_expert", { expertId: "worker", task: "Review" }],
-      ["continue_expert", { contextId: "context", task: "Follow up" }],
-      ["wait_experts", { invocationIds: ["task"] }],
-      ["list_agents", {}],
-      ["steer_expert", { invocationId: "task", instruction: "Focus", delivery: "after_current" }],
-      ["interrupt_expert", { invocationId: "task" }],
-    ] as const) {
-      const result = await client.callTool({ name, arguments: args });
-      expect(result.isError).not.toBe(true);
-      expect(result.content).toHaveLength(1);
-      expect(result).not.toHaveProperty("structuredContent");
-      expect(result).not.toHaveProperty("details");
-      const payload = JSON.parse((result.content[0] as { text: string }).text);
-      expect(payload.message).toEqual(expect.any(String));
-      expect(payload).not.toHaveProperty("agentId");
-      if (name === "wait_experts") expect(payload.completed[0].output).toBe("Review done");
-    }
-    const other = await registerTestSession("structured");
-    const otherClient = await connectClient(other.url, "structured");
-    const otherResult = await otherClient.callTool({ name: "read_structured", arguments: {} });
-    expect(otherResult).toMatchObject({ content: [{ type: "text", text: "structured" }] });
-    expect(otherResult).not.toHaveProperty("structuredContent");
-    expect(otherResult).not.toHaveProperty("details");
-  });
+  it.each([
+    ["ask", "expert"],
+    ["required", "expert"],
+    ["ask", "tool"],
+    ["required", "tool"],
+  ] as const)(
+    "serves lifecycle tools without %s approvals from %s, Host details or duplicate structuredContent",
+    async (mode, source) => {
+      const worker = await defineExpert({
+        id: "worker",
+        name: "Worker",
+        description: "Worker",
+        tags: [],
+        scope: "test",
+        workspace: process.cwd(),
+      });
+      const agent = await defineExpert({
+        id: "lead",
+        name: "Lead",
+        description: "Lead",
+        tags: [],
+        scope: "test",
+        workspace: process.cwd(),
+        tools: createAgentLauncher({ experts: [worker] }).tools.map((tool) =>
+          source === "tool" ? { ...tool, approval: { mode } } : tool,
+        ),
+        executionToolApprovals:
+          source === "tool"
+            ? undefined
+            : Object.fromEntries(
+                [
+                  "spawn_expert",
+                  "continue_expert",
+                  "wait_experts",
+                  "list_agents",
+                  "steer_expert",
+                  "interrupt_expert",
+                ].map((name) => [name, { mode }]),
+              ),
+      });
+      const approvalHandler = vi.fn(async () => ({
+        kind: "tool_approval" as const,
+        approved: false,
+      }));
+      const identity = { agentId: "internal", contextId: "context", invocationId: "task" };
+      const registration = await registerExpertToolsMcpSession({
+        agent,
+        humanInteractionHandler: approvalHandler,
+        getContext: () => undefined,
+        logger: createPragmaLogger(undefined, { component: "test" }),
+        state: {},
+        executionContext: {
+          executionId: "execution",
+          invocationId: "root",
+          depth: 0,
+          spawnExpert: async () => ({ ...identity, expertId: "worker", status: "queued" }),
+          continueExpert: async () => ({
+            ...identity,
+            invocationId: "next",
+            status: "queued",
+            agentDisposition: "reused",
+          }),
+          waitExperts: async () => ({
+            returnWhen: "all",
+            timedOut: false,
+            waitedMs: 7,
+            completed: [{ ...identity, status: "succeeded", output: "Review done" }],
+            pending: [],
+          }),
+          listAgents: async () => ({
+            availableExperts: [{ expertId: "worker", canSpawn: true }],
+            contexts: [{ ...identity, canContinue: true }],
+          }),
+          steerExpert: async () => ({
+            ...identity,
+            outcome: "accepted",
+            delivery: "after_current",
+            messageId: "guidance",
+          }),
+          interruptExpert: async () => ({ ...identity, outcome: "already_terminal" }),
+        },
+      });
+      registrations.add(registration);
+      const client = await connectClient(registration.url, "lifecycle");
+      for (const [name, args] of [
+        ["spawn_expert", { expertId: "worker", task: "Review" }],
+        ["continue_expert", { contextId: "context", task: "Follow up" }],
+        ["wait_experts", { invocationIds: ["task"] }],
+        ["list_agents", {}],
+        ["steer_expert", { invocationId: "task", instruction: "Focus", delivery: "after_current" }],
+        ["interrupt_expert", { invocationId: "task" }],
+      ] as const) {
+        const result = await client.callTool({ name, arguments: args });
+        expect(result.isError).not.toBe(true);
+        expect(result.content).toHaveLength(1);
+        expect(result).not.toHaveProperty("structuredContent");
+        expect(result).not.toHaveProperty("details");
+        const payload = JSON.parse((result.content[0] as { text: string }).text);
+        expect(payload.message).toEqual(expect.any(String));
+        expect(payload).not.toHaveProperty("agentId");
+        if (name === "wait_experts") expect(payload.completed[0].output).toBe("Review done");
+      }
+      expect(approvalHandler).not.toHaveBeenCalled();
+      const other = await registerTestSession("structured");
+      const otherClient = await connectClient(other.url, "structured");
+      const otherResult = await otherClient.callTool({ name: "read_structured", arguments: {} });
+      expect(otherResult).toMatchObject({ content: [{ type: "text", text: "structured" }] });
+      expect(otherResult).not.toHaveProperty("structuredContent");
+      expect(otherResult).not.toHaveProperty("details");
+    },
+  );
 
   it("shares one listener while isolating Session tools and routes", async () => {
     const [alpha, beta] = await Promise.all([
