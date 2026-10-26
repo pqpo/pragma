@@ -1,8 +1,8 @@
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { createStaticRuntimeResolver } from "@pragma/core";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createFileExpertSessionStore, createStaticRuntimeResolver } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import { createMissionStore } from "../../src/missions/repository/mission-store.ts";
 import { createSqliteExecutionStore } from "../../src/execution/sqlite-execution-store.ts";
@@ -49,6 +49,135 @@ async function appendExecutionEvent(
 }
 
 describe("shared Mission historical read use cases", { timeout: 30_000 }, () => {
+  it("hydrates delivery facts on latest and earlier pages without a control read", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-page-delivery-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const expert = { metadata: { id: "1xddvess309a6gme", name: "Writer" } };
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Original question",
+      project: { id: "project", revision: 1 },
+      executor: { kind: "expert", ref: `expert:${expert.metadata.id}`, name: expert.metadata.name },
+    });
+    const executionId = crypto.randomUUID();
+    const sessionId = crypto.randomUUID();
+    const timestamp = "2026-10-26T00:00:00.000Z";
+    const removedId = crypto.randomUUID();
+    const steerId = crypto.randomUUID();
+    await missions.appendUserMessage(mission.id, {
+      id: removedId,
+      content: "Withdrawn",
+      createdAt: timestamp,
+    });
+    await missions.appendUserMessage(mission.id, {
+      id: steerId,
+      content: "Corrected",
+      createdAt: timestamp,
+    });
+    await missions.updateExecution(mission.id, {
+      id: executionId,
+      sessionId,
+      inputMessageId: mission.initialMessageId,
+      status: "succeeded",
+      startedAt: timestamp,
+    });
+    const executions = trackedExecutionStore(pragmaHome);
+    const sessions = createFileExpertSessionStore({ executions, pragmaHome });
+    // History consumes only prompt/event facts; no Runtime or control-state query is needed.
+    const readSnapshot = vi.spyOn(sessions, "readSnapshot").mockResolvedValue({
+      session: {
+        schemaVersion: "pragma.expert-session/v7",
+        sessionId,
+        expertId: expert.metadata.id,
+        definitionFingerprint: "a".repeat(64),
+        status: "closed",
+        queuedRequestIds: [],
+        executionIds: [executionId],
+        rootContextId: "root",
+        contexts: {},
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+      prompts: [removedId, steerId].map((requestId) => ({
+        requestId,
+        sessionId,
+        executionId,
+        purpose: "user" as const,
+        content: requestId,
+        mode: "steer" as const,
+        status: requestId === removedId ? ("cancelled" as const) : ("succeeded" as const),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })),
+      events: [
+        {
+          eventId: crypto.randomUUID(),
+          sessionId,
+          schemaVersion: "pragma.expert-session-event/v1",
+          cursor: { sessionId, sequence: 1 },
+          type: "prompt.removed",
+          data: { requestId: removedId },
+          occurredAt: timestamp,
+        },
+      ],
+    });
+    const runner = createHistoricalReadService({
+      missions,
+      pragmaHome,
+      expertSessionStore: sessions,
+      resourcePorts: {
+        createCompileService: () => ({}),
+        readProjectResources: async () => [{ kind: "Expert", metadata: expert.metadata }],
+      } as LocalHostMissionExecutionResourcePorts,
+      runtimes: {
+        getDefaultRuntimeId: async () => "unused",
+        bind: async () => {
+          throw new Error("History must not bind a Runtime");
+        },
+        resolve: async () => {
+          throw new Error("History must not resolve a Runtime");
+        },
+      },
+    });
+    const latest = await runner.getChatPage({ id: mission.id, limit: 1 });
+    expect(latest.entries).toEqual([
+      expect.objectContaining({
+        id: steerId,
+        delivery: { requestedMode: "steer", effectiveMode: "steer", status: "succeeded" },
+      }),
+    ]);
+    const earlier = await runner.getChatPage({
+      id: mission.id,
+      limit: 1,
+      beforeCursor: latest.page.nextBeforeCursor!,
+    });
+    expect(earlier.entries).toEqual([
+      expect.objectContaining({
+        id: removedId,
+        delivery: {
+          requestedMode: "steer",
+          effectiveMode: "steer",
+          status: "cancelled",
+          removed: true,
+        },
+      }),
+    ]);
+    expect(readSnapshot).toHaveBeenCalledTimes(2);
+    readSnapshot.mockRejectedValueOnce(new Error("Session temporarily unavailable"));
+    const degraded = await runner.getChatPage({ id: mission.id, limit: 1 });
+    expect(degraded.entries[0]?.id).toBe(steerId);
+    expect(degraded.syncIssues).toEqual([
+      expect.objectContaining({ section: "history", retryable: true }),
+    ]);
+    const reloaded = await runner.getChatPage({ id: mission.id, limit: 50 });
+    expect(reloaded.entries.find((entry) => entry.id === removedId)).toMatchObject({
+      delivery: { removed: true },
+    });
+    expect(reloaded.syncIssues).toBeUndefined();
+  });
+
   it("normalizes an archived legacy projection without rewriting it from a read", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-order-repair-"));
     temporaryPaths.push(root);

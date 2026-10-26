@@ -1,3 +1,4 @@
+import { projectMissionPromptDeliveries } from "./mission-prompt-deliveries.ts";
 import { withMissionPreparationFailure } from "./preparation-failure.ts";
 import { defineLocalHostMissionMessageFormat } from "../mission-command-admission.ts";
 import { SKILL_REVISION_EXPERT_REF, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
@@ -3729,6 +3730,28 @@ export function createLocalHostMissionExecutionService(
       const entries = [...history.entries];
       const historyReadAt = performance.now();
       const syncIssues = [...history.syncIssues];
+      // History is independently usable: controls may have loaded before this page,
+      // failed, or never loaded these older entries at all.
+      const sessionId =
+        sessionService.session(mission.id)?.sessionId ?? mission.execution?.sessionId;
+      let deliveryState: ReturnType<typeof projectMissionPromptDeliveries> = {
+        deliveries: [],
+        hiddenEntryIds: [],
+      };
+      if (sessionId !== undefined) {
+        try {
+          const snapshot = await expertSessionStore.readSnapshot(sessionId);
+          if (snapshot !== undefined) {
+            deliveryState = projectMissionPromptDeliveries(snapshot.prompts, snapshot.events);
+          }
+        } catch {
+          syncIssues.push(missionChatSyncIssue("history"));
+        }
+      }
+      const deliveries = new Map(
+        deliveryState.deliveries.map((item) => [item.entryId, item.delivery]),
+      );
+      const hiddenEntryIds = new Set(deliveryState.hiddenEntryIds);
       const executorMetadata = await executorMetadataPromise;
       // An entire queued execution can start and finish while history is read, leaving
       // both live pointers undefined. Invalidation revisions also capture that lifecycle
@@ -3764,8 +3787,11 @@ export function createLocalHostMissionExecutionService(
       const resolveExecutorAvatarId = createMissionExecutorAvatarIdResolver(
         executorMetadata.avatarIds,
       );
-      const presentedEntries = mergeMissionChatEntriesWithLive(entries, revisionLiveEntries).map(
-        (entry) => {
+      const presentedEntries = mergeMissionChatEntriesWithLive(entries, revisionLiveEntries)
+        .filter((entry) => !hiddenEntryIds.has(entry.id))
+        .map((entry) => {
+          const delivery = deliveries.get(entry.id);
+          if (entry.kind === "user" && delivery !== undefined) entry = { ...entry, delivery };
           if (entry.executorId === undefined) return entry;
           const executorName = entry.executorName ?? resolveExecutorName(entry.executorId);
           const executorAvatarId =
@@ -3777,8 +3803,7 @@ export function createLocalHostMissionExecutionService(
             ...(executorName === undefined ? {} : { executorName }),
             ...(executorAvatarId === undefined ? {} : { executorAvatarId }),
           };
-        },
-      );
+        });
       assertReadCurrent();
       const uniqueSyncIssues = [
         ...new Map(syncIssues.map((issue) => [issue.section, issue])).values(),
@@ -3985,57 +4010,9 @@ export function createLocalHostMissionExecutionService(
         ),
       })),
     );
-    const removedPromptIds = new Set(
-      sessionEvents.flatMap((event) => {
-        if (event.type !== "prompt.removed") return [];
-        const requestId = (event.data as { requestId?: unknown }).requestId;
-        return typeof requestId === "string" ? [requestId] : [];
-      }),
-    );
-    const steerFallbackByRequestId = new Map<string, string>();
-    for (const event of sessionEvents) {
-      if (event.type !== "prompt.steer-fallback") continue;
-      const data = event.data as { requestId?: unknown; reason?: unknown };
-      if (typeof data.requestId === "string" && typeof data.reason === "string") {
-        steerFallbackByRequestId.set(data.requestId, data.reason);
-      }
-    }
-    const executionActivatedAt = new Map<string, string>();
-    for (const event of sessionEvents) {
-      if (event.type !== "execution.attached") continue;
-      const executionId = (event.data as { executionId?: unknown }).executionId;
-      if (typeof executionId === "string") executionActivatedAt.set(executionId, event.occurredAt);
-    }
-    const deliveries = promptQueue.flatMap((prompt) => {
-      const fallbackReason = steerFallbackByRequestId.get(prompt.requestId);
-      const queueSteered =
-        prompt.deliveryAttempt?.kind === "queue_steer" &&
-        prompt.deliveryAttempt.state === "confirmed";
-      const activatedAt = queueSteered
-        ? prompt.updatedAt
-        : prompt.mode === "enqueue" && prompt.status !== "queued"
-          ? executionActivatedAt.get(prompt.executionId)
-          : undefined;
-      return [
-        {
-          entryId: prompt.requestId,
-          delivery: {
-            requestedMode: queueSteered || fallbackReason !== undefined ? "steer" : prompt.mode,
-            effectiveMode: queueSteered ? "steer" : prompt.mode,
-            status: prompt.status,
-            ...(activatedAt === undefined ? {} : { activatedAt }),
-            ...(removedPromptIds.has(prompt.requestId) ? { removed: true } : {}),
-            ...(fallbackReason === undefined ? {} : { fallbackReason }),
-          },
-        },
-      ];
-    });
-    const hiddenEntryIds = promptQueue.flatMap((prompt) =>
-      prompt.deliveryAttempt?.kind === "queue_steer" &&
-      prompt.deliveryAttempt.state === "confirmed" &&
-      prompt.deliveryAttempt.sourceExecutionId !== undefined
-        ? [`result:${prompt.deliveryAttempt.sourceExecutionId}`]
-        : [],
+    const { deliveries, hiddenEntryIds } = projectMissionPromptDeliveries(
+      promptQueue,
+      sessionEvents,
     );
     // Pending interactions and session queues are independent reads. They can
     // cross an interrupt, so validate the canonical aggregate again before

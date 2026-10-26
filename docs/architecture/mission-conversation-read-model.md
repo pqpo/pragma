@@ -56,6 +56,12 @@ idle 仅释放瞬态资源，保留正在进行的耐久展示读取，避免导
 一次 prepare，然后依次读取并按当前 Schema 校验三个文件。根 Context、队列和 delivery 从同一快照取得。
 Execution 终态仍在异步读取之后复查，已响应的人工确认仍在发布前过滤，不能因快照复用而复活。
 Session 快照不代表 Execution、ExpertSession 与 Mission 的跨 owner 原子快照。既有单项读取接口继续保留。
+历史分页也独立从 Session 快照附加 delivery（撤回标记、有效投递模式和激活时间），并过滤已转为
+steer 的源 Execution 兜底结果；不依赖控制状态先后到达或 Renderer 事先加载过该消息。
+Session 读取失败保留可读消息并报告 history 降级，下一次读取重新获取事实，不回写历史投影。
+Renderer 将撤回视为同一 request ID 的最终事实；迟到的控制快照、历史页和实时条目合并不能清除
+已有的 removed 标记。重发使用新的 request ID。向上翻页必须保留旧页报告的 history 降级，
+读取另一健康页不能证明先前失败的页已恢复。
 Local Host 的队列投影同样使用一次 Session 快照，steering capability 从该快照中的 Session binding 解析。
 
 Renderer 的历史、控制和 Context 分别保留一个进行中读取与一个 dirty 标记；读取期间的重复触发最多保留

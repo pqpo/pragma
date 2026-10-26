@@ -17,6 +17,7 @@ import {
   materializeMissionChatSnapshot,
   MissionFirstTokenUpdateBuffer,
   prependChatPage,
+  preserveWithdrawnMissionEntry,
   reconcileMissionChatRefresh,
 } from "./mission-conversation-model.ts";
 import { MissionLiveEntryStore } from "./mission-live-entry-store.ts";
@@ -753,8 +754,9 @@ export function conversationFromPage(
     ...current,
     revision: page.revision,
     entries: page.entries.map((entry) => {
-      if (entry.kind !== "user" || entry.delivery !== undefined) return entry;
       const existing = currentEntries.get(entry.id);
+      if (entry.kind !== "user" || entry.delivery !== undefined)
+        return preserveWithdrawnMissionEntry(entry, existing);
       return existing?.kind === "user" && existing.delivery !== undefined
         ? { ...entry, delivery: existing.delivery }
         : entry;
@@ -785,7 +787,9 @@ export function mergeConversationState(
       .map((entry) => {
         if (entry.kind !== "user") return entry;
         const delivery = deliveries.get(entry.id);
-        return delivery === undefined ? entry : { ...entry, delivery };
+        return delivery === undefined
+          ? entry
+          : preserveWithdrawnMissionEntry({ ...entry, delivery }, entry);
       }),
     pendingInteractions: state.pendingInteractions,
     queue:

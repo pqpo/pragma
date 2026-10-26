@@ -322,7 +322,7 @@ function applyMissionChatPatchesWithChanges(
         };
         // Patch revisions are the ordering authority. Content length and prefix
         // are not versions: a valid rewrite may be shorter or replace a prefix.
-        entries[existingIndex] = incoming;
+        entries[existingIndex] = preserveWithdrawnMissionEntry(incoming, existing);
         if (patch.beforeEntryId !== undefined) {
           const beforeIndex = entryIndexById.get(patch.beforeEntryId);
           if (beforeIndex === undefined) return null;
@@ -894,7 +894,7 @@ function mergeStaleEntryMetadata(
     (incoming.kind !== "assistant" && incoming.kind !== "thinking") ||
     existing.kind !== incoming.kind
   ) {
-    return incoming;
+    return preserveWithdrawnMissionEntry(incoming, existing);
   }
   // The caller has already established that this is stale metadata. Preserve
   // the content from the newer revision unconditionally; do not infer recency
@@ -913,6 +913,14 @@ export function prependChatPage(
     // revision. Preserve the contiguous live watermark.
     revision: current.revision,
     entries: uniqueChatEntries([...earlier.entries, ...current.entries]),
+    ...(earlier.syncIssues?.some((issue) => issue.section === "history")
+      ? {
+          syncIssues: [
+            ...(current.syncIssues?.filter((issue) => issue.section !== "history") ?? []),
+            ...earlier.syncIssues.filter((issue) => issue.section === "history"),
+          ],
+        }
+      : {}),
     page: {
       ...(earlier.page.oldestSequence === undefined
         ? {}
@@ -944,14 +952,27 @@ export function prependChatPage(
   };
 }
 
+/** Withdrawal is final for a request ID; resending always creates another ID. */
+export function preserveWithdrawnMissionEntry(
+  incoming: MissionChatEntry,
+  previous: MissionChatEntry | undefined,
+): MissionChatEntry {
+  return incoming.kind === "user" &&
+    previous?.kind === "user" &&
+    previous.delivery?.removed === true
+    ? { ...incoming, delivery: previous.delivery }
+    : incoming;
+}
+
 export function uniqueChatEntries(entries: readonly MissionChatEntry[]): MissionChatEntry[] {
   const byId = new Map<string, MissionChatEntry>();
   for (const entry of entries) {
     // The last source is authoritative for both value and order. Updating an
     // existing Map value keeps its first insertion position and can place a
     // recovered process entry after the final answer.
+    const merged = preserveWithdrawnMissionEntry(entry, byId.get(entry.id));
     byId.delete(entry.id);
-    byId.set(entry.id, entry);
+    byId.set(entry.id, merged);
   }
   return [...byId.values()];
 }

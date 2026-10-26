@@ -19,6 +19,7 @@ import {
   missionTurnFinalReplyIds,
   orderMissionConversationEntries,
   prependChatPage,
+  uniqueChatEntries,
   preparingMissionRequestId,
   readyPendingQueuedRequestIds,
   reconcileMissionChatRefresh,
@@ -1022,6 +1023,66 @@ describe("mission conversation model", () => {
     expect(staleContext?.contextWindow?.canCompact).toBe(true);
   });
 
+  it("never resurrects a withdrawn request through delayed control, history, or live metadata", () => {
+    const removed: MissionChatEntry = {
+      id: "withdrawn",
+      kind: "user",
+      content: "Old draft",
+      createdAt: "2026-10-26T00:00:00.000Z",
+      delivery: {
+        requestedMode: "enqueue",
+        effectiveMode: "enqueue",
+        status: "cancelled",
+        removed: true,
+      },
+    };
+    const current = { ...streamingSnapshot("Answer", 10), entries: [removed] };
+    const stale = {
+      ...removed,
+      delivery: {
+        requestedMode: "enqueue" as const,
+        effectiveMode: "enqueue" as const,
+        status: "queued" as const,
+      },
+    };
+    const controlled = mergeConversationState(current, {
+      missionId: current.missionId,
+      revision: 9,
+      pendingInteractions: [],
+      hiddenEntryIds: [],
+      deliveries: [{ entryId: removed.id, delivery: stale.delivery }],
+    })!;
+    expect(controlled.entries[0]).toMatchObject({ delivery: { removed: true } });
+    const refreshed = conversationFromPage({ ...current, revision: 9, entries: [stale] }, current);
+    expect(refreshed.entries[0]).toMatchObject({ delivery: { removed: true } });
+    const patched = applyMissionChatPatches(current, [{ type: "entry.upsert", entry: stale }], 11)!;
+    expect(patched.entries[0]).toMatchObject({ delivery: { removed: true } });
+    expect(uniqueChatEntries([removed, stale])[0]).toMatchObject({ delivery: { removed: true } });
+  });
+
+  it("reports an earlier page's history degradation without dropping control issues", () => {
+    const latest: MissionConversationSnapshot = {
+      ...streamingSnapshot("Latest", 10),
+      syncIssues: [
+        { code: "execution_state_unavailable", section: "pending_interactions", retryable: true },
+      ],
+    };
+    const earlier: MissionConversationSnapshot = {
+      ...streamingSnapshot("Earlier", 8),
+      entries: [],
+      syncIssues: [{ code: "execution_state_unavailable", section: "history", retryable: true }],
+    };
+    const merged = prependChatPage(latest, earlier);
+    expect(merged.syncIssues?.map((issue) => issue.section).sort()).toEqual([
+      "history",
+      "pending_interactions",
+    ]);
+    // Loading a different healthy page cannot prove the failed page recovered.
+    expect(prependChatPage(merged, { ...earlier, syncIssues: undefined }).syncIssues).toEqual(
+      merged.syncIssues,
+    );
+  });
+
   it("preserves delivery metadata when a later history page omits queue state", () => {
     const requestId = "00000000-0000-4000-8000-000000000012";
     const current: MissionConversationSnapshot = {
@@ -1880,6 +1941,17 @@ describe("mission conversation model", () => {
       const reloaded = mergeConversationState(conversationFromPage(page, null), state)!;
       expect(ids(refreshed)).toEqual(["working", "steer", "final"]);
       expect(ids(reloaded)).toEqual(ids(refreshed));
+      // A history page must also stand alone when controls have already loaded,
+      // are unavailable, or do not refresh again after loading an earlier page.
+      const deliveredPage = {
+        ...page,
+        entries: page.entries.map((entry) =>
+          entry.id === steer.id ? { ...steer, delivery: state.deliveries[0]!.delivery } : entry,
+        ),
+      };
+      expect(ids(conversationFromPage(deliveredPage, null))).toEqual(ids(refreshed));
+      const earlier = conversationFromPage(deliveredPage, { ...current, entries: [] });
+      expect(ids(prependChatPage({ ...current, entries: [] }, earlier))).toEqual(ids(refreshed));
       const staleRefresh = reconcileMissionChatRefresh(
         { ...current, revision: 3 },
         hydratedPage,
