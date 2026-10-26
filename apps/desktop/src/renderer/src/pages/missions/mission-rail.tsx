@@ -1,3 +1,10 @@
+import { resolveMissionRailGroups, type MissionRailVisibleLimits } from "./mission-rail-groups.ts";
+export {
+  resolveMissionRailGroups,
+  type MissionRailVisibleLimits,
+  type MissionRailResolvedGroup,
+  type MissionRailResolvedGroups,
+} from "./mission-rail-groups.ts";
 import {
   useCallback,
   useEffect,
@@ -187,8 +194,9 @@ export function MissionRail(props: {
         missions: props.missions,
         pinnedMissionIds: props.pinnedMissionIds,
         visibleLimits,
+        selectedMissionId: props.selectedMissionId,
       }),
-    [props.missions, props.pinnedMissionIds, visibleLimits],
+    [props.missions, props.pinnedMissionIds, props.selectedMissionId, visibleLimits],
   );
 
   useEffect(() => {
@@ -398,54 +406,6 @@ const MISSION_SEARCH_TRANSITION_LOCK_MS = 220;
 
 type MissionRailGroupKey = "waitingInput" | "active" | "completed";
 
-export interface MissionRailVisibleLimits {
-  readonly waitingInput: number;
-  readonly active: number;
-  readonly completed: number;
-}
-
-export interface MissionRailResolvedGroup {
-  readonly visibleMissions: readonly MissionSummary[];
-  readonly hiddenCount: number;
-}
-
-export interface MissionRailResolvedGroups {
-  readonly waitingInput: MissionRailResolvedGroup;
-  readonly active: MissionRailResolvedGroup;
-  readonly completed: MissionRailResolvedGroup;
-}
-
-export function resolveMissionRailGroups(input: {
-  readonly missions: readonly MissionSummary[];
-  readonly pinnedMissionIds: readonly string[];
-  readonly visibleLimits: MissionRailVisibleLimits;
-}): MissionRailResolvedGroups {
-  const waitingInput = input.missions
-    .filter(isWaitingInputMission)
-    .toSorted((left, right) => comparePinnedMissions(left, right, input.pinnedMissionIds));
-  const active = input.missions
-    .filter((mission) => mission.lifecycleStatus === "active" && !isWaitingInputMission(mission))
-    .toSorted((left, right) => comparePinnedMissions(left, right, input.pinnedMissionIds));
-  const completed = input.missions.filter((mission) => mission.lifecycleStatus === "completed");
-
-  return {
-    waitingInput: resolveMissionRailGroup(waitingInput, input.visibleLimits.waitingInput),
-    active: resolveMissionRailGroup(active, input.visibleLimits.active),
-    completed: resolveMissionRailGroup(completed, input.visibleLimits.completed),
-  };
-}
-
-function resolveMissionRailGroup(
-  missions: readonly MissionSummary[],
-  visibleLimit: number,
-): MissionRailResolvedGroup {
-  const boundedLimit = Math.max(0, visibleLimit);
-  return {
-    visibleMissions: missions.slice(0, boundedLimit),
-    hiddenCount: Math.max(0, missions.length - boundedLimit),
-  };
-}
-
 function increaseMissionRailVisibleLimit(
   group: MissionRailGroupKey,
 ): (current: MissionRailVisibleLimits) => MissionRailVisibleLimits {
@@ -453,10 +413,6 @@ function increaseMissionRailVisibleLimit(
     ...current,
     [group]: current[group] + MISSION_RAIL_PAGE_SIZE,
   });
-}
-
-function isWaitingInputMission(mission: MissionSummary): boolean {
-  return mission.lifecycleStatus === "active" && mission.execution?.status === "waiting";
 }
 
 export function resolveMissionSearchCollapsed(input: {
@@ -693,6 +649,10 @@ export function MissionRailRow(props: {
   const previewId = useId();
   const rowRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (props.selected) rowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [props.selected]);
+
   const rowHoveredRef = useRef(false);
   const cardHoveredRef = useRef(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -982,19 +942,4 @@ function MissionRailGroup(props: {
       )}
     </section>
   );
-}
-
-function comparePinnedMissions(
-  left: MissionSummary,
-  right: MissionSummary,
-  pinnedMissionIds: readonly string[],
-): number {
-  const leftPinnedIndex = pinnedMissionIds.indexOf(left.id);
-  const rightPinnedIndex = pinnedMissionIds.indexOf(right.id);
-  const leftPinned = leftPinnedIndex >= 0;
-  const rightPinned = rightPinnedIndex >= 0;
-  if (leftPinned && rightPinned) return leftPinnedIndex - rightPinnedIndex;
-  if (leftPinned) return -1;
-  if (rightPinned) return 1;
-  return right.updatedAt.localeCompare(left.updatedAt);
 }

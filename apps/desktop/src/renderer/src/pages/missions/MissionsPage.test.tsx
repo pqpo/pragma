@@ -408,6 +408,24 @@ describe("MissionsPage", () => {
     expect(html).not.toContain("mission-detail-loading");
   });
 
+  it("retains per-tab memory when the page is restored or another mission is opened", () => {
+    const tabSelections = {
+      '["task",null]': "all-second",
+      '["task","/workspace/a"]': "a-second",
+      '["automation","/workspace/a"]': "automation-second",
+    };
+    const memoryState = {
+      missions: [],
+      selectedMission: null,
+      selectedMissionId: null,
+      tabSelections,
+    };
+    expect(resolveMissionsPageInitialState({ memoryState }).tabSelections).toEqual(tabSelections);
+    const mission = missionFixture("expert");
+    const state = resolveMissionsPageInitialState({ initialMission: mission, memoryState });
+    expect(state.tabSelections).toEqual({ ...tabSelections, '["task",null]': mission.id });
+  });
+
   it("does not invent automation membership when a revision detail is opened", () => {
     const mission = {
       ...missionFixture("expert"),
@@ -717,6 +735,30 @@ describe("MissionsPage", () => {
     expect(groups.active.visibleMissions.map((mission) => mission.id)).toEqual(["active-running"]);
     expect(groups.completed.visibleMissions.map((mission) => mission.id)).toEqual(["completed"]);
   });
+
+  it.each(["waitingInput", "active", "completed"] as const)(
+    "reveals a remembered selection beyond the first page of %s",
+    (group) => {
+      const missions = Array.from({ length: 15 }, (_, index) =>
+        missionSummaryFixture({
+          id: `mission-${index}`,
+          title: `Mission ${index}`,
+          status: group === "waitingInput" ? "waiting" : "running",
+          lifecycleStatus: group === "completed" ? "completed" : "active",
+          updatedAt: "2026-10-26T00:00:00Z",
+        }),
+      );
+      const groups = resolveMissionRailGroups({
+        missions,
+        pinnedMissionIds: [],
+        visibleLimits: { waitingInput: 10, active: 10, completed: 10 },
+        selectedMissionId: "mission-12",
+      });
+      expect(groups[group].visibleMissions.map((entry) => entry.id)).toContain("mission-12");
+      expect(groups[group].visibleMissions).toHaveLength(13);
+      expect(groups[group].hiddenCount).toBe(2);
+    },
+  );
 
   it("limits mission rail groups and exposes the remaining count for loading more", () => {
     const waiting = Array.from({ length: 11 }, (_, index) =>
