@@ -618,7 +618,7 @@ describe("Pragma YAML DSL", () => {
     });
     const dumped = await project.dump(compiled.value, { split: "by-resource" });
     expect(dumped.files.get("flows/t9ne4d8njvvxv2ea.pragma.yaml")).toContain("kind: Flow");
-    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v11");
+    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v12");
     const single = await project.dump(compiled.value, { split: "single" });
     await writeFile(join(root, "single.yaml"), single.files.get("pragma.yaml")!);
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
@@ -1077,7 +1077,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v2",
-      targetCompilerVersion: "pragma.dsl/v11",
+      targetCompilerVersion: "pragma.dsl/v12",
       migrated: true,
     });
     expect(migrated.resources).toEqual([
@@ -1100,7 +1100,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v3",
-      targetCompilerVersion: "pragma.dsl/v11",
+      targetCompilerVersion: "pragma.dsl/v12",
       migrated: true,
       resources: [expect.objectContaining({ kind: "Expert" })],
     });
@@ -1118,7 +1118,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v4",
-      targetCompilerVersion: "pragma.dsl/v11",
+      targetCompilerVersion: "pragma.dsl/v12",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1141,7 +1141,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v5",
-      targetCompilerVersion: "pragma.dsl/v11",
+      targetCompilerVersion: "pragma.dsl/v12",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1165,7 +1165,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v6",
-      targetCompilerVersion: "pragma.dsl/v11",
+      targetCompilerVersion: "pragma.dsl/v12",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1195,7 +1195,7 @@ describe("Pragma YAML DSL", () => {
     });
     expect(result).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v9",
-      targetCompilerVersion: "pragma.dsl/v11",
+      targetCompilerVersion: "pragma.dsl/v12",
       migrated: true,
       resources: [
         {
@@ -1216,50 +1216,56 @@ describe("Pragma YAML DSL", () => {
     expect(files.get(resource)).toContain("Tampered instructions");
   });
 
-  it("upgrades the real compiler v10 writer without changing policies or accepting a tampered lock", async () => {
-    const root = join(import.meta.dirname, "fixtures", "compiler-v10-mcp-approval");
-    const files = new Map(
-      await Promise.all(
-        ["pragma.yaml", "pragma.lock.yaml"].map(
-          async (path) => [path, await readFile(join(root, path), "utf8")] as const,
+  it.each([
+    ["pragma.dsl/v10", "compiler-v10-mcp-approval"],
+    ["pragma.dsl/v11", "compiler-v11-delegation-approval"],
+  ])(
+    "upgrades the real %s writer without changing policies or accepting a tampered lock",
+    async (version, fixture) => {
+      const root = join(import.meta.dirname, "fixtures", fixture);
+      const files = new Map(
+        await Promise.all(
+          ["pragma.yaml", "pragma.lock.yaml"].map(
+            async (path) => [path, await readFile(join(root, path), "utf8")] as const,
+          ),
         ),
-      ),
-    );
-    const original = new Map(files);
-    const migrated = migratePragmaCompilerProjectToCurrent({
-      files,
-      revisionCompilerVersion: "pragma.dsl/v10",
-    });
-    expect(migrated).toMatchObject({
-      sourceCompilerVersion: "pragma.dsl/v10",
-      targetCompilerVersion: "pragma.dsl/v11",
-      migrated: true,
-      resources: [
-        {
-          kind: "Expert",
-          spec: { toolApprovals: { mcp_docs_searchDocChunk: "ask", mcp_docs_write: "required" } },
-        },
-      ],
-    });
-    expect(files).toEqual(original);
-    const lock = parsePragmaYaml(files.get("pragma.lock.yaml")!) as { resources: unknown[] };
-    lock.resources.push(lock.resources[0]);
-    const duplicateLock = new Map(files);
-    duplicateLock.set("pragma.lock.yaml", formatPragmaYaml(lock));
-    expect(() =>
-      migratePragmaCompilerProjectToCurrent({
-        files: duplicateLock,
-        revisionCompilerVersion: "pragma.dsl/v10",
-      }),
-    ).toThrow(expect.objectContaining({ code: "lock_mismatch" }));
-    files.set(
-      "pragma.yaml",
-      files.get("pragma.yaml")!.replace("Pinned original instructions", "Tampered"),
-    );
-    expect(() =>
-      migratePragmaCompilerProjectToCurrent({ files, revisionCompilerVersion: "pragma.dsl/v10" }),
-    ).toThrow(expect.objectContaining({ code: "lock_mismatch" }));
-  });
+      );
+      const original = new Map(files);
+      const migrated = migratePragmaCompilerProjectToCurrent({
+        files,
+        revisionCompilerVersion: version,
+      });
+      expect(migrated).toMatchObject({
+        sourceCompilerVersion: version,
+        targetCompilerVersion: "pragma.dsl/v12",
+        migrated: true,
+        resources: [
+          {
+            kind: "Expert",
+            spec: { toolApprovals: { mcp_docs_searchDocChunk: "ask", mcp_docs_write: "required" } },
+          },
+        ],
+      });
+      expect(files).toEqual(original);
+      const lock = parsePragmaYaml(files.get("pragma.lock.yaml")!) as { resources: unknown[] };
+      lock.resources.push(lock.resources[0]);
+      const duplicateLock = new Map(files);
+      duplicateLock.set("pragma.lock.yaml", formatPragmaYaml(lock));
+      expect(() =>
+        migratePragmaCompilerProjectToCurrent({
+          files: duplicateLock,
+          revisionCompilerVersion: version,
+        }),
+      ).toThrow(expect.objectContaining({ code: "lock_mismatch" }));
+      files.set(
+        "pragma.yaml",
+        files.get("pragma.yaml")!.replace("Pinned original instructions", "Tampered"),
+      );
+      expect(() =>
+        migratePragmaCompilerProjectToCurrent({ files, revisionCompilerVersion: version }),
+      ).toThrow(expect.objectContaining({ code: "lock_mismatch" }));
+    },
+  );
 
   it("preserves historical v9 extension fields while validating known fields", async () => {
     const root = join(import.meta.dirname, "fixtures", "compiler-v9-expert-permissions");
@@ -1333,7 +1339,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v7",
-      targetCompilerVersion: "pragma.dsl/v11",
+      targetCompilerVersion: "pragma.dsl/v12",
       migrated: true,
       resources: [
         expect.objectContaining({ apiVersion: PRAGMA_DSL_WRITE_API_VERSION, kind: "Capability" }),
@@ -1398,7 +1404,7 @@ describe("Pragma YAML DSL", () => {
     });
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v8",
-      targetCompilerVersion: "pragma.dsl/v11",
+      targetCompilerVersion: "pragma.dsl/v12",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1411,21 +1417,21 @@ describe("Pragma YAML DSL", () => {
     });
   });
 
-  it("returns a validated no-op for a compiler v9 project", async () => {
+  it("returns a validated no-op for a current compiler project", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-compiler-v9-noop-"));
     const entry = join(root, "pragma.yaml");
     await writeFile(entry, formatPragmaYaml(runtimeProfile()));
     const project = await loadPragmaProject(entry);
     const migrated = migratePragmaCompilerProjectToCurrent({
-      revisionCompilerVersion: "pragma.dsl/v11",
+      revisionCompilerVersion: "pragma.dsl/v12",
       files: new Map([
         ["pragma.yaml", await readFile(entry, "utf8")],
         ["pragma.lock.yaml", formatPragmaYaml(project.createLock())],
       ]),
     });
     expect(migrated).toMatchObject({
-      sourceCompilerVersion: "pragma.dsl/v11",
-      targetCompilerVersion: "pragma.dsl/v11",
+      sourceCompilerVersion: "pragma.dsl/v12",
+      targetCompilerVersion: "pragma.dsl/v12",
       migrated: false,
     });
   });

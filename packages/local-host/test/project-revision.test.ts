@@ -36,6 +36,75 @@ afterEach(async () => {
 });
 
 describe("Local Host project revision reader", { timeout: 30_000 }, () => {
+  it("rebuilds an interrupted v11 compiler view while preserving historical approvals and source", async () => {
+    const home = await createHistoricalHome();
+    const paths = new PragmaPaths({ pragmaHome: home });
+    const fixture = join(
+      import.meta.dirname,
+      "../../interpreter/test/fixtures/compiler-v11-delegation-approval",
+    );
+    const files = new Map(
+      await Promise.all(
+        ["pragma.yaml", "pragma.lock.yaml"].map(
+          async (path) => [path, Buffer.from(await readFile(join(fixture, path), "utf8"))] as const,
+        ),
+      ),
+    );
+    const snapshot = await new ContentAddressedStore(paths.contentObjectsRoot()).putSnapshot(files);
+    const manifestPath = join(
+      paths.projectsRoot(),
+      HISTORICAL_V8_PROJECT_ID,
+      "revisions",
+      "1.json",
+    );
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    const before = {
+      ...manifest,
+      snapshotHash: snapshot.root.hash,
+      projectFingerprint: "9c2e5765dd56a249827dfcea3842249f404b30b56d7d28d8eae9d2170ca33a9e",
+      compilerVersion: "pragma.dsl/v11",
+    };
+    await writeFile(manifestPath, JSON.stringify(before));
+    const reader = createReader(paths);
+    const location = await reader.getRevision(HISTORICAL_V8_PROJECT_ID, 1);
+    expect(location).toMatchObject({
+      sourceCompilerVersion: "pragma.dsl/v11",
+      compilerVersion: "pragma.dsl/v12",
+    });
+    if (location === undefined) throw new Error("Missing v11 compiler view");
+    // A partially removed derived view must be recoverable on the next read.
+    await rm(location.rootDir, { recursive: true, force: true });
+    await mkdir(location.rootDir, { recursive: true });
+    await writeFile(join(location.rootDir, "pragma.yaml"), "interrupted cache write");
+    const recovered = await reader.getRevision(HISTORICAL_V8_PROJECT_ID, 1);
+    expect(recovered?.compilerViewKey).toBe(location.compilerViewKey);
+    if (recovered === undefined) throw new Error("Missing recovered compiler view");
+    const project = await reader.openRevision(recovered);
+    try {
+      expect(project.listResources()).toMatchObject([
+        {
+          kind: "Expert",
+          spec: {
+            toolApprovals: {
+              spawn_expert: "ask",
+              continue_expert: "required",
+              mcp_docs_write: "required",
+            },
+          },
+        },
+      ]);
+    } finally {
+      await project.dispose();
+    }
+    expect(await readRevisionManifest(paths)).toEqual(before);
+    expect(
+      await readFile(
+        join(paths.projectViewsCacheRoot(), snapshot.root.hash, "pragma.lock.yaml"),
+        "utf8",
+      ),
+    ).toBe(files.get("pragma.lock.yaml")!.toString());
+  });
+
   it("keeps a raw project view during a CLI checkout and allows cleanup afterward", async () => {
     const home = await createHistoricalHome();
     const paths = new PragmaPaths({ pragmaHome: home });
@@ -61,7 +130,7 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
         ...manifest,
         snapshotHash: snapshot.root.hash,
         projectFingerprint: migrated.derivedProjectFingerprint,
-        compilerVersion: "pragma.dsl/v11",
+        compilerVersion: "pragma.dsl/v12",
       }),
     );
     const current = await reader.getRevision(HISTORICAL_V8_PROJECT_ID, 1);
@@ -109,7 +178,7 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
       projectFingerprint: HISTORICAL_V8_PROJECT_FINGERPRINT,
       sourceProjectFingerprint: HISTORICAL_V8_PROJECT_FINGERPRINT,
       sourceCompilerVersion: "pragma.dsl/v8",
-      compilerVersion: "pragma.dsl/v11",
+      compilerVersion: "pragma.dsl/v12",
     });
     expect(location?.compilerViewKey).toMatch(/^[a-f0-9]{64}$/u);
     expect(location?.derivedProjectFingerprint).toMatch(/^[a-f0-9]{64}$/u);
@@ -118,7 +187,7 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
 
     if (location === undefined) throw new Error("Expected the historical revision.");
     const files = await reader.readFiles(location);
-    expect(files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v11");
+    expect(files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v12");
     expect(files.has(".pragma-compiler-view")).toBe(false);
     const project = await reader.openRevision(location);
     try {
@@ -165,7 +234,7 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
         policy: { ...DEFAULT_STORAGE_POLICY, cacheTtlMs: 0, cacheLimitBytes: 0 },
       });
       await expect(readFile(join(location.rootDir, "pragma.lock.yaml"), "utf8")).resolves.toContain(
-        "pragma.dsl/v11",
+        "pragma.dsl/v12",
       );
     });
   });
@@ -211,7 +280,7 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
     expect(recovered?.compilerViewKey).toBe(first.compilerViewKey);
     expect(recovered?.derivedProjectFingerprint).toMatch(/^[a-f0-9]{64}$/u);
     await expect(readFile(join(recovered!.rootDir, "pragma.lock.yaml"), "utf8")).resolves.toContain(
-      "compilerVersion: pragma.dsl/v11",
+      "compilerVersion: pragma.dsl/v12",
     );
     await expect(readRevisionManifest(paths)).resolves.toEqual(before);
     await expect(readFile(join(temporary, ".pragma-compiler-view"))).rejects.toMatchObject({

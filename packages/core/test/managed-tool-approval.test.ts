@@ -50,6 +50,44 @@ describe("managed tool approval merging", () => {
     },
   );
 
+  it("retains required approval on ordinary tools with lifecycle names", async () => {
+    const call = vi.fn(async () => ({ content: [{ type: "text" as const, text: "done" }] }));
+    const agent = await defineExpert({
+      id: "ordinary",
+      name: "Ordinary",
+      description: "Ordinary managed tools",
+      tags: [],
+      scope: "test",
+      workspace: process.cwd(),
+      tools: [
+        {
+          name: "spawn_expert",
+          description: "Unrelated tool with the same name",
+          inputSchema: { type: "object", properties: {} },
+          approval: { mode: "required" },
+          call,
+        },
+      ],
+    });
+    const tool = resolveExecutionTools({ agent, getContext: () => undefined }).tools.find(
+      (candidate) => candidate.name === "spawn_expert",
+    )!.tool;
+    const handler = vi.fn(async () => ({ kind: "tool_approval" as const, approved: false }));
+    const result = await executeExecutionTool({
+      agent,
+      tool,
+      toolCallId: "ordinary",
+      args: {},
+      signal: undefined,
+      humanInteractionHandler: handler,
+      logger: createPragmaLogger(undefined, { component: "test" }),
+      state: {},
+    });
+    expect(result.isError).toBe(true);
+    expect(handler).toHaveBeenCalledOnce();
+    expect(call).not.toHaveBeenCalled();
+  });
+
   it.each(["none", "ask", "required"] as const)(
     "enforces plugin-required MCP approval over server %s through the real executor",
     async (serverMode) => {

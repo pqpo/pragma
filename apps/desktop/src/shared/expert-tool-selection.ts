@@ -44,7 +44,7 @@ export function updateResourceToolSelection(
             "_",
           ),
           description: `Call ${resource.name}.`,
-          approval: "ask",
+          approval: "none",
         },
       });
     }
@@ -86,14 +86,7 @@ export function updateResourceToolSelection(
         },
       };
     }),
-    toolApprovals:
-      newExperts.length === 0
-        ? toolApprovals
-        : {
-            spawn_expert: "ask",
-            continue_expert: "ask",
-            ...toolApprovals,
-          },
+    toolApprovals,
   };
 }
 

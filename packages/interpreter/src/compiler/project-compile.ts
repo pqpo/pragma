@@ -566,18 +566,20 @@ export async function compileExpert(
     executionOverride !== undefined
       ? executionOverride.permissionModeId
       : (executionBinding?.binding.permissionModeId ?? runtime?.permissionModeId);
-  const mcpRuntime =
+  const approvalRuntime =
     executionBinding ??
     (host.compilationPurpose === "stop" ||
-    !capabilities.some(({ contribution }) => contribution.mcp !== undefined)
+    !capabilities.some(
+      ({ contribution }) => contribution.mcp !== undefined || contribution.tools !== undefined,
+    )
       ? undefined
       : await host.runtimes?.bind({
           runtimeId: runtime?.runtimeId,
           permissionModeId,
         }));
-  const defaultMcpApproval =
-    mcpRuntime?.adapter.descriptor.permissionModes?.modes.find(
-      (mode) => mode.id === mcpRuntime.binding.permissionModeId,
+  const defaultManagedToolApproval =
+    approvalRuntime?.adapter.descriptor.permissionModes?.modes.find(
+      (mode) => mode.id === approvalRuntime.binding.permissionModeId,
     )?.defaultMcpApproval ?? "ask";
   const hookGroups: {
     readonly source: string;
@@ -600,17 +602,21 @@ export async function compileExpert(
       capabilityTools.push(
         ...contribution.tools
           .filter((tool) => allowed.has(tool.name))
-          .map((tool) => ({
-            ...tool,
-            approval: mergeExpertAgentToolApprovals(tool.approval, {
-              mode: resource.spec.toolApprovals[tool.name] ?? tool.approval?.mode ?? "ask",
-            }),
-          })),
+          .map((tool) => {
+            const configured = resource.spec.toolApprovals[tool.name];
+            return {
+              ...tool,
+              approval:
+                configured === undefined
+                  ? (tool.approval ?? { mode: defaultManagedToolApproval })
+                  : mergeExpertAgentToolApprovals(tool.approval, { mode: configured }),
+            };
+          }),
       );
     }
     if (contribution.mcp !== undefined) {
       mcpConfigs.push(
-        filterMcpContribution(contribution.mcp, allowed, resource, defaultMcpApproval),
+        filterMcpContribution(contribution.mcp, allowed, resource, defaultManagedToolApproval),
       );
     }
   }

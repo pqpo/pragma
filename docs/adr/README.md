@@ -24,6 +24,7 @@ ADR 是有时间和范围的决策记录；版本、路径和支持范围以权�
 - [ADR 077: Mission execution dependency snapshots](077-mission-execution-dependency-snapshots.md)
 - [ADR 078: Expert-owned native Harness permission modes](078-expert-native-harness-permissions.md)
 - [ADR 079: Full-access MCP approval defaults](079-full-access-mcp-approval-defaults.md)
+- [ADR 080: Expert lifecycle actions without approval](080-expert-lifecycle-without-approval.md)
 - [ADR 064: Mission durable delivery](064-mission-durable-delivery-and-capacity-accounting.md)
 - [ADR 065: Incremental Host-owned Execution storage](065-incremental-execution-storage.md)
 - [ADR 065: Mission 删除的停止确认与持久后处理](065-mission-deletion-stop-and-post-processing.md)

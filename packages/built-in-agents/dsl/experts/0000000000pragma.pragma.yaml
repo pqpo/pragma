@@ -53,9 +53,7 @@ spec:
     - ref: capability:0000000000manage
       kind: tools
       tools: []
-  toolApprovals:
-    spawn_expert: ask
-    continue_expert: ask
+  toolApprovals: {}
   contextStores: []
   plugins: []
   tools:

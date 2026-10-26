@@ -123,7 +123,11 @@ function createLifecycleTools(
   ].join("\n");
   const tool = (
     value: Omit<AgentLifecycleTool, typeof agentDelegationDefinition>,
-  ): AgentLifecycleTool => ({ ...value, [agentDelegationDefinition]: frozen });
+  ): AgentLifecycleTool => ({
+    ...value,
+    approval: { mode: "none" },
+    [agentDelegationDefinition]: frozen,
+  });
 
   const tools: AgentLifecycleTool[] = [];
   if (frozen.spawnExpertIds.size > 0) {

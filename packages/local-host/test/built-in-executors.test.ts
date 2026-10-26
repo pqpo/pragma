@@ -94,11 +94,11 @@ describe("Local Host built-in executors", () => {
       message: expect.stringContaining("not a completion result"),
     });
     expect(spawnExpert).toHaveBeenCalledOnce();
-    expect(tool.approval).toEqual({ mode: "ask" });
+    expect(tool.approval).toEqual({ mode: "none" });
     const continuation = resolved.definition.tools?.find(
       (candidate) => candidate.name === "continue_expert",
     );
-    expect(continuation?.approval).toEqual({ mode: "ask" });
+    expect(continuation?.approval).toEqual({ mode: "none" });
   });
 });
 
