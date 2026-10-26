@@ -1,7 +1,19 @@
 import { SkillDataSchema, validateTransferredSkill } from "@pragma/local-host/deployment";
 import type { CoreAssetSyncItem } from "../../../../../shared/contracts/index.ts";
 import { fingerprint } from "../../../asset-transfer/asset-transfer-fingerprint.ts";
-import { AssetSyncJournalV2Schema } from "../schemas/v2.ts";
+import { AssetSyncJournalV2Schema, AssetSyncStateV2Schema } from "../schemas/v2.ts";
+
+export const stateV2ToV3Step = {
+  fromVersion: 2,
+  toVersion: 3,
+  inputSchema: AssetSyncStateV2Schema,
+  migrate(value: unknown) {
+    return {
+      ...AssetSyncStateV2Schema.parse(value),
+      schemaVersion: "pragma.asset-sync-state/v3" as const,
+    };
+  },
+};
 
 export const journalV2ToV3Step = {
   fromVersion: 2,

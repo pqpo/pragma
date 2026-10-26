@@ -26,6 +26,18 @@ Interpreter `compilerVersion`、manifest、lock、IPC、Bridge 和 Runtime capab
   未来版本和缺失迁移的安全兜底，不是升级策略。
 - 业务 parser 只处理当前 Schema；历史 Schema 和字段转换放在迁移模块。废弃或错误字段可以由迁移显式
   删除，但必须记录决策、保留升级前备份并验证结果，不得静默丢弃，也不得为此保留长期业务兼容分支。
+- DSL 版本升级必须核对所有外部读取入口，包括 Git 资产同步、Bundle 导入、Project Revision、草稿和
+  恢复 journal；迁移函数存在不代表这些入口已经接入。Git 同步仓库的 `schemaVersion` 与资源的
+  `apiVersion` 是独立边界，仓库格式已升级不能替代 DSL 升级。同步必须在当前 Schema 校验、语义指纹
+  和合并前调用 Interpreter 的静态 DSL 迁移链，并允许不同资源处于不同的受支持版本；不得直接改
+  版本号、复制历史转换逻辑或放宽当前 parser。读取仅在内存中升级，原 Git 提交保留，正常发布才写出
+  当前版本。回归必须通过实际同步入口读取真实历史 writer fixture，覆盖当前版本、混合版本、未来版本、
+  损坏数据、缺少迁移链和中断重试；只测 Interpreter 迁移函数不足以证明同步兼容。
+- DSL 升级影响同步语义指纹时，必须同时检查 checkpoint 和 journal。不得清空历史 baseline，或把
+  当前远端/本地内容无条件认作旧 baseline；只有历史载荷或可验证的等价迁移能证明指纹对应关系。
+  journal 内嵌资源、expected、incoming baseline 和摘要指纹必须一起升级，保留领域 revision 预期；
+  checkpoint 仅有哈希时保留原值，首次取得对应载荷后再按证据归一化。版本、备份、原子迁移和恢复
+  门禁同样适用，并覆盖未改动、单边修改、真实双边冲突及两侧删除。
 - Host 必须在首次访问最小 owner 时、进入该 owner 的业务读取前执行必要升级；禁止为了发现潜在旧数据
   在应用启动阶段扫描或升级全部 owner、Project 或 Revision。持久化升级使用锁、稳定 journal、备份、
   原子替换和可重放恢复；失败时保留原数据并提供可操作诊断。除非共享全局状态无法安全初始化，单个

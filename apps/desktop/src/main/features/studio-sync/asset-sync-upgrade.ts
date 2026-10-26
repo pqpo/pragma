@@ -111,6 +111,9 @@ async function migrateOwner(configurationPath: string, statePath: string): Promi
         [1, 2],
         [1, 3],
         [2, 3],
+        [1, 4],
+        [2, 4],
+        [3, 4],
       ].some(([from, to]) => journal.fromVersion === from && journal.toVersion === to)
     )
       throw new Error("asset_sync.migration_unsupported_version");

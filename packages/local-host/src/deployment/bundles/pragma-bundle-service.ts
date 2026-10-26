@@ -2249,6 +2249,7 @@ export function createPragmaBundleService(options: {
               plan.sourceRefs.has(canonicalPragmaResourceRef(resource)),
             ),
       );
+      const display = bundleDisplayProjection(archive);
       return PragmaBundleImportInspectionSchema.parse({
         sourcePath,
         sourceName: basename(sourcePath),
@@ -2261,17 +2262,8 @@ export function createPragmaBundleService(options: {
         archiveBytes: archive.archiveBytes,
         unpackedBytes: archive.unpackedBytes,
         fileCount: archive.fileCount,
-        resources: archive.resources.length,
-        resourceDetails: archive.resources.map((resource) => ({
-          ref: canonicalPragmaResourceRef(resource),
-          kind: resource.kind,
-          name:
-            (resource.kind === "ContextStore"
-              ? archive.manifest.dependencies.contextStores.find(
-                  (dependency) => dependency.resourceRef === canonicalPragmaResourceRef(resource),
-                )?.name
-              : undefined) ?? resource.metadata.name,
-        })),
+        resources: display.resources.length,
+        resourceDetails: display.resources,
         runtimeModels: {
           ...bundleRuntimeModels(plan?.effective ?? archive.resources),
           ...bundleRuntimeModels(
@@ -2289,7 +2281,7 @@ export function createPragmaBundleService(options: {
             name: item.name,
             included: false,
           })),
-          ...archive.manifest.dependencies.capabilities.map((item) => ({
+          ...display.capabilities.map((item) => ({
             kind: "capability" as const,
             ref: item.resourceRef,
             name: item.name,
@@ -4029,6 +4021,59 @@ export function createPragmaBundleService(options: {
     },
   };
   return service;
+}
+
+/** Presentation only: never rewrite the verified archive or the installation graph. */
+function bundleDisplayProjection(archive: DesktopBundleArchive) {
+  const dependencies = archive.manifest.dependencies;
+  const capabilities = new Map(dependencies.capabilities.map((item) => [item.resourceRef, item]));
+  const retainedRefs = new Set<string>();
+  const seen = new Set<string>();
+  const resources = archive.resources.flatMap((resource) => {
+    const ref = canonicalPragmaResourceRef(resource);
+    const capability = capabilities.get(ref);
+    // A name or matching content alone is not proof of shared asset identity.
+    if (
+      resource.kind === "Capability" &&
+      capability?.logicalId !== undefined &&
+      capability.definitionFingerprint !== undefined
+    ) {
+      const key = stableStringify({
+        id: capability.logicalId,
+        revision: capability.sourceRevision,
+        definition: capability.definitionFingerprint,
+        asset: capability.assetFingerprint,
+        resource: {
+          ...resource,
+          metadata: Object.fromEntries(
+            Object.entries(resource.metadata).filter(
+              ([key]) => !["id", "name", "description", "tags"].includes(key),
+            ),
+          ),
+          spec: { ...resource.spec, binding: undefined },
+        },
+      });
+      if (seen.has(key)) return [];
+      seen.add(key);
+    }
+    retainedRefs.add(ref);
+    return [
+      {
+        ref,
+        kind: resource.kind,
+        name:
+          capability?.name ??
+          (resource.kind === "ContextStore"
+            ? dependencies.contextStores.find((item) => item.resourceRef === ref)?.name
+            : undefined) ??
+          resource.metadata.name,
+      },
+    ];
+  });
+  return {
+    resources,
+    capabilities: dependencies.capabilities.filter((item) => retainedRefs.has(item.resourceRef)),
+  };
 }
 
 interface DesktopBundleArchive {

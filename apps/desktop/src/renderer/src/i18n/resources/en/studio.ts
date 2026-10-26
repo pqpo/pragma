@@ -245,6 +245,7 @@ export const studio = {
     contents: "Contents and dependencies",
     loadingVersion: "Reading the selected version…",
     retryVersion: "Retry",
+    capabilityNameUnavailable: "Capability name unavailable",
     knowledgeBaseNameUnavailable: "Knowledge base name unavailable",
     resourceDetailsUnavailable:
       "Resource details are unavailable. Restart the app and reopen this item in the Market.",

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "pragma.asset-sync-state/v3",
+  "source": "[\"ssh://git@pragma.test/assets.git\",\"main\"]",
+  "repositoryInitialized": true,
+  "bases": {
+    "runtime-profile:runtime-profile:mwxac8be2zf72knf": "33df4332b7f34ee3bf7f7bd810ca809be3826f7203ff19c8ee79fb21ae5a363b"
+  },
+  "remoteItems": {
+    "runtime-profile:runtime-profile:mwxac8be2zf72knf": {
+      "kind": "runtime-profile",
+      "name": "Codex",
+      "fingerprint": "33df4332b7f34ee3bf7f7bd810ca809be3826f7203ff19c8ee79fb21ae5a363b"
+    }
+  },
+  "unavailableItems": {},
+  "conflicts": [],
+  "conflictMessages": {},
+  "restoreConflicts": [],
+  "syncedAt": "2026-10-14T02:55:38.776Z"
+}

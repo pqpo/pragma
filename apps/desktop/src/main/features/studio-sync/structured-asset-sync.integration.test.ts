@@ -8,6 +8,7 @@ import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import {
   canonicalPragmaResourceRef,
   PRAGMA_DSL_WRITE_API_VERSION,
+  PragmaForwardCompatibleResourceSchema,
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 import { execFile } from "node:child_process";
@@ -35,7 +36,8 @@ import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
 import { readSyncRepository, writeSyncRepository } from "./asset-sync-repository.ts";
 import { CoreAssetSyncItemSchema } from "../../../shared/contracts/index.ts";
 import { appendTransferredKnowledge } from "@pragma/local-host/deployment";
-import { fingerprint } from "../asset-transfer/asset-transfer-fingerprint.ts";
+import { migrateSyncDslItem } from "./migrations/dsl-fingerprints.ts";
+import { journalMigrationChain } from "./migrations/index.ts";
 
 const exec = promisify(execFile);
 const temporary: string[] = [];
@@ -217,7 +219,7 @@ function resources(storeId?: string): PragmaResource[] {
     kind: "RuntimeProfile",
     metadata: {
       id: "zdkgs0fde4xt00vr",
-      name: "Runtime",
+      name: "Writer Runtime",
       description: "Runtime",
       tags: ["desktop-managed"],
     },
@@ -341,6 +343,158 @@ async function addSkill(capabilities: CapabilityStore, root: string, arbitrarySc
 }
 
 describe("structured asset sync with real Git and domain stores", { timeout: 60_000 }, () => {
+  it.each(["unchanged", "local", "remote", "both", "local-delete", "remote-delete"] as const)(
+    "retains historical checkpoint semantics across DSL migration with %s changes",
+    async (change) => {
+      const git = await fixture();
+      const history = join(import.meta.dirname, "migrations/fixtures/v1");
+      const journal = JSON.parse(await readFile(join(history, "restore-journal.json"), "utf8"));
+      const legacy = CoreAssetSyncItemSchema.parse(journal.changes[0].remote);
+      const current = PragmaForwardCompatibleResourceSchema.parse(migrateSyncDslItem(legacy).data);
+      if (current.kind !== "RuntimeProfile") throw new Error("Expected historical RuntimeProfile");
+      const a = device(join(git.root, "a"));
+      await a.project.publish({ expectedRevision: 0, resources: [current] });
+      if (change === "local" || change === "both")
+        await a.project.upsert({
+          baseRevision: (await a.project.get()).revision,
+          resource: {
+            ...current,
+            spec: {
+              ...current.spec,
+              config: { model: "local-edit", runtimeId: "codex", providerId: "openai" },
+            },
+          },
+        });
+      if (change === "local-delete")
+        await a.project.apply({
+          baseRevision: (await a.project.get()).revision,
+          removals: [canonicalPragmaResourceRef(current)],
+          upserts: [],
+        });
+      const seed = join(git.root, "checkpoint-seed");
+      await mkdir(seed);
+      await exec("git", ["-C", seed, "init", "-b", "main"]);
+      await writeSyncRepository(seed, new Map([[legacy.key, migrateSyncDslItem(legacy)]]));
+      const path = join(seed, "pragma-sync/runtime-profiles", `${current.metadata.id}.pragma.yaml`);
+      const raw = legacy.data as { spec: { config: Record<string, unknown> } };
+      if (change === "remote" || change === "both") raw.spec.config.model = "remote-edit";
+      if (change === "remote-delete") await rm(path);
+      else await writeFile(path, formatPragmaYaml(raw));
+      await exec("git", ["-C", seed, "add", "."]);
+      await exec("git", ["-C", seed, "commit", "-m", "Historical checkpoint resource"]);
+      await exec("git", ["-C", seed, "push", git.bare, "main"]);
+      const owner = join(a.root, "state/asset-sync");
+      await mkdir(owner, { recursive: true });
+      for (const name of ["settings.json", "state.json"])
+        await writeFile(join(owner, name), await readFile(join(history, name)));
+      const result = await a.service.sync();
+      expect(result.status, result.error).toBe(change === "both" ? "conflict" : "ready");
+      const resources = (await a.project.get()).resources;
+      if (change.endsWith("delete")) expect(resources).toEqual([]);
+      else {
+        expect(resources).toHaveLength(1);
+        expect(resources[0]).toMatchObject({
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+          spec: {
+            config: {
+              model:
+                change === "remote"
+                  ? "remote-edit"
+                  : change === "local" || change === "both"
+                    ? "local-edit"
+                    : "test",
+            },
+          },
+        });
+      }
+      const repeated = await a.restart().sync();
+      expect(repeated.status, repeated.error).toBe(result.status);
+    },
+  );
+
+  it.each([false, true])(
+    "imports historical DSL from real Git and retries without duplicate publication after interruption=%s",
+    async (interrupted) => {
+      const git = await fixture();
+      const seed = join(git.root, "legacy-dsl-seed");
+      const path = "experts/v2vt1v01vzz6j24q.pragma.yaml";
+      const original = await readFile(
+        new URL(
+          "../../../../../../packages/interpreter/test/fixtures/compiler-v9-expert-permissions/experts/v2vt1v01vzz6j24q.pragma.yaml",
+          import.meta.url,
+        ),
+        "utf8",
+      );
+      const runtime = resources().find((resource) => resource.kind === "RuntimeProfile")!;
+      runtime.metadata.name = "Historical expert Runtime";
+      const historical = parsePragmaYaml(original) as { spec: Record<string, unknown> };
+      // The execution-snapshot fixture has no runtime; bind one for ordinary Project import.
+      const legacy = formatPragmaYaml({
+        ...historical,
+        spec: { ...historical.spec, runtime: { ref: canonicalPragmaResourceRef(runtime) } },
+      });
+      await mkdir(join(seed, "pragma-sync", "experts"), { recursive: true });
+      await exec("git", ["-C", seed, "init", "-b", "main"]);
+      await writeFile(
+        join(seed, "pragma-sync/sync.yaml"),
+        "schemaVersion: pragma.asset-sync-repository/v2\n",
+      );
+      await writeFile(join(seed, "pragma-sync", path), legacy);
+      await mkdir(join(seed, "pragma-sync/runtime-profiles"));
+      await writeFile(
+        join(seed, "pragma-sync/runtime-profiles/zdkgs0fde4xt00vr.pragma.yaml"),
+        formatPragmaYaml(runtime),
+      );
+      await exec("git", ["-C", seed, "add", "."]);
+      await exec("git", ["-C", seed, "commit", "-m", "Historical DSL writer output"]);
+      await exec("git", ["-C", seed, "push", git.bare, "main"]);
+      const historicalHead = await git.head();
+      const a = device(join(git.root, "a"), interrupted ? "project" : false);
+      const first = await a.service.configure(configuration);
+      expect(first.status, first.error).toBe(interrupted ? "error" : "ready");
+      const published = await a.project.get();
+      expect(published.resources).toHaveLength(2);
+      expect(published.resources).toEqual(
+        expect.arrayContaining([
+          { ...(parsePragmaYaml(legacy) as object), apiVersion: PRAGMA_DSL_WRITE_API_VERSION },
+          runtime,
+        ]),
+      );
+      if (interrupted) {
+        expect(await git.head()).toBe(historicalHead);
+        const journal = JSON.parse(
+          await readFile(join(a.root, "state/asset-sync/restore-journal.json"), "utf8"),
+        );
+        expect(JSON.stringify(journal)).toContain(PRAGMA_DSL_WRITE_API_VERSION);
+      }
+      const retry = await a.restart().sync();
+      expect(retry.status, retry.error).toBe("ready");
+      expect((await a.project.get()).revision).toBe(published.revision);
+      expect((await a.restart().sync()).status).toBe("ready");
+      expect((await a.project.get()).revision).toBe(published.revision);
+      expect(await git.head()).toBe(historicalHead);
+      // Reading alone is not an outgoing change. A subsequent local edit publishes current DSL.
+      await a.project.publish({
+        expectedRevision: published.revision,
+        resources: published.resources.map((resource) =>
+          resource.kind === "Expert"
+            ? { ...resource, spec: { ...resource.spec, instructions: "Edited after migration" } }
+            : resource,
+        ),
+      });
+      const outgoing = await a.service.sync();
+      expect(outgoing.status, outgoing.error).toBe("ready");
+      const check = join(git.root, "inspect-dsl-upgrade");
+      await exec("git", ["clone", git.bare, check]);
+      expect(await readFile(join(check, "pragma-sync", path), "utf8")).toContain(
+        `apiVersion: ${PRAGMA_DSL_WRITE_API_VERSION}`,
+      );
+      expect(
+        (await exec("git", ["-C", check, "show", `${historicalHead}:pragma-sync/${path}`])).stdout,
+      ).toBe(legacy);
+    },
+  );
+
   it.each(["knowledge", "skill"] as const)(
     "preserves an unreadable local %s authority instead of deleting its Git backup",
     async (kind) => {
@@ -540,7 +694,14 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       const seed = join(git.root, "historical-seed");
       await mkdir(seed);
       await exec("git", ["-C", seed, "init", "-b", "main"]);
-      await writeSyncRepository(seed, new Map([[item.key, item]]));
+      await writeSyncRepository(seed, new Map([[item.key, migrateSyncDslItem(item)]]));
+      const legacyPath = join(
+        seed,
+        "pragma-sync/runtime-profiles",
+        `${item.key.split(":").at(-1)}.pragma.yaml`,
+      );
+      await writeFile(legacyPath, formatPragmaYaml(item.data));
+      await exec("git", ["-C", seed, "add", "."]);
       await exec("git", ["-C", seed, "commit", "-m", "Historical repository"]);
       await exec("git", ["-C", seed, "push", git.bare, "main"]);
       const owner = join(a.root, "state/asset-sync");
@@ -561,7 +722,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       expect((await a.restart().sync()).status).toBe("ready");
       expect((await a.project.get()).revision).toBe(revision);
       const state = JSON.parse(await readFile(join(owner, "state.json"), "utf8"));
-      expect(state.schemaVersion).toBe("pragma.asset-sync-state/v2");
+      expect(state.schemaVersion).toBe("pragma.asset-sync-state/v3");
       expect(state).not.toHaveProperty("ignoredRemote");
       const settings = JSON.parse(await readFile(join(owner, "settings.json"), "utf8"));
       expect(settings).not.toHaveProperty("pushDeletions");
@@ -1048,6 +1209,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     const git = await fixture();
     const a = device(join(git.root, "a"));
     const original = resources();
+    // Edit instructions so this scenario does not also rename the derived RuntimeProfile.
     const knowledge = await addKnowledge(a.stores, "Independent docs");
     await a.project.publish({ expectedRevision: 0, resources: original });
     await a.service.configure(configuration);
@@ -1063,7 +1225,9 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     const expert = remoteHead.resources.find((resource) => resource.kind === "Expert")!;
     await b.project.apply({
       baseRevision: remoteHead.revision,
-      upserts: [{ ...expert, metadata: { ...expert.metadata, name: "Writer remote edit" } }],
+      upserts: [
+        { ...expert, spec: { ...expert.spec, instructions: "Remote edited instructions" } },
+      ],
     });
     await b.service.sync();
     const result = await a.service.sync();
@@ -1076,9 +1240,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     expect(result.items.find((item) => item.key === runtimeKey)).toMatchObject({
       status: "conflict",
     });
-    expect(result.items.find((item) => item.key === runtimeKey)?.message).toContain(
-      "Writer remote edit",
-    );
+    expect(result.items.find((item) => item.key === runtimeKey)?.message).toContain("Writer");
     const checkout = join(git.root, "inspect-partial-sync");
     await exec("git", ["clone", git.bare, checkout]);
     const items = await readSyncRepository(checkout, true);
@@ -1769,34 +1931,46 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
   });
   it("migrates an interrupted v2 Skill restore with an independent cached description", async () => {
     const git = await fixture();
-    const a = device(join(git.root, "a"));
-    const skill = await addSkill(a.capabilities, a.root);
-    await a.service.configure(configuration);
-    const b = device(join(git.root, "b"), "skill");
-    expect((await b.service.configure(configuration)).status).toBe("error");
-    const path = join(b.root, "state/asset-sync/restore-journal.json");
-    const journal = JSON.parse(await readFile(path, "utf8"));
-    journal.schemaVersion = "pragma.asset-sync-journal/v2";
-    const key = `skill:${skill.manifest.id}`;
-    const change = journal.changes.find((entry: { key: string }) => entry.key === key);
-    change.remote.data.description = "Legacy directory annotation";
-    change.remote.fingerprint = fingerprint(change.remote.data);
-    journal.incomingState.bases[key] = change.remote.fingerprint;
-    journal.incomingState.remoteItems[key].fingerprint = change.remote.fingerprint;
-    const legacy = JSON.stringify(journal);
+    const historical = join(import.meta.dirname, "migrations/fixtures/v2");
+    const legacy = await readFile(join(historical, "skill-restore-journal.json"), "utf8");
+    const journal = journalMigrationChain.upgrade(JSON.parse(legacy)).value;
+    const item = journal.changes[0]!.remote!;
+    const data = item.data as { files: { path: string; content: string; executable: boolean }[] };
+    const id = item.key.slice("skill:".length);
+    const b = device(join(git.root, "b"));
+    const payload = join(git.root, "published-skill");
+    for (const file of data.files) {
+      const target = join(payload, file.path);
+      await mkdir(join(target, ".."), { recursive: true });
+      await writeFile(target, Buffer.from(file.content, "base64"));
+      if (file.executable) await chmod(target, 0o700);
+    }
+    // The old operation stopped after publication. Revision equality must not republish it.
+    await b.capabilities.importSkill({ sourcePath: payload }, { id });
+    const seed = join(git.root, "legacy-skill-seed");
+    await mkdir(seed);
+    await exec("git", ["-C", seed, "init", "-b", "main"]);
+    await writeSyncRepository(seed, new Map([[item.key, item]]));
+    await exec("git", ["-C", seed, "commit", "-m", "Historical interrupted Skill restore"]);
+    await exec("git", ["-C", seed, "push", git.bare, "main"]);
+    const owner = join(b.root, "state/asset-sync");
+    await mkdir(owner, { recursive: true });
+    for (const name of ["settings.json", "state.json"])
+      await writeFile(join(owner, name), await readFile(join(historical, name)));
+    const path = join(owner, "restore-journal.json");
     await writeFile(path, legacy);
     const recovered = await b.restart().refresh();
     expect(recovered.status, recovered.error).toBe("ready");
-    const restored = await b.capabilities.get(skill.manifest.id);
+    const restored = await b.capabilities.get(id);
     expect(restored.manifest.latestRevision).toBe(1);
-    expect(restored.definition).toMatchObject({ description: "Audit code" });
+    expect(restored.definition).toMatchObject({ description: "Updated review" });
     await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
-    const backups = join(b.root, "state/asset-sync/migrations/backups");
+    const backups = join(owner, "migrations/backups");
     const names = await readdir(backups);
     const snapshots = await Promise.all(names.map((name) => readFile(join(backups, name), "utf8")));
     expect(snapshots).toContain(legacy);
     expect((await b.service.sync()).status).toBe("ready");
-    expect((await b.capabilities.get(skill.manifest.id)).manifest.latestRevision).toBe(1);
+    expect((await b.capabilities.get(id)).manifest.latestRevision).toBe(1);
   });
 
   it("replays an interrupted restore without creating duplicate assets or revisions", async () => {
@@ -1810,7 +1984,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     const first = await b.stores.getSnapshot(knowledge.id);
     expect(
       await readFile(join(b.root, "state", "asset-sync", "restore-journal.json"), "utf8"),
-    ).toContain("pragma.asset-sync-journal/v3");
+    ).toContain("pragma.asset-sync-journal/v4");
     const recovered = await b.restart().sync();
     expect(recovered.status, recovered.error).toBe("ready");
     expect((await b.stores.list()).length).toBe(1);

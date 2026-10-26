@@ -11,6 +11,21 @@ The marker `pragma-sync/sync.yaml` declares `pragma.asset-sync-repository/v2`. I
 inventory, timestamps or content hashes. Definitions use Interpreter YAML formatting and current
 resource schemas; stable IDs determine paths, so renaming an asset does not rename its files.
 
+Repository `schemaVersion` and embedded DSL `apiVersion` are independent compatibility boundaries.
+On repository read, each DSL file passes through Interpreter's registered adjacent migration chain
+before current-schema validation, path/identity checks, fingerprints and reconciliation. Resources
+from different supported DSL generations can coexist. The decoder does not mutate source files;
+ordinary outgoing publication writes the current DSL while Git retains the original commits.
+Future versions, missing migration paths, malformed historical fields and identity/path mismatches
+are rejected before publication. Repository v1-to-v2 Skill metadata migration does not upgrade DSL.
+
+The regression for the missed v5-to-v6 sync upgrade uses the unmodified compiler v9 Expert writer
+fixture, plus a compiler v5 DSL v3 fixture for chained migration. Repository decoder tests cover
+both repository marker generations and mixed DSL versions; real-Git integration covers first import,
+interruption after Project publication, journal replay and idempotent retries. Both test files belong
+to the existing required business gate. Future DSL upgrades must keep these ingress tests passing;
+testing the Interpreter migration alone does not establish sync compatibility.
+
 ```text
 pragma-sync/
   sync.yaml
@@ -66,12 +81,20 @@ profile configuration schema. Missing runtimes, models, plugins or authenticatio
 provider keys, execution state, historical revisions and plugin packages are excluded.
 
 Configuration and private state live in `~/.pragma/state/asset-sync/settings.json` and `state.json`,
-using `pragma.asset-sync-settings/v2` and `pragma.asset-sync-state/v2`. A file lock serializes sync.
+using `pragma.asset-sync-settings/v2` and `pragma.asset-sync-state/v3`. A file lock serializes sync.
 `restore-journal.json` stores target payloads, expected semantic versions, domain revision numbers and incoming baselines
-under `pragma.asset-sync-journal/v3`. An adjacent v2-to-v3 journal migration normalizes stored Skill payloads and rewrites their expected
+under `pragma.asset-sync-journal/v4`. An adjacent v2-to-v3 journal migration normalizes stored Skill payloads and rewrites their expected
 fingerprints and incoming baselines together, preserving domain revision expectations. Owner-local
 atomic migration backs up old v2 bytes and replays under the existing lock; stale migration journals
-cannot overwrite newer owner documents. Settings and checkpoint schemas remain v2.
+cannot overwrite newer owner documents. The journal v3-to-v4 migration upgrades embedded DSL
+through Interpreter and rewrites matching expectations, baselines and summary hashes together,
+preserving revision expectations. State v2-to-v3 retains opaque historical checkpoint hashes;
+reconciliation and overview normalize them only when an actual resource proves an equivalent
+current fingerprint. Historical candidates use Interpreter's declared upgradeable DSL generations.
+Each candidate must match a stored hash, pass the authoritative forward migration and reproduce the current content hash before its
+historical hash can be recognized. Both local and remote candidates participate, so one-sided
+edits and deletions retain their original meaning. Unproven baselines and genuine competing
+changes remain conflicts. Neither upgrade clears baselines nor scans other owners. Settings remain v2.
 On retry, restore completes before reading a new remote head;
 already identical publications are skipped. Knowledge metadata is canonicalized using domain
 schemas; implicit parent directories are included before hashing. Expert plugin configuration and

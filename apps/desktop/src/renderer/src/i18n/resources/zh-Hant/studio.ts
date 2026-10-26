@@ -233,6 +233,7 @@ export const studio = {
     contents: "內容與依賴",
     loadingVersion: "正在讀取所選版本…",
     retryVersion: "重試",
+    capabilityNameUnavailable: "能力名稱無法使用",
     knowledgeBaseNameUnavailable: "知識庫名稱無法使用",
     resourceDetailsUnavailable: "資源明細暫不可用，請重新啟動應用程式後重新開啟市場。",
     resourceKinds: {

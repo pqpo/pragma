@@ -28,6 +28,7 @@ Pragma 是跨 Harness 的多专家 Agent 编排平台，当前入口为 Desktop 
 
 - 改变既有合法数据语义或拒绝范围时，同一改动必须交付版本、相邻迁移、历史 Schema/真实 writer fixture 和恢复测试；禁止只改 Schema 或放行旧版本号。
 - 业务 parser 只读当前 Schema。旧数据通过静态迁移链升级；未来版本、损坏数据或缺少迁移链必须明确拒绝，保留原数据。
+- DSL 升级必须逐项核对 Git 同步、Bundle、Revision、草稿和恢复入口，并用真实历史 writer fixture 经过实际入口回归；仓库格式迁移不能替代内嵌 DSL 迁移，详见[持久化与升级治理](docs/conventions/persistence-and-upgrades.md)。
 - 升级在首次访问最小 owner 时、业务读取前执行。使用锁、备份、稳定 journal、原子替换与重放恢复；不得启动扫描全部 owner。
 - 实验协议无迁移 cutover 必须有维护者明确授权和 ADR，不能自行推断“没有用户”。删除支持中的升级链同样需要 ADR 和离线恢复方案。
 - workspace 只放任务输入、仓库与产物。权威数据在 `data/`，恢复状态在 `state/`，可重建内容在 `cache/`；路径统一通过 `PragmaPaths`。

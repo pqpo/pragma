@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "pragma.asset-sync-journal/v4",
+  "source": "[\"ssh://git@pragma.test/assets.git\",\"main\"]",
+  "changes": [
+    {
+      "key": "runtime-profile:runtime-profile:mwxac8be2zf72knf",
+      "remote": {
+        "key": "runtime-profile:runtime-profile:mwxac8be2zf72knf",
+        "kind": "runtime-profile",
+        "name": "Codex",
+        "fingerprint": "921158d3e4dc45fb79924cbfa88ed23310acdd06b108c0d44dd4c929dc959bc8",
+        "data": {
+          "apiVersion": "pragma/v6",
+          "kind": "RuntimeProfile",
+          "metadata": {
+            "id": "mwxac8be2zf72knf",
+            "name": "Codex",
+            "description": "Runtime",
+            "tags": []
+          },
+          "spec": {
+            "adapter": "pragma.runtime.profile@v1",
+            "config": {
+              "runtimeId": "codex",
+              "providerId": "openai",
+              "model": "test"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "expected": {
+    "runtime-profile:runtime-profile:mwxac8be2zf72knf": null
+  },
+  "incomingState": {
+    "schemaVersion": "pragma.asset-sync-state/v3",
+    "source": "[\"ssh://git@pragma.test/assets.git\",\"main\"]",
+    "repositoryInitialized": true,
+    "bases": {
+      "runtime-profile:runtime-profile:mwxac8be2zf72knf": "921158d3e4dc45fb79924cbfa88ed23310acdd06b108c0d44dd4c929dc959bc8"
+    },
+    "remoteItems": {
+      "runtime-profile:runtime-profile:mwxac8be2zf72knf": {
+        "kind": "runtime-profile",
+        "name": "Codex",
+        "fingerprint": "921158d3e4dc45fb79924cbfa88ed23310acdd06b108c0d44dd4c929dc959bc8"
+      }
+    },
+    "unavailableItems": {},
+    "conflicts": [],
+    "conflictMessages": {},
+    "restoreConflicts": []
+  }
+}

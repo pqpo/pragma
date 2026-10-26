@@ -20,6 +20,7 @@ import {
   resolvePragmaAvatarId,
   skillBundleContentHashChunks,
   serializeSkillBundleFileManifest,
+  serializeSkillBundleDefinition,
   type SkillBundleFile,
 } from "@pragma/shared";
 import {
@@ -78,6 +79,136 @@ afterEach(async () => {
 });
 
 describe("PragmaBundleService", { timeout: 30_000 }, () => {
+  it.each([
+    ...(["same", "identity", "revision", "configuration", "definition", "missing"] as const).map(
+      (difference) => ({ difference, codec: "v2" as const }),
+    ),
+    ...(["v1", "v3", "skill"] as const).flatMap((codec) =>
+      (["same", "identity", "configuration", "definition"] as const).map((difference) => ({
+        difference,
+        codec,
+      })),
+    ),
+  ])(
+    "projects Skill names and aliases without changing the archive ($codec, $difference)",
+    async ({ difference, codec }) => {
+      const fixture = await createFixture(`legacy-skill-${difference}`);
+      const first = portableCapability();
+      first.metadata.name = "Capability 009405fc-3ade-4df2-8e4b-eccab29e78c4";
+      const second = structuredClone(first);
+      second.metadata.id = "2222222222222222";
+      second.metadata.name = "Capability 15ce47d6-217c-44b1-a830-61b086e8c61a";
+      if (difference === "configuration") second.spec.config = { key: "different-configuration" };
+      const owner = expert("Uses two historical aliases");
+      owner.spec.capabilities = [first, second].map((resource) => ({
+        ref: canonicalPragmaResourceRef(resource),
+        kind: "skill",
+      }));
+      const entry = join(fixture.root, "historical.yaml");
+      await writeFile(
+        entry,
+        stringifyYaml({
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+          kind: "Bundle",
+          resources: [owner, runtime("codex"), first, second],
+        }),
+      );
+      const project = await loadPragmaProject(entry);
+      const path = join(fixture.root, "historical.pragma");
+      try {
+        const exported = await project.exportBundle({
+          roots: [canonicalPragmaResourceRef(owner)],
+          host: {
+            exportPayload: async ({ requirement }) => {
+              if (requirement.kind !== "binding" || difference === "missing") return undefined;
+              const isSecond = requirement.ownerRef === canonicalPragmaResourceRef(second);
+              const contents = strToU8(
+                difference === "definition" && isSecond ? "# Changed Skill\n" : "# Skill\n",
+              );
+              const definition = {
+                kind: "skill" as const,
+                name: "Actual Skill",
+                description: "Historical Skill",
+                entryPath: "SKILL.md" as const,
+                contentHash: testSha256(
+                  skillBundleContentHashChunks([{ path: "SKILL.md", contents }]),
+                ),
+              };
+              const assetKey =
+                difference === "identity" && isSecond ? "2222222222222222" : "0123456789abcdef";
+              const files = [
+                {
+                  path: "SKILL.md",
+                  sizeBytes: contents.length,
+                  sha256: testSha256(contents),
+                  executable: false,
+                },
+              ];
+              const descriptor =
+                codec === "v1"
+                  ? definition
+                  : codec === "v2"
+                    ? {
+                        schemaVersion: "pragma.desktop.capability-descriptor/v2",
+                        logicalId: assetKey,
+                        revision: difference === "revision" && isSecond ? 2 : 1,
+                        definition,
+                      }
+                    : codec === "v3"
+                      ? {
+                          schemaVersion: "pragma.desktop.capability-descriptor/v3",
+                          assetKey,
+                          definition,
+                          fingerprint: testSha256(testStableStringify(definition)),
+                        }
+                      : {
+                          schemaVersion: "pragma.skill-bundle-payload/v1",
+                          assetKey,
+                          name: definition.name,
+                          description: definition.description,
+                          entryPath: definition.entryPath,
+                          contentHash: definition.contentHash,
+                          filesFingerprint: testSha256(serializeSkillBundleFileManifest(files)),
+                          fingerprint: testSha256(serializeSkillBundleDefinition(definition)),
+                          files,
+                        };
+              return {
+                codec: codec === "skill" ? "pragma.skill@v1" : `pragma.desktop.capability@${codec}`,
+                files: new Map([
+                  ["descriptor.json", strToU8(JSON.stringify(descriptor))],
+                  ...(codec === "skill" ? [["files/SKILL.md", contents] as const] : []),
+                ]),
+              };
+            },
+          },
+        });
+        await writeFile(path, exported.bytes);
+      } finally {
+        await project.dispose();
+      }
+      const before = await readFile(path);
+      const inspection = await fixture.service.inspect(path);
+      const count = difference === "same" && codec !== "v1" ? 1 : 2;
+      const skills = inspection.resourceDetails!.filter(
+        (resource) => resource.kind === "Capability",
+      );
+      expect(skills).toHaveLength(count);
+      expect(inspection.dependencies.filter((item) => item.kind === "capability")).toHaveLength(
+        count,
+      );
+      expect(inspection.resources).toBe(inspection.resourceDetails!.length);
+      expect(skills.map((resource) => resource.name).toSorted()).toEqual(
+        difference === "missing"
+          ? [first.metadata.name, second.metadata.name].toSorted()
+          : Array(count).fill("Actual Skill"),
+      );
+      expect(await readFile(path)).toEqual(before);
+      expect(inspection.bundleFingerprint).toBe(
+        (await decodePragmaBundle({ kind: "file", path })).manifest.bundleFingerprint,
+      );
+    },
+  );
+
   it.each(
     [
       "Release handbook",

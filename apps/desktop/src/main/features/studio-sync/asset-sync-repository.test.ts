@@ -4,7 +4,7 @@ import { SkillDataSchema } from "@pragma/local-host/deployment";
 import { PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID } from "@pragma/built-in-agents";
 import { describe, expect, it } from "vitest";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import { formatPragmaYaml } from "@pragma/interpreter";
+import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import type { CoreAssetSyncItem } from "../../../shared/contracts/index.ts";
 import {
   encodeSyncRepository,
@@ -69,6 +69,102 @@ const encode = (...items: CoreAssetSyncItem[]) =>
   encodeSyncRepository(new Map(items.map((entry) => [entry.key, entry])));
 
 describe("structured sync repository", () => {
+  it.each(["pragma.asset-sync-repository/v1", "pragma.asset-sync-repository/v2"])(
+    "upgrades historical DSL independently of repository format %s without changing source bytes",
+    (schemaVersion) => {
+      // Unmodified historical writer output, also used by Interpreter's migration tests.
+      const legacy = readFileSync(
+        new URL(
+          "../../../../../../packages/interpreter/test/fixtures/compiler-v9-expert-permissions/experts/v2vt1v01vzz6j24q.pragma.yaml",
+          import.meta.url,
+        ),
+        "utf8",
+      );
+      const chained = readFileSync(
+        new URL(
+          "../../../../../../packages/interpreter/test/fixtures/compiler-v5-avatar/pragma.yaml",
+          import.meta.url,
+        ),
+        "utf8",
+      );
+      const files = new Map([
+        ["sync.yaml", file(formatPragmaYaml({ schemaVersion }))],
+        ["experts/v2vt1v01vzz6j24q.pragma.yaml", file(legacy)],
+        ["experts/3sfd30h5017wd17d.pragma.yaml", file(chained)],
+      ]);
+      const original = new Map(
+        [...files].map(([path, entry]) => [path, { ...entry, bytes: Buffer.from(entry.bytes) }]),
+      );
+      const restored = decodeSyncRepository(files);
+      const expert = restored.get("expert:expert:v2vt1v01vzz6j24q")!;
+      expect(expert.data).toEqual({
+        ...(parsePragmaYaml(legacy) as object),
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+      });
+      expect(restored.get("expert:expert:3sfd30h5017wd17d")?.data).toMatchObject({
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+        metadata: { avatarId: "pragma.avatar.expert.default" },
+      });
+      expect(expert.fingerprint).toBe(fingerprint(expert.data));
+      expect(files).toEqual(original);
+      const current = encodeSyncRepository(restored);
+      expect(current.get("experts/v2vt1v01vzz6j24q.pragma.yaml")?.bytes.toString()).toContain(
+        `apiVersion: ${PRAGMA_DSL_WRITE_API_VERSION}`,
+      );
+      expect(decodeSyncRepository(current)).toEqual(restored);
+      // Manual Git edits can update one resource while leaving another on its old version.
+      current.set("experts/v2vt1v01vzz6j24q.pragma.yaml", file(legacy));
+      expect(decodeSyncRepository(current)).toEqual(restored);
+    },
+  );
+
+  it.each([
+    ["future", "pragma/v999", "unsupported_api_version"],
+    ["missing migration", "pragma/v1", "missing_migration_step"],
+    ["malformed version", "invalid", "unsupported_api_version"],
+  ])("rejects %s DSL without changing source files", (_label, apiVersion, code) => {
+    const files = new Map([
+      ["sync.yaml", file("schemaVersion: pragma.asset-sync-repository/v2\n")],
+      [
+        "experts/v2vt1v01vzz6j24q.pragma.yaml",
+        file(formatPragmaYaml({ apiVersion, kind: "Expert", metadata: {} })),
+      ],
+    ]);
+    const original = new Map(
+      [...files].map(([path, entry]) => [path, { ...entry, bytes: Buffer.from(entry.bytes) }]),
+    );
+    expect(() => decodeSyncRepository(files)).toThrowError(expect.objectContaining({ code }));
+    expect(files).toEqual(original);
+  });
+
+  it("rejects invalid historical known fields and Bundle documents in resource paths", () => {
+    const legacy = readFileSync(
+      new URL(
+        "../../../../../../packages/interpreter/test/fixtures/compiler-v9-expert-permissions/experts/v2vt1v01vzz6j24q.pragma.yaml",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const resource = parsePragmaYaml(legacy) as { spec: { instructions: unknown } };
+    resource.spec.instructions = null;
+    const files = new Map([
+      ["sync.yaml", file("schemaVersion: pragma.asset-sync-repository/v2\n")],
+      ["experts/v2vt1v01vzz6j24q.pragma.yaml", file(formatPragmaYaml(resource))],
+    ]);
+    expect(() => decodeSyncRepository(files)).toThrow();
+    files.set(
+      "experts/v2vt1v01vzz6j24q.pragma.yaml",
+      file(
+        formatPragmaYaml({
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+          kind: "Bundle",
+          resources: [],
+        }),
+      ),
+    );
+    expect(() => decodeSyncRepository(files)).toThrow("Unsupported sync resource kind");
+  });
+
   it("writes readable YAML and original files with stable, binary-safe round trips", () => {
     const entries = [knowledge(), skill()];
     const files = encode(...entries);

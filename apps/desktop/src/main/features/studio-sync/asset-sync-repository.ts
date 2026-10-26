@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import {
   formatPragmaYaml,
   parsePragmaYaml,
+  migratePragmaDslProjectToCurrent,
   DEFAULT_PRAGMA_BUNDLE_LIMITS,
 } from "@pragma/interpreter";
 import {
@@ -326,7 +327,16 @@ export function decodeSyncRepository(
   for (const [path, file] of files) {
     const directory = path.split("/")[0]!;
     if (resourceDirectories.has(directory)) {
-      const resource = PragmaForwardCompatibleResourceSchema.parse(yaml(file.bytes));
+      const source = text(file.bytes);
+      const { kind } = z.object({ kind: z.string() }).parse(parsePragmaYaml(source));
+      if (!(kind in ResourceKinds)) throw new Error(`Unsupported sync resource kind: ${path}`);
+      // Repository format and embedded DSL versions evolve independently. Upgrade each
+      // resource before identity checks and fingerprints, allowing mixed DSL generations.
+      const migrated = migratePragmaDslProjectToCurrent({
+        projectId: SYNC_DIRECTORY,
+        files: new Map([[path, source]]),
+      });
+      const resource = PragmaForwardCompatibleResourceSchema.parse(migrated.resources[0]);
       if (
         !(resource.kind in ResourceKinds) ||
         path !== `${pragmaResourceDirectory(resource)}/${pragmaResourceFileName(resource)}`

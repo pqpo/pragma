@@ -266,6 +266,42 @@ describe("SquareDirectoryFragment", () => {
     },
   );
 
+  it.each([
+    ["Capability 009405fc-3ade-4df2-8e4b-eccab29e78c4", "Capability name unavailable"],
+    ["capability:0123456789abcdef", "Capability name unavailable"],
+    ["Actual Skill", "Actual Skill"],
+    ["0123456789abcdef", "0123456789abcdef"],
+  ])("renders capability names consistently in resources and summaries (%s)", (name, expected) => {
+    const inspection: PragmaBundleImportInspection = {
+      sourcePath: "/tmp/skill.pragma",
+      sourceName: "skill.pragma",
+      bundleFingerprint: "a".repeat(64),
+      projectFingerprint: "b".repeat(64),
+      projectRevision: 1,
+      root: { ref: "expert:1xddvess309a6gme", kind: "Expert", name: "Writer" },
+      roots: [],
+      createdAt: "2026-10-20T00:00:00.000Z",
+      resources: 1,
+      resourceDetails: [{ ref: "capability:0123456789abcdef", kind: "Capability", name }],
+      dependencies: [
+        { kind: "capability", ref: "capability:0123456789abcdef", name, included: true },
+      ],
+      conflicts: [],
+      assetConflicts: [],
+      requirements: [],
+      readiness: [],
+      sameContentInstallationIds: [],
+    };
+    const details = renderToStaticMarkup(<SquareBundleResourceList inspection={inspection} />);
+    const summary = renderToStaticMarkup(<SquareBundleContents inspection={inspection} />);
+    for (const html of [details, summary]) {
+      expect(html).toContain(expected);
+      if (name !== expected) expect(html).not.toContain(name);
+    }
+    expect(summary).toContain("1 resources included");
+    expect(summary).toContain("Dependencies: 1");
+  });
+
   it("downloads and inspects the selected version with the downloaded root", async () => {
     const item = squareItem("flow", "Release flow", SOURCE_B, "general", "2026-09-17");
     const downloadedRootRef = "flow:abcdef1234567890";

@@ -637,6 +637,14 @@ function squareKnowledgeName(name: string, unavailable: string): string {
     : name;
 }
 
+function squareCapabilityName(name: string, unavailable: string): string {
+  return /^(?:Capability\s+|capability:)(?:[0-9a-hjkmnp-tv-z]{16}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu.test(
+    name,
+  )
+    ? unavailable
+    : name;
+}
+
 export function SquareBundleContents(props: { readonly inspection: PragmaBundleImportInspection }) {
   const { t } = useTranslation("studio");
   const { inspection } = props;
@@ -665,7 +673,9 @@ export function SquareBundleContents(props: { readonly inspection: PragmaBundleI
         .map((root) =>
           root.kind === "ContextStore"
             ? squareKnowledgeName(root.name, t("square.knowledgeBaseNameUnavailable"))
-            : root.name,
+            : root.kind === "Capability"
+              ? squareCapabilityName(root.name, t("square.capabilityNameUnavailable"))
+              : root.name,
         )
         .join(" · "),
       icon: <Package size={18} />,
@@ -682,7 +692,9 @@ export function SquareBundleContents(props: { readonly inspection: PragmaBundleI
               .map((dependency) =>
                 dependency.kind === "context-store"
                   ? squareKnowledgeName(dependency.name, t("square.knowledgeBaseNameUnavailable"))
-                  : dependency.name,
+                  : dependency.kind === "capability"
+                    ? squareCapabilityName(dependency.name, t("square.capabilityNameUnavailable"))
+                    : dependency.name,
               )
               .join(" · "),
       icon: <Stack size={18} />,
@@ -765,7 +777,12 @@ export function SquareBundleContents(props: { readonly inspection: PragmaBundleI
                             dependency.name,
                             t("square.knowledgeBaseNameUnavailable"),
                           )
-                        : dependency.name}
+                        : dependency.kind === "capability"
+                          ? squareCapabilityName(
+                              dependency.name,
+                              t("square.capabilityNameUnavailable"),
+                            )
+                          : dependency.name}
                     </span>
                     <small>
                       {t(`square.dependencyKinds.${dependency.kind}`)} ·{" "}
@@ -820,7 +837,9 @@ export function SquareBundleResourceList(props: {
           <span>
             {resource.kind === "ContextStore"
               ? squareKnowledgeName(resource.name, t("square.knowledgeBaseNameUnavailable"))
-              : resource.name}
+              : resource.kind === "Capability"
+                ? squareCapabilityName(resource.name, t("square.capabilityNameUnavailable"))
+                : resource.name}
           </span>
           <small>{t(`square.resourceKinds.${resource.kind}`)}</small>
           {props.inspection.runtimeModels?.[resource.ref]?.consumers.map((consumer, index) => (

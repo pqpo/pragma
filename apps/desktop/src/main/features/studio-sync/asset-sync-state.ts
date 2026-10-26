@@ -2,7 +2,7 @@ import { z } from "zod";
 import { CoreAssetSyncItemSchema } from "../../../shared/contracts/index.ts";
 export const StateSchema = z
   .object({
-    schemaVersion: z.literal("pragma.asset-sync-state/v2"),
+    schemaVersion: z.literal("pragma.asset-sync-state/v3"),
     source: z.string(),
     repositoryInitialized: z.boolean(),
     bases: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/u)),
@@ -34,7 +34,7 @@ const ChangeSchema = z
   .strict();
 export const JournalSchema = z
   .object({
-    schemaVersion: z.literal("pragma.asset-sync-journal/v3"),
+    schemaVersion: z.literal("pragma.asset-sync-journal/v4"),
     source: z.string(),
     changes: z.array(ChangeSchema),
     expected: z.record(z.string(), z.string().nullable()),

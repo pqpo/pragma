@@ -61,6 +61,7 @@ import type { WorkflowLayoutStore } from "@pragma/local-host/deployment";
 
 import { StateSchema, JournalSchema, type SyncState } from "./asset-sync-state.ts";
 import { upgradeAssetSyncOwner, readCurrentAssetSyncOwner } from "./asset-sync-upgrade.ts";
+import { upgradeSyncBaselines } from "./migrations/dsl-fingerprints.ts";
 type ItemMap = Map<string, CoreAssetSyncItem>;
 export interface CoreAssetSyncService {
   overview(): Promise<CoreAssetSyncOverview>;
@@ -124,7 +125,7 @@ export function createCoreAssetSyncService(options: {
       if (!isMissing(error)) throw error;
     }
     return {
-      schemaVersion: "pragma.asset-sync-state/v2",
+      schemaVersion: "pragma.asset-sync-state/v3",
       source,
       repositoryInitialized: false,
       bases: {},
@@ -277,8 +278,9 @@ export function createCoreAssetSyncService(options: {
     if (config === undefined) {
       return { schemaVersion: "pragma.asset-sync-overview/v2", status: "unconfigured", items: [] };
     }
-    const current = state ?? (await readState(sourceKey(config)));
+    const stored = state ?? (await readState(sourceKey(config)));
     const { items: local, nameResolutionIssues } = collected ?? (await collect());
+    const current = upgradeSyncBaselines(stored, [...local.values(), ...(remote?.values() ?? [])]);
     const missing = await readiness(local);
     const knownItems = { ...current.unavailableItems, ...current.remoteItems };
     const keys = new Set([
@@ -470,11 +472,12 @@ export function createCoreAssetSyncService(options: {
         await recoverImport(sourceKey(config));
         for (let attempt = 0; attempt < 3; attempt += 1) {
           const source = sourceKey(config);
-          const state = await readState(source);
+          let state = await readState(source);
           const checkout = await checkoutRepository(config);
           try {
             const remote = await readSyncRepository(checkout.root, state.repositoryInitialized);
             const { items: local, revisions, nameResolutionIssues } = await collect();
+            state = upgradeSyncBaselines(state, [...local.values(), ...remote.values()]);
             const knownItems = { ...state.unavailableItems, ...state.remoteItems };
             const nextRemote = new Map(remote);
             const changes: {
@@ -915,7 +918,7 @@ export function createCoreAssetSyncService(options: {
               await writeAtomic(
                 journalPath,
                 JournalSchema.parse({
-                  schemaVersion: "pragma.asset-sync-journal/v3",
+                  schemaVersion: "pragma.asset-sync-journal/v4",
                   source,
                   changes: prepared,
                   expected: Object.fromEntries(
