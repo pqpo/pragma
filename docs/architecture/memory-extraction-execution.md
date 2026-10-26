@@ -170,6 +170,26 @@ Cancelled executions never automatically replay, including when Runtime diagnost
 retryable. Runtime-provided non-retryable failures and configuration/capacity failures still require inspection
 or a configuration change rather than repeatedly executing an unchanged request.
 
+An observation timeout (`memory_curator_timeout`, including historical
+`memory_curator_result_unavailable` records whose message is exactly that timeout) returns a
+conversation delivery to the waiting queue. Its persisted, admitted shared Session must still
+identify the original Mission; missing ownership proof never authorizes a fresh model call.
+After five seconds, the scheduler reads that same Mission once and returns still-running work to
+the queue, without re-entering the ten-minute terminal wait. This read does not require the current
+Runtime configuration or a newly published project. It observes the Mission without incrementing delivery
+attempts, resetting continuation budgets or reserving a continuation while the original turn is
+running. The original tool binding remains usable between observations. Late receipts settle
+locally and terminal reconciliation archives and releases the retained binding. A successful turn
+with missing receipts may continue only its unfinished types in the original Session under the
+existing three-continuation limit. Cancellation and nonretryable terminal failures stop recovery.
+Historical attention tasks with this exact timeout and ownership proof are checked through normal
+claims; this recovery does not bulk rewrite data or reset exhausted model budgets. The task board
+shows automatic recovery and the next observation time. Retirement and confirmed deletion revoke
+retained bindings. Reconciliation checks durable Session ownership, isolates failures per Mission,
+and participates in the coordinator’s shared in-flight promise. Startup orphan recovery can also
+archive late durable receipts without another model call. Standalone legacy per-type executions
+retain their nonretryable timeout handling because they lack shared-session observation ownership.
+
 A completed Curator execution is read at most four times, with five seconds between failures.
 Transient transcript failures, missing output and diagnostic-read failures retry the same Mission;
 they never rerun a successful model, even if the local exception carries `retryable=true`. Successful reads are reused during archiving, so archive

@@ -1,3 +1,8 @@
+import {
+  createConversationMemoryExtractionCoordinator,
+  createEpisodicMemoryModule,
+  createSemanticMemoryModule,
+} from "../src/index.ts";
 import { createLegacyExtractionSessionStore as createMemoryExtractionSessionStore } from "./support/legacy-extraction.ts";
 import { copyFile, mkdtemp, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -5,9 +10,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { PragmaPaths } from "@pragma/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  ConversationExtractionInputSchema,
-} from "../src/pipeline/extraction-session.ts";
+import { ConversationExtractionInputSchema } from "../src/pipeline/extraction-session.ts";
 import { hasMemoryExtractionReceipt } from "../src/pipeline/extraction-session/store.ts";
 import { extractionInput, factArguments, provenance } from "./support/extraction.ts";
 
@@ -361,4 +364,45 @@ describe("historical Curator Session upgrade", () => {
       "version_unsupported",
     );
   });
+});
+
+it("keeps concurrent scheduler callers joined until result reconciliation finishes", async () => {
+  const pragmaHome = await home();
+  const episodic = await createEpisodicMemoryModule({ pragmaHome });
+  const semantic = await createSemanticMemoryModule({ pragmaHome });
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const reconcile = vi.fn(async () => {
+    enter();
+    await gate;
+  });
+  try {
+    const coordinator = createConversationMemoryExtractionCoordinator({
+      pragmaHome,
+      episodic,
+      semantic,
+    });
+    coordinator.setExtractor({ extract: vi.fn(), reconcile });
+    const first = coordinator.runOnce();
+    await entered;
+    let joinedFinished = false;
+    const joined = coordinator.runOnce().then(() => {
+      joinedFinished = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(joinedFinished).toBe(false);
+    release();
+    await Promise.all([first, joined]);
+    expect(reconcile).toHaveBeenCalledOnce();
+  } finally {
+    release();
+    episodic.close();
+    semantic.close();
+  }
 });

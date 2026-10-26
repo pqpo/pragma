@@ -112,7 +112,14 @@ export function createDesktopMemoryCurator(options: {
   });
   const activeRuns = new Map<string, DesktopMemoryExtractionRun>();
   const activeSessions = new Map<string, MemoryExtractionSession>();
+  const awaitingObservation = new Set<string>();
   const budgetStops = new Set<string>();
+  const releaseRunBinding = (missionId: string): void => {
+    awaitingObservation.delete(missionId);
+    activeRuns.delete(missionId);
+    activeSessions.delete(missionId);
+    budgetStops.delete(missionId);
+  };
   const runChatListeners = new Set<(update: DesktopMemoryExtractionRunChatUpdate) => void>();
   options.application.subscribeChat(({ update }) => {
     const run = activeRuns.get(update.missionId);
@@ -318,7 +325,10 @@ export function createDesktopMemoryCurator(options: {
           const savedMission =
             persisted.missionId === undefined
               ? undefined
-              : await options.missions.get(persisted.missionId);
+              : await retryCuratorResultOperation(
+                  () => options.missions.get(persisted.missionId!),
+                  input.signal,
+                );
           const profile =
             savedMission === undefined || persisted.provenance === undefined
               ? input.profile
@@ -337,11 +347,10 @@ export function createDesktopMemoryCurator(options: {
                     modelId: savedMission.modelOverride.modelId,
                     thinkingLevel: savedMission.modelOverride.thinkingLevel,
                   };
-          const runtime = await resolveRuntime(
-            profile,
-            options.runtimes,
-            persisted.provenance?.runtimeId,
-          );
+          const runtime =
+            input.resumeObservation && persisted.provenance !== undefined
+              ? { runtimeId: persisted.provenance.runtimeId, modelSelection: undefined }
+              : await resolveRuntime(profile, options.runtimes, persisted.provenance?.runtimeId);
           if (persisted.provenance === undefined)
             await input.session.setProvenance({
               curatorRef: MEMORY_CURATOR_REF,
@@ -363,14 +372,17 @@ export function createDesktopMemoryCurator(options: {
             runArchive,
             activeRuns,
             activeSessions,
+            awaitingObservation,
             session: input.session,
+            resumeObservation: input.resumeObservation,
             onAdmission() {
               admitted = true;
               input.onAdmission?.();
             },
           });
         } catch (error) {
-          if (!admitted && error instanceof Error) Object.assign(error, { preAdmission: true });
+          if (!admitted && !input.resumeObservation && error instanceof Error)
+            Object.assign(error, { preAdmission: true });
           throw error;
         } finally {
           for (const id of budgetStops) if (!activeRuns.has(id)) budgetStops.delete(id);
@@ -391,6 +403,7 @@ export function createDesktopMemoryCurator(options: {
           mission = await options.missions.get(entry.missionId);
         } catch (error) {
           if (error instanceof MissionStoreError && error.code === "mission_not_found") {
+            releaseRunBinding(entry.missionId);
             await unregisterCuratorMission(options.pragmaHome, entry.missionId);
             continue;
           }
@@ -451,6 +464,7 @@ export function createDesktopMemoryCurator(options: {
           }))
         )
           throw new Error("memory_curator_retirement_unconfirmed");
+        releaseRunBinding(entry.missionId);
         await unregisterCuratorMission(options.pragmaHome, entry.missionId);
       }
     },
@@ -497,6 +511,7 @@ export function createDesktopMemoryCurator(options: {
           mission = await options.missions.get(entry.missionId);
         } catch (error) {
           if (error instanceof MissionStoreError && error.code === "mission_not_found") {
+            releaseRunBinding(entry.missionId);
             await unregisterCuratorMission(options.pragmaHome, entry.missionId);
             continue;
           }
@@ -523,6 +538,34 @@ export function createDesktopMemoryCurator(options: {
         )
           .flat()
           .find((run) => run.missionId === entry.missionId);
+        if (terminal && archived?.module === "conversation") {
+          const session = await createMemoryExtractionSessionStore(options).forMission(
+            entry.missionId,
+          );
+          if (session !== undefined && (await session.completed())) {
+            await runCuratorMission({
+              options,
+              runtime: { runtimeId: archived.runtimeId },
+              jobId: entry.jobId,
+              module: "conversation",
+              title: mission.title,
+              goal: "",
+              session,
+              runArchive,
+              activeRuns,
+              activeSessions,
+              awaitingObservation,
+              resumeObservation: true,
+            });
+            if (
+              !(await readCuratorMissionRegistry(options.pragmaHome)).some(
+                (candidate) => candidate.missionId === entry.missionId,
+              )
+            )
+              recovered += 1;
+            continue;
+          }
+        }
         // Do not destroy the only durable provider result after a failed read/archive or crash.
         if (
           (archived?.chat === undefined || archived.status !== "succeeded") &&
@@ -538,6 +581,7 @@ export function createDesktopMemoryCurator(options: {
             interruptMission: (id) => options.application.interrupt(id),
           })
         ) {
+          releaseRunBinding(entry.missionId);
           await unregisterCuratorMission(options.pragmaHome, entry.missionId);
           recovered += 1;
         }
@@ -549,11 +593,61 @@ export function createDesktopMemoryCurator(options: {
     },
     episodicExtractor: curator.episodicExtractor,
     semanticExtractor: curator.semanticExtractor,
-    conversationExtractor: curator.conversationExtractor,
+    conversationExtractor: {
+      extract: curator.conversationExtractor.extract,
+      async reconcile() {
+        // A late receipt may settle locally without entering the execution port again.
+        // Finish archiving and release its live tool binding after the native turn ends.
+        for (const missionId of awaitingObservation) {
+          try {
+            const run = activeRuns.get(missionId);
+            const bound = activeSessions.get(missionId);
+            const session = await createMemoryExtractionSessionStore(options).forMission(missionId);
+            if (run === undefined || bound === undefined || session?.key !== bound.key) {
+              releaseRunBinding(missionId);
+              continue;
+            }
+            if (!(await session.completed())) continue;
+            const mission = await options.missions.get(missionId);
+            if (
+              mission.execution === undefined ||
+              !["succeeded", "failed", "cancelled"].includes(mission.execution.status)
+            )
+              continue;
+            await runCuratorMission({
+              options,
+              runtime: { runtimeId: run.runtimeId },
+              jobId: run.jobId,
+              module: run.module,
+              title: mission.title,
+              goal: "",
+              session,
+              runArchive,
+              activeRuns,
+              activeSessions,
+              awaitingObservation,
+              resumeObservation: true,
+            });
+          } catch (error) {
+            if (error instanceof MissionStoreError && error.code === "mission_not_found") {
+              releaseRunBinding(missionId);
+              await unregisterCuratorMission(options.pragmaHome, missionId);
+              continue;
+            }
+            logger.warn(
+              "desktop.memory_curator_reconciliation_failed",
+              "A retained Memory Curator result could not be reconciled and will be checked again.",
+              { error, missionId },
+            );
+          }
+        }
+      },
+    },
   };
 }
 
 async function runCuratorMission(input: {
+  readonly resumeObservation?: boolean | undefined;
   readonly options: Pick<
     Parameters<typeof createDesktopMemoryCurator>[0],
     "project" | "missions" | "application" | "workspace" | "pragmaHome" | "loggerProvider" | "now"
@@ -570,12 +664,16 @@ async function runCuratorMission(input: {
   readonly runArchive: MemoryExtractionRunArchive;
   readonly activeRuns: Map<string, DesktopMemoryExtractionRun>;
   readonly activeSessions: Map<string, MemoryExtractionSession>;
+  readonly awaitingObservation: Set<string>;
   readonly session: MemoryExtractionSession;
   readonly onAdmission?: (() => void) | undefined;
 }): Promise<void> {
   input.signal?.throwIfAborted();
-  const project = await input.options.project.ensurePublished();
   const prior = input.module === "conversation" ? await input.session.executionState() : undefined;
+  if (input.resumeObservation && (prior?.missionId === undefined || !prior.admitted))
+    throw Object.assign(new Error("memory_curator_execution_unconfirmed"), { retryable: false });
+  const project =
+    prior?.missionId === undefined ? await input.options.project.ensurePublished() : undefined;
   const mission =
     prior?.missionId === undefined
       ? await input.options.missions.create({
@@ -585,7 +683,7 @@ async function runCuratorMission(input: {
           },
           goal: input.goal,
           title: input.title,
-          project: { id: project.projectId, revision: project.revision },
+          project: { id: project!.projectId, revision: project!.revision },
           executor: { kind: "expert", ref: MEMORY_CURATOR_REF, name: "Memory Curator" },
           origin: { type: "system-memory", jobId: input.jobId },
           ...(input.runtime.modelSelection === undefined
@@ -601,6 +699,8 @@ async function runCuratorMission(input: {
               }),
         })
       : await input.options.missions.get(prior.missionId);
+  if (input.resumeObservation && mission.execution === undefined)
+    throw Object.assign(new Error("memory_curator_execution_unconfirmed"), { retryable: false });
   const pragmaHome = input.options.pragmaHome;
   const logger = createPragmaLogger(input.options.loggerProvider, {
     component: "desktop.memory-curator",
@@ -617,14 +717,17 @@ async function runCuratorMission(input: {
     startedAt,
     runtimeId: input.runtime.runtimeId,
     continuations: prior?.continuations ?? 0,
-    ...(input.runtime.modelSelection === undefined
-      ? {}
-      : {
+    ...(input.runtime.modelSelection !== undefined
+      ? {
           providerId: input.runtime.modelSelection.model.providerId,
           modelId: input.runtime.modelSelection.model.modelId,
-        }),
+        }
+      : mission.modelOverride === undefined
+        ? {}
+        : { providerId: mission.modelOverride.providerId, modelId: mission.modelOverride.modelId }),
   };
   await input.session.bindMission(mission.id);
+  input.awaitingObservation.delete(mission.id);
   input.activeSessions.set(mission.id, input.session);
   input.activeRuns.set(mission.id, activeRun);
   const pendingTypesAtStart = await input.session.pendingTypes();
@@ -683,12 +786,17 @@ async function runCuratorMission(input: {
         throw error;
       }
     } else if (
+      !input.resumeObservation &&
       prior.pendingContinuation === undefined &&
       (mission.execution === undefined ||
         ["queued", "running", "waiting"].includes(mission.execution.status))
     )
       throw Object.assign(new Error("memory_curator_execution_unconfirmed"), { retryable: false });
-    else if (input.module === "conversation" && prior.pendingContinuation === undefined) {
+    else if (
+      input.module === "conversation" &&
+      !input.resumeObservation &&
+      prior.pendingContinuation === undefined
+    ) {
       // Reopening an attention task authorizes continuation. Crash recovery reaches
       // this path only with its already reserved command; it must not revive a cancelled turn.
       await reserveRepair(mission.execution!.id);
@@ -717,14 +825,37 @@ async function runCuratorMission(input: {
         expectedExecutionId = continued.executionId;
         await input.session.acknowledgeContinuation(pending.requestId);
       }
-      await waitForInternalMissionTerminal({
-        getMission: (id) => input.options.missions.get(id),
-        missionId: mission.id,
-        timeoutMessage: "memory_curator_timeout",
-        signal: input.signal,
-        executionId: expectedExecutionId,
-      });
-      finished = await input.options.missions.get(mission.id);
+      try {
+        if (input.resumeObservation && expectedExecutionId === undefined) {
+          finished = await retryCuratorResultOperation(
+            () => input.options.missions.get(mission.id),
+            input.signal,
+          );
+          input.signal?.throwIfAborted();
+          if (
+            finished.execution === undefined ||
+            !["succeeded", "failed", "cancelled"].includes(finished.execution.status)
+          )
+            throw new Error("memory_curator_timeout");
+        } else {
+          finished = await waitForInternalMissionTerminal({
+            getMission: (id) => input.options.missions.get(id),
+            missionId: mission.id,
+            timeoutMessage: "memory_curator_timeout",
+            signal: input.signal,
+            executionId: expectedExecutionId,
+          });
+        }
+      } catch (error) {
+        if (
+          input.module === "conversation" &&
+          !input.signal?.aborted &&
+          error instanceof Error &&
+          error.message === "memory_curator_timeout"
+        )
+          throw Object.assign(error, { code: "memory_curator_timeout", retryable: true });
+        throw error;
+      }
       const pendingAfterTurn = await input.session.pendingTypes();
       const completedTypes = pendingTypesForTurn.filter((type) => !pendingAfterTurn.includes(type));
       if (completedTypes.length > 0) {
@@ -888,8 +1019,14 @@ async function runCuratorMission(input: {
           { error, missionId: mission.id, runId },
         );
       });
-    input.activeRuns.delete(mission.id);
-    input.activeSessions.delete(mission.id);
+    // A timed-out observation does not end the native turn. Keep its tool binding alive
+    // until the next observation replaces it or terminal settlement removes it.
+    if (failure?.code === "memory_curator_timeout") {
+      input.awaitingObservation.add(mission.id);
+    } else {
+      input.activeRuns.delete(mission.id);
+      input.activeSessions.delete(mission.id);
+    }
     if (
       archived &&
       chat !== undefined &&

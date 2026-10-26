@@ -112,6 +112,26 @@ export function hasPendingMemoryExtractionContinuation(
   jobId: string,
   watermark: string,
 ): boolean {
+  return hasConversationExecutionProof(options, module, jobId, watermark, false);
+}
+
+/** Ownership proof for observing an existing Mission; never permission to start a new turn. */
+export function hasAdmittedMemoryExtractionExecution(
+  options: { pragmaHome?: string | undefined },
+  module: "episodic" | "semantic",
+  jobId: string,
+  watermark: string,
+): boolean {
+  return hasConversationExecutionProof(options, module, jobId, watermark, true);
+}
+
+function hasConversationExecutionProof(
+  options: { pragmaHome?: string | undefined },
+  module: "episodic" | "semantic",
+  jobId: string,
+  watermark: string,
+  observeAdmitted = false,
+): boolean {
   const path = new PragmaPaths(options).memoryExtractionSessions();
   if (!existsSync(path)) return false;
   const db = new DatabaseSync(path, { readOnly: true });
@@ -127,7 +147,9 @@ export function hasPendingMemoryExtractionContinuation(
       .get(jobId, watermark) as { state_json: string } | undefined;
     if (row === undefined) return false;
     const proof = parseCuratorSessionProof(row.state_json, version);
-    return "pendingContinuation" in proof && proof.pendingContinuation !== undefined;
+    return observeAdmitted
+      ? "admitted" in proof && proof.admitted && proof.missionId !== undefined
+      : "pendingContinuation" in proof && proof.pendingContinuation !== undefined;
   } finally {
     db.close();
   }

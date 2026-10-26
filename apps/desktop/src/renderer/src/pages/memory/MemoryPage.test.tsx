@@ -424,6 +424,8 @@ describe("MemoryPage", () => {
                   id: "internal-job-a",
                   revision: 1,
                   lane: "waiting",
+                  recovery: "waiting_execution",
+                  retryAt: "2026-08-05T00:00:05.000Z",
                   title: "Prepare the release",
                   updatedAt: "2026-08-05T00:00:00.000Z",
                 },
@@ -462,6 +464,8 @@ describe("MemoryPage", () => {
       />,
     );
 
+    expect(html).toContain("Waiting for execution result");
+    expect(html).toContain("Next check:");
     expect(html).toContain("Waiting for idle");
     expect(html).toContain("memory-extraction-lane is-waiting");
     expect(html).toContain("Track refinement progress and manage tasks that need your attention.");

@@ -1054,6 +1054,20 @@ export function MemoryExtractionJobs(props: {
                               .join(" · ")}
                           </p>
                         ) : null}
+                        {task.recovery === undefined ? null : (
+                          <p className="memory-note" role="status">
+                            {t(`extractionRecovery.${task.recovery}`)}
+                            {task.retryAt === undefined ? null : (
+                              <>
+                                {" "}
+                                ·{" "}
+                                {t("extractionNextCheck", {
+                                  time: extractionTaskTime(task.retryAt),
+                                })}
+                              </>
+                            )}
+                          </p>
+                        )}
                         {task.learningDecision !== undefined ? (
                           <details className="memory-extraction-task-meta">
                             <summary>
@@ -1289,7 +1303,9 @@ export function MemoryExtractionTaskDetails(props: {
     return () => observer.disconnect();
   }, []);
 
-  const tasks = props.tasks.filter((task) => task.lane === "attention" || task.lane === "running");
+  const tasks = props.tasks.filter(
+    (task) => task.lane === "attention" || task.lane === "running" || task.recovery !== undefined,
+  );
   const [selectedKey, setSelectedKey] = useState<string>();
   const [detail, setDetail] = useState<DesktopMemoryExtractionTaskDetail>();
   const [selectedRunId, setSelectedRunId] = useState<string>();
@@ -1479,6 +1495,20 @@ export function MemoryExtractionTaskDetails(props: {
                     })}
                   </p>
                 ) : null}
+                {detail.task.recovery === undefined ? null : (
+                  <p role="status">
+                    {t(`extractionRecovery.${detail.task.recovery}`)}
+                    {detail.task.retryAt === undefined ? null : (
+                      <>
+                        {" "}
+                        ·{" "}
+                        {t("extractionNextCheck", {
+                          time: extractionTaskTime(detail.task.retryAt),
+                        })}
+                      </>
+                    )}
+                  </p>
+                )}
                 <p>{t("readOnlyTaskMessages")}</p>
               </div>
               {detail.runs.length > 1 ? (
@@ -1916,7 +1946,7 @@ function fetchActiveTaskPage(offset: number, limit: number) {
   return window.pragmaDesktop.listActiveMemoryExtractionTasks({
     offset,
     limit,
-    lanes: ["attention", "running"],
+    lanes: ["waiting", "attention", "running"],
   });
 }
 

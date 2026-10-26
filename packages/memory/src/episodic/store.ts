@@ -7,11 +7,13 @@ import {
 } from "../pipeline/completed-job-retention.ts";
 import {
   hasMemoryExtractionReceipt,
+  hasAdmittedMemoryExtractionExecution,
   hasPendingMemoryExtractionContinuation,
 } from "../pipeline/extraction-session/store.ts";
 import { createMemoryExtractionSessionStore } from "../pipeline/extraction-session.ts";
 import {
   blocksAutomaticExtractionRetry,
+  isMemoryExtractionObservationWait,
   MAX_EXTRACTION_ATTEMPTS,
   EXTRACTION_RETRY_DELAY_MS,
   unconfirmedExtractionFailure,
@@ -345,6 +347,15 @@ export async function createEpisodicMemoryStore(
     throw error;
   }
 
+  // Point recovery of historical timeout jobs; no source scan or retry-budget reset.
+  state.function("pragma_extraction_observation_wait", (raw) => {
+    const job = EpisodicExtractionJobSchema.parse(JSON.parse(String(raw)));
+    return isMemoryExtractionObservationWait(job) &&
+      hasAdmittedMemoryExtractionExecution(options, "episodic", job.id, job.inputWatermark)
+      ? 1
+      : 0;
+  });
+
   const readDueJob = (
     now: Date,
     conversationRef?: MemorySubjectRef,
@@ -354,7 +365,8 @@ export async function createEpisodicMemoryStore(
         `SELECT job.job_json AS jobJson FROM jobs AS job
              WHERE (? IS NULL OR job.conversation_key = ?) AND (((job.status = 'pending' AND (job.retry_at IS NULL OR job.retry_at <= ?))
                 OR (job.status = 'waiting_idle' AND job.retry_at <= ?))
-                OR (job.status = 'running' AND job.lease_until <= ?))
+                OR (job.status = 'running' AND job.lease_until <= ?)
+                OR (job.status = 'needs_attention' AND pragma_extraction_observation_wait(job.job_json) = 1))
                AND NOT EXISTS (
                  SELECT 1 FROM conversation_activity AS activity
                  WHERE activity.conversation_key = job.conversation_key
@@ -628,14 +640,23 @@ export async function createEpisodicMemoryStore(
             .get(conversationKey(current.conversationRef), current.terminalMessageId) !==
             undefined ||
             hasMemoryExtractionReceipt(options, "episodic", current.id, current.inputWatermark));
-        const canContinue =
-          current.status === "running" &&
-          hasPendingMemoryExtractionContinuation(
+        const canObserve =
+          isMemoryExtractionObservationWait(current) &&
+          hasAdmittedMemoryExtractionExecution(
             options,
             "episodic",
             current.id,
             current.inputWatermark,
           );
+        const canContinue =
+          canObserve ||
+          (current.status === "running" &&
+            hasPendingMemoryExtractionContinuation(
+              options,
+              "episodic",
+              current.id,
+              current.inputWatermark,
+            ));
         const replayBlocked =
           !canSettleLocally &&
           !canContinue &&
@@ -1158,7 +1179,19 @@ export async function createEpisodicMemoryStore(
       const needsAttention =
         input.diagnostic.retryable === false ||
         input.retry === "configuration" ||
-        attempts >= MAX_EXTRACTION_ATTEMPTS;
+        (attempts >= MAX_EXTRACTION_ATTEMPTS &&
+          !(
+            isMemoryExtractionObservationWait({
+              lastErrorCode: input.diagnostic.code,
+              lastErrorMessage: input.diagnostic.message,
+            }) &&
+            hasAdmittedMemoryExtractionExecution(
+              options,
+              "episodic",
+              input.job.id,
+              input.job.inputWatermark,
+            )
+          ));
       const delay = EXTRACTION_RETRY_DELAY_MS;
       const failed = EpisodicExtractionJobSchema.parse({
         ...input.job,

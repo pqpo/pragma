@@ -51,6 +51,11 @@ export const memory = {
   extractions: "Extraction jobs",
   extractionsDescription: "Track refinement progress and manage tasks that need your attention.",
   refresh: "Refresh",
+  extractionRecovery: {
+    waiting_execution: "Waiting for execution result",
+    waiting_retry: "Waiting to retry automatically",
+  },
+  extractionNextCheck: "Next check: {{time}}",
   extractionLanes: {
     waiting: "Waiting for idle",
     attention: "Needs attention",

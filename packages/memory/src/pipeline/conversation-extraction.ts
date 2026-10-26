@@ -1,3 +1,4 @@
+import { isMemoryExtractionObservationWait } from "./extraction-error-code.ts";
 import { replayConversationMemoryRetry } from "./conversation-retry.ts";
 import type { EpisodicMemoryExtractor } from "../episodic/schema.ts";
 import type { SemanticMemoryExtractor } from "../semantic/schema.ts";
@@ -26,6 +27,7 @@ export interface ConversationExtractionBatch {
   readonly semantic?: Prepared<SemanticMemoryExtractor> | undefined;
 }
 export interface ConversationMemoryExtractor {
+  reconcile?(): Promise<void>;
   extract(batch: ConversationExtractionBatch): Promise<void>;
 }
 
@@ -50,7 +52,11 @@ export function createConversationMemoryExtractionCoordinator(options: {
       (jobs) => new Set(jobs.filter(unfinished).map((job) => key(job.conversationRef))),
     );
     const candidates = [...episodic, ...semantic]
-      .filter((job) => unfinished(job) && job.status !== "needs_attention")
+      .filter(
+        (job) =>
+          unfinished(job) &&
+          (job.status !== "needs_attention" || isMemoryExtractionObservationWait(job)),
+      )
       .toSorted((a, b) => {
         if (a.retryAt === undefined) return b.retryAt === undefined ? a.id.localeCompare(b.id) : -1;
         if (b.retryAt === undefined) return 1;
@@ -90,7 +96,10 @@ export function createConversationMemoryExtractionCoordinator(options: {
         const failure = Object.assign(
           new Error(error instanceof Error ? error.message : String(error), { cause: error }),
           {
-            retryable: (error as { preAdmission?: boolean } | null)?.preAdmission === true,
+            retryable:
+              (error as { preAdmission?: boolean } | null)?.preAdmission === true ||
+              ((error as { code?: string } | null)?.code === "memory_curator_timeout" &&
+                (error as { retryable?: boolean } | null)?.retryable === true),
             ...(typeof (error as { code?: unknown } | null)?.code === "string"
               ? { code: (error as { code: string }).code }
               : {}),
@@ -161,7 +170,7 @@ export function createConversationMemoryExtractionCoordinator(options: {
             await failBatch(batch, error);
           }
         }
-      })();
+      })().finally(async () => await current.reconcile?.());
       try {
         await running;
       } finally {

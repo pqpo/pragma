@@ -6,11 +6,13 @@ import {
 } from "../pipeline/completed-job-retention.ts";
 import {
   hasMemoryExtractionReceipt,
+  hasAdmittedMemoryExtractionExecution,
   hasPendingMemoryExtractionContinuation,
 } from "../pipeline/extraction-session/store.ts";
 import { createMemoryExtractionSessionStore } from "../pipeline/extraction-session.ts";
 import {
   blocksAutomaticExtractionRetry,
+  isMemoryExtractionObservationWait,
   MAX_EXTRACTION_ATTEMPTS,
   EXTRACTION_RETRY_DELAY_MS,
   unconfirmedExtractionFailure,
@@ -379,6 +381,15 @@ export async function createSemanticMemoryStore(
     throw error;
   }
 
+  // Point recovery of historical timeout jobs; no source scan or retry-budget reset.
+  state.function("pragma_extraction_observation_wait", (raw) => {
+    const job = SemanticExtractionJobSchema.parse(JSON.parse(String(raw)));
+    return isMemoryExtractionObservationWait(job) &&
+      hasAdmittedMemoryExtractionExecution(options, "semantic", job.id, job.inputWatermark)
+      ? 1
+      : 0;
+  });
+
   const readDueJob = (
     now: Date,
     conversationRef?: MemorySubjectRef,
@@ -388,7 +399,8 @@ export async function createSemanticMemoryStore(
         `SELECT job.job_json AS jobJson FROM jobs AS job
              WHERE (? IS NULL OR job.conversation_key = ?) AND (((job.status = 'pending' AND (job.retry_at IS NULL OR job.retry_at <= ?))
                 OR (job.status = 'waiting_idle' AND job.retry_at <= ?))
-                OR (job.status = 'running' AND job.lease_until <= ?))
+                OR (job.status = 'running' AND job.lease_until <= ?)
+                OR (job.status = 'needs_attention' AND pragma_extraction_observation_wait(job.job_json) = 1))
                AND NOT EXISTS (
                  SELECT 1 FROM conversation_activity AS activity
                  WHERE activity.conversation_key = job.conversation_key
@@ -740,14 +752,23 @@ export async function createSemanticMemoryStore(
             .prepare("SELECT 1 FROM applied_jobs WHERE job_id = ? AND input_watermark = ?")
             .get(current.id, current.inputWatermark) !== undefined ||
             hasMemoryExtractionReceipt(options, "semantic", current.id, current.inputWatermark));
-        const canContinue =
-          current.status === "running" &&
-          hasPendingMemoryExtractionContinuation(
+        const canObserve =
+          isMemoryExtractionObservationWait(current) &&
+          hasAdmittedMemoryExtractionExecution(
             options,
             "semantic",
             current.id,
             current.inputWatermark,
           );
+        const canContinue =
+          canObserve ||
+          (current.status === "running" &&
+            hasPendingMemoryExtractionContinuation(
+              options,
+              "semantic",
+              current.id,
+              current.inputWatermark,
+            ));
         const replayBlocked =
           !canSettleLocally &&
           !canContinue &&
@@ -1255,7 +1276,19 @@ export async function createSemanticMemoryStore(
       const needsAttention =
         input.diagnostic.retryable === false ||
         input.retry === "configuration" ||
-        input.job.attempts >= MAX_EXTRACTION_ATTEMPTS;
+        (input.job.attempts >= MAX_EXTRACTION_ATTEMPTS &&
+          !(
+            isMemoryExtractionObservationWait({
+              lastErrorCode: input.diagnostic.code,
+              lastErrorMessage: input.diagnostic.message,
+            }) &&
+            hasAdmittedMemoryExtractionExecution(
+              options,
+              "semantic",
+              input.job.id,
+              input.job.inputWatermark,
+            )
+          ));
       const delay = EXTRACTION_RETRY_DELAY_MS;
       const failed = SemanticExtractionJobSchema.parse({
         ...input.job,

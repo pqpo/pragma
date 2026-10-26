@@ -46,6 +46,8 @@ export const memory = {
   extractions: "提炼任务",
   extractionsDescription: "查看提炼进展，管理需要处理的任务。",
   refresh: "刷新",
+  extractionRecovery: { waiting_execution: "等待执行结果", waiting_retry: "等待空闲重试" },
+  extractionNextCheck: "下次检查时间：{{time}}",
   extractionLanes: {
     waiting: "等待空闲",
     attention: "需要处理",

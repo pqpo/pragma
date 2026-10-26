@@ -195,3 +195,15 @@ export function unconfirmedExtractionFailure(now: Date): MemoryExtractionFailure
     retryable: false,
   };
 }
+
+/** Only an observation timeout is eligible for automatic inspection of its original Mission. */
+export function isMemoryExtractionObservationWait(job: {
+  readonly lastErrorCode?: string | undefined;
+  readonly lastErrorMessage?: string | undefined;
+}): boolean {
+  return (
+    job.lastErrorCode === "memory_curator_timeout" ||
+    (job.lastErrorCode === "memory_curator_result_unavailable" &&
+      job.lastErrorMessage === "memory_curator_timeout")
+  );
+}

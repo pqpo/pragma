@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 
 export interface MemoryCuratorExecutionPort {
   run(input: {
+    readonly resumeObservation?: boolean | undefined;
     readonly jobId: string;
     readonly module: "episodic" | "semantic" | "conversation";
     readonly title: string;
@@ -173,6 +174,7 @@ export function createBuiltInMemoryCurator(options: {
           if (!(await session.completed())) {
             await options.execution.run({
               jobId,
+              resumeObservation: entries.some(({ work }) => work.options?.resumeObservation),
               module: "conversation",
               title: `Memory extraction ${first.input.executionId.slice(0, 12)}`,
               prompt: session.prompt(),

@@ -1,3 +1,6 @@
+import { DatabaseSync } from "node:sqlite";
+import { waitForInternalMissionTerminal } from "@pragma/local-host";
+import { PragmaPaths } from "@pragma/core";
 import { getToolResultText } from "@pragma/core";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -39,6 +42,9 @@ import { MissionConversationSnapshotSchema } from "../../../shared/contracts/ind
 vi.mock("@pragma/local-host", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@pragma/local-host")>()),
   waitForInternalMissionRetry: vi.fn(async () => undefined),
+  waitForInternalMissionTerminal: vi.fn(
+    (await importOriginal<typeof import("@pragma/local-host")>()).waitForInternalMissionTerminal,
+  ),
 }));
 
 const roots: string[] = [];
@@ -52,6 +58,14 @@ async function compileCuratorTools(source: LocalHostSystemExecutorSource) {
 
 it.each([
   "completed",
+  "timeout-recovery",
+  "historical-timeout-recovery",
+  "timeout-late-result",
+  "timeout-late-restart",
+  "timeout-reconcile-read",
+  "timeout-cancelled",
+  "timeout-nonretryable",
+  "timeout-retired",
   "unknown-continuation-model",
   "local-settlement-first",
   "manual-continuation",
@@ -66,6 +80,16 @@ it.each([
 ] as const)(
   "shares one Mission and evidence read while continuing pending types: %s",
   async (scenario) => {
+    const observesTimeout = scenario.includes("timeout");
+    const lateResult =
+      scenario === "timeout-late-result" ||
+      scenario === "timeout-reconcile-read" ||
+      scenario === "timeout-late-restart";
+    const stoppedAfterTimeout =
+      scenario === "timeout-cancelled" || scenario === "timeout-nonretryable";
+    vi.mocked(waitForInternalMissionTerminal).mockClear();
+    let clockOffset = 0;
+    const now = () => new Date(Date.now() + clockOffset);
     const root = await mkdtemp(join(tmpdir(), "pragma-shared-curator-"));
     roots.push(root);
     const missions = createMissionStore({ missionsPath: join(root, "missions") });
@@ -155,6 +179,7 @@ it.each([
         manualContinuation ||
         scenario === "completed" ||
         scenario === "unknown-continuation-model" ||
+        observesTimeout ||
         scenario === "local-settlement-first" ||
         scenario === "retryable-failure"
       ) {
@@ -203,9 +228,15 @@ it.each([
         sessionId,
         inputMessageId: mission.initialMessageId,
         status:
-          !continued && (scenario === "cancelled" || scenario === "manual-cancelled")
+          !continued &&
+          (scenario === "cancelled" ||
+            scenario === "manual-cancelled" ||
+            scenario === "timeout-cancelled")
             ? "cancelled"
-            : !continued && (scenario === "retryable-failure" || scenario === "manual-nonretryable")
+            : !continued &&
+                (scenario === "retryable-failure" ||
+                  scenario === "manual-nonretryable" ||
+                  scenario === "timeout-nonretryable")
               ? "failed"
               : "succeeded",
         startedAt: new Date().toISOString(),
@@ -239,7 +270,7 @@ it.each([
       getTerminalRuntimeFailure: async () => ({
         code: "provider_temporary",
         message: "Temporary",
-        retryable: scenario !== "manual-nonretryable",
+        retryable: scenario !== "manual-nonretryable" && scenario !== "timeout-nonretryable",
         failedAt: new Date().toISOString(),
       }),
       getTerminalRuntimeOutputDiagnostic: async (id: string) => ({
@@ -261,22 +292,27 @@ it.each([
       delete: vi.fn(async () => {}),
       interrupt: vi.fn(async () => {}),
     } as unknown as LocalHostMissionApplication;
-    const curator = createDesktopMemoryCurator({
-      missions,
-      application,
-      runtimes,
-      pragmaHome: root,
-      workspace: root,
-      project: createPragmaProjectStore({ projectsPath: join(root, "projects") }),
-      profiles: createFileMemoryExtractorProfileStore({ pragmaHome: root }),
-    });
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const makeCurator = () =>
+      createDesktopMemoryCurator({
+        missions,
+        application,
+        runtimes,
+        pragmaHome: root,
+        workspace: root,
+        project,
+        profiles: createFileMemoryExtractorProfileStore({ pragmaHome: root }),
+      });
+    let curator = makeCurator();
     const episodic = await createEpisodicMemoryModule({
       pragmaHome: root,
       extractor: curator.episodicExtractor,
+      now,
     });
     const semantic = await createSemanticMemoryModule({
       pragmaHome: root,
       extractor: curator.semanticExtractor,
+      now,
     });
     const originalEpisodeEnrichment = episodic.store.enrichExtractionProvenance.bind(
       episodic.store,
@@ -378,9 +414,136 @@ it.each([
         pragmaHome: root,
         episodic,
         semantic,
+        now,
       });
       coordinator.setExtractor(curator.conversationExtractor);
+      if (observesTimeout)
+        vi.mocked(waitForInternalMissionTerminal).mockRejectedValueOnce(
+          new Error("memory_curator_timeout"),
+        );
       await coordinator.runOnce();
+      if (observesTimeout) {
+        const waiting = (await episodic.store.listExtractionJobs())[0]!;
+        expect(waiting.status).toBe("pending");
+        expect(waiting.lastErrorCode).toBe("memory_curator_timeout");
+        expect(waiting.attempts).toBe(1);
+        expect(continueMission).not.toHaveBeenCalled();
+        if (scenario === "timeout-retired") {
+          const missionId = startRun.mock.calls[0]![0];
+          const execution = (await missions.get(missionId)).execution!;
+          await missions.updateExecution(missionId, {
+            ...execution,
+            status: "running",
+            finishedAt: undefined,
+          });
+          const logicalId = conversationExtractionJobId(
+            waiting.conversationRef,
+            waiting.inputWatermark,
+          );
+          await curator.retireJobs([logicalId]);
+          expect(application.interrupt).toHaveBeenCalledWith(missionId);
+          await expect(
+            curator.source({ missionId, runtimes, workspace: root, pragmaHome: root }),
+          ).rejects.toThrow("memory_curator_run_unavailable");
+          await episodic.store.deleteJob({
+            id: waiting.id,
+            expectedRevision: waiting.revision,
+            includePending: true,
+            now: now(),
+          });
+          await expect(coordinator.runOnce()).resolves.toBeUndefined();
+          expect(startRun).toHaveBeenCalledOnce();
+          return;
+        }
+        if (scenario === "historical-timeout-recovery") {
+          // Match the previous writer's timeout record; only its bound Session authorizes inspection.
+          const db = new DatabaseSync(
+            join(
+              new PragmaPaths({ pragmaHome: root }).memoryModuleStateRoot("pragma.memory.episodic"),
+              "jobs.sqlite",
+            ),
+          );
+          const historical = {
+            ...waiting,
+            status: "needs_attention",
+            attempts: 4,
+            totalAttempts: 4,
+            retryAt: undefined,
+            lastErrorCode: "memory_curator_result_unavailable",
+            lastErrorMessage: "memory_curator_timeout",
+            lastFailure: {
+              ...waiting.lastFailure!,
+              code: "memory_curator_result_unavailable",
+              retryable: false,
+            },
+            failureClass: "transient-exhausted",
+            attentionSince: now().toISOString(),
+          };
+          db.prepare(
+            "UPDATE jobs SET status = 'needs_attention', retry_at = NULL, job_json = ? WHERE id = ?",
+          ).run(JSON.stringify(historical), waiting.id);
+          db.close();
+        }
+        if (lateResult) {
+          // The original native turn can still finish with its already compiled tools.
+          const result = await cachedTools!
+            .find((tool) => tool.name === "skip_extraction")!
+            .call({ type: "episodic", reason: "no-supported-memory" }, undefined);
+          expect(result.isError, getToolResultText(result)).not.toBe(true);
+        }
+        if (scenario === "timeout-late-restart") {
+          curator = makeCurator();
+          coordinator.setExtractor(curator.conversationExtractor);
+          await expect(curator.recoverOrphans()).resolves.toBe(1);
+          expect(application.delete).toHaveBeenCalledWith(startRun.mock.calls[0]![0]);
+        }
+        const failedReconciliation =
+          scenario === "timeout-reconcile-read"
+            ? vi
+                .spyOn(missions, "get")
+                .mockRejectedValueOnce(new Error("temporary observation read failure"))
+            : undefined;
+        await expect(coordinator.runOnce()).resolves.toBeUndefined();
+        failedReconciliation?.mockRestore();
+        expect((await episodic.store.listExtractionJobs())[0]!.status).toBe(
+          scenario === "historical-timeout-recovery" ? "completed" : "pending",
+        );
+        if (scenario !== "historical-timeout-recovery") {
+          clockOffset = 6_000;
+          if (scenario === "timeout-recovery") {
+            const missionId = startRun.mock.calls[0]![0];
+            const execution = (await missions.get(missionId)).execution!;
+            await missions.updateExecution(missionId, {
+              ...execution,
+              status: "running",
+              finishedAt: undefined,
+            });
+            const bind = vi
+              .spyOn(runtimes, "bind")
+              .mockRejectedValue(new Error("runtime disabled after admission"));
+            const publish = vi
+              .spyOn(project, "ensurePublished")
+              .mockRejectedValue(new Error("project unavailable after admission"));
+            await coordinator.runOnce();
+            expect(bind).not.toHaveBeenCalled();
+            expect(publish).not.toHaveBeenCalled();
+            bind.mockRestore();
+            publish.mockRestore();
+            // Resuming observation performs one status read, without starting another ten-minute wait.
+            expect(waitForInternalMissionTerminal).toHaveBeenCalledTimes(1);
+            expect(continueMission).not.toHaveBeenCalled();
+            expect(startRun).toHaveBeenCalledOnce();
+            expect((await episodic.store.listExtractionJobs())[0]!.attempts).toBe(1);
+            await missions.updateExecution(missionId, execution);
+            clockOffset = 12_000;
+          }
+          await coordinator.runOnce();
+        }
+        const recovered = (await episodic.store.listExtractionJobs())[0]!;
+        expect(recovered.status).toBe(stoppedAfterTimeout ? "needs_attention" : "completed");
+        expect(recovered.attempts).toBe(scenario === "historical-timeout-recovery" ? 4 : 1);
+        expect(recovered.totalAttempts).toBe(scenario === "historical-timeout-recovery" ? 4 : 1);
+      }
       if (scenario === "local-settlement-first") {
         expect(startRun).not.toHaveBeenCalled();
         await coordinator.runOnce();
@@ -416,7 +579,10 @@ it.each([
       expect(readCount).toBe(1);
       if (scenario === "budget-exhausted") expect(application.interrupt).toHaveBeenCalledOnce();
       expect(continueMission).toHaveBeenCalledTimes(
-        scenario === "cancelled" || scenario === "budget-exhausted"
+        scenario === "cancelled" ||
+          scenario === "budget-exhausted" ||
+          lateResult ||
+          stoppedAfterTimeout
           ? 0
           : scenario === "exhausted"
             ? 3
@@ -425,11 +591,16 @@ it.each([
               : 1,
       );
       expect(new Set(continueMission.mock.calls.map(([input]) => input.id)).size).toBe(
-        scenario === "cancelled" || scenario === "budget-exhausted" ? 0 : 1,
+        scenario === "cancelled" ||
+          scenario === "budget-exhausted" ||
+          lateResult ||
+          stoppedAfterTimeout
+          ? 0
+          : 1,
       );
       expect(await semantic.store.list()).toHaveLength(1);
       expect((await semantic.store.list())[0]!.extractor.responseModel).toBe(
-        "actual-semantic-model",
+        observesTimeout ? undefined : "actual-semantic-model",
       );
       if (scenario === "completed") {
         expect(enrichSemantic).toHaveBeenCalledTimes(2);
@@ -478,6 +649,7 @@ it.each([
       expect(episodeJob?.status).toBe(
         scenario === "completed" ||
           scenario === "unknown-continuation-model" ||
+          (observesTimeout && !stoppedAfterTimeout) ||
           scenario.startsWith("manual-") ||
           scenario === "local-settlement-first" ||
           scenario === "retryable-failure"
@@ -489,10 +661,19 @@ it.each([
         module: "conversation",
         jobId: conversationExtractionJobId(episodeJob!.conversationRef, episodeJob!.inputWatermark),
       });
-      expect(runs).toHaveLength(scenario.startsWith("manual-") ? 2 : 1);
+      expect(runs).toHaveLength(
+        scenario === "timeout-recovery"
+          ? 3
+          : scenario.startsWith("manual-") || observesTimeout
+            ? 2
+            : 1,
+      );
       expect(new Set(runs.map((run) => run.missionId)).size).toBe(1);
       expect(runs[0]!.continuations).toBe(
-        scenario === "cancelled" || scenario === "budget-exhausted"
+        scenario === "cancelled" ||
+          scenario === "budget-exhausted" ||
+          lateResult ||
+          stoppedAfterTimeout
           ? 0
           : scenario === "exhausted"
             ? 3
@@ -533,6 +714,7 @@ describe("Desktop Memory Curator", () => {
     "missing-output",
     "invalid-json",
     "missing-receipt",
+    "observation-timeout",
     "cancelled",
     "routed-model",
     "diagnostic-recovered",
@@ -556,7 +738,11 @@ describe("Desktop Memory Curator", () => {
       });
       const run = vi.fn(async (id: string) => {
         const mission = await missions.get(id);
-        if (scenario !== "cancelled" && scenario !== "missing-receipt") {
+        if (
+          scenario !== "cancelled" &&
+          scenario !== "missing-receipt" &&
+          scenario !== "observation-timeout"
+        ) {
           const source = await curator.source({
             missionId: id,
             runtimes,
@@ -649,6 +835,10 @@ describe("Desktop Memory Curator", () => {
         profiles: createFileMemoryExtractorProfileStore({ pragmaHome: root }),
         runtimes,
       });
+      if (scenario === "observation-timeout")
+        vi.mocked(waitForInternalMissionTerminal).mockRejectedValueOnce(
+          new Error("memory_curator_timeout"),
+        );
       const extraction = curator.episodicExtractor.extract({
         schemaVersion: "pragma.memory-episodic-extraction-input/v2",
         jobId: "paid-job",
@@ -680,7 +870,11 @@ describe("Desktop Memory Curator", () => {
         ],
         omittedEvidence: { records: 0, bytes: 0, byTopic: {} },
       });
-      if (scenario !== "cancelled" && scenario !== "missing-receipt") {
+      if (
+        scenario !== "cancelled" &&
+        scenario !== "missing-receipt" &&
+        scenario !== "observation-timeout"
+      ) {
         const result = await extraction;
         expect(result.output).toMatchObject({ retain: false });
         if (scenario === "routed-model" || scenario === "diagnostic-recovered") {
@@ -711,6 +905,7 @@ describe("Desktop Memory Curator", () => {
       if (
         scenario === "read-failed" ||
         scenario === "missing-receipt" ||
+        scenario === "observation-timeout" ||
         scenario === "cancelled"
       ) {
         expect(deleteMission).not.toHaveBeenCalled();

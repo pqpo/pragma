@@ -147,6 +147,8 @@ export const DesktopMemoryExtractionTaskSchema = z
     id: z.string().min(1),
     revision: z.number().int().positive(),
     lane: z.enum(["waiting", "attention", "running", "completed"]),
+    recovery: z.enum(["waiting_execution", "waiting_retry"]).optional(),
+    retryAt: z.string().datetime().optional(),
     title: z.string().trim().min(1).max(200).optional(),
     sourceName: z.string().trim().min(1).optional(),
     createdAt: z.string().datetime().optional(),

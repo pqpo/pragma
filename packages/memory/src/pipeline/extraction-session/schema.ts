@@ -355,6 +355,7 @@ export interface MemoryExtractionSessionGuard {
   readonly canUseFact?: ((id: string, revision: number) => Promise<boolean>) | undefined;
 }
 export interface MemoryExtractorOptions extends MemoryExtractionSessionGuard {
+  readonly resumeObservation?: boolean | undefined;
   readonly onAdmission?: (() => void) | undefined;
   readonly watermark?: string | undefined;
   readonly conversationRef?: import("@pragma/shared").MemorySubjectRef | undefined;

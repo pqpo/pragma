@@ -432,6 +432,15 @@ function toDesktopTask(
           problem: classifyDesktopMemoryProblem(entry.job.lastErrorCode, entry.job.failureClass),
         }
       : {}),
+    ...(entry.lane === "waiting" && entry.job.lastErrorCode !== undefined
+      ? {
+          recovery:
+            entry.job.lastErrorCode === "memory_curator_timeout"
+              ? ("waiting_execution" as const)
+              : ("waiting_retry" as const),
+          retryAt: entry.job.retryAt,
+        }
+      : {}),
     updatedAt: entry.job.updatedAt,
     ...(entry.module === "conversation"
       ? {

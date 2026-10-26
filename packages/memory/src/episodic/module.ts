@@ -3,6 +3,7 @@ import {
   MemoryExtractionDeferred,
   type PreparedMemoryExtraction,
 } from "../pipeline/prepare-extraction.ts";
+import { isMemoryExtractionObservationWait } from "../pipeline/extraction-error-code.ts";
 import { hasPendingMemoryExtractionContinuation } from "../pipeline/extraction-session/store.ts";
 import { extractionEvidenceAccessGuard } from "../pipeline/extraction-settings.ts";
 import { redactMemoryValue } from "../evidence/redact.ts";
@@ -124,6 +125,7 @@ export async function createEpisodicMemoryModule(
     running.set(key, controller);
     if (
       localRecoveryOnly !== true &&
+      !isMemoryExtractionObservationWait(job) &&
       !hasPendingMemoryExtractionContinuation(options, "episodic", job.id, job.inputWatermark)
     )
       unadmittedClaims.add(controller);
@@ -217,6 +219,7 @@ export async function createEpisodicMemoryModule(
         (await selectedExtractor.extract(input, {
           signal: controller.signal,
           watermark: job.inputWatermark,
+          resumeObservation: isMemoryExtractionObservationWait(job),
           conversationRef: job.conversationRef,
           onProvenance: async (_type, previous, next) => {
             await store.enrichExtractionProvenance({ records: materialized, previous, next });
