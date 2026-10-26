@@ -9,7 +9,12 @@ import {
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
   PragmaPaths,
 } from "@pragma/core";
-import { MemoryEvidenceEnvelopeSchema, type PragmaLogRecord } from "@pragma/shared";
+import {
+  CanonicalEventEnvelopeSchema,
+  MemoryEvidenceEnvelopeSchema,
+  type PragmaLogRecord,
+} from "@pragma/shared";
+import { SKILL_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -35,6 +40,93 @@ afterEach(async () => {
 });
 
 describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
+  it("reports deferred capture without blocking normal extraction and protects its source during maintenance", async () => {
+    const pragmaHome = await temporaryRoot("pragma-memory-capture-isolation-");
+    const plane = await createDesktopMemoryPlane({
+      pragmaHome,
+      logger: createPragmaLogger(undefined, { component: "test.capture-isolation" }),
+      pollIntervalMs: 10,
+    });
+    try {
+      await plane.policies.updateGlobal({
+        expectedRevision: 0,
+        policy: {
+          enabled: "enabled",
+          capture: "enabled",
+          recall: "enabled",
+          learning: "local-candidates",
+        },
+      });
+      const event = (id: string, expert: string, occurredAt: string, terminal = false) =>
+        CanonicalEventEnvelopeSchema.parse({
+          schemaVersion: "pragma.canonical-event/v1",
+          eventId: terminal ? `${id}:terminal` : id,
+          topic: "pragma.execution.event.committed",
+          schemaRef: "pragma.execution-event/v5",
+          sourceRef: { type: "pragma.execution-event", id },
+          relatedRefs: [
+            { relation: "pragma.execution-root", ref: { type: "pragma.expert", id: expert } },
+          ],
+          correlationId: id,
+          occurredAt,
+          payload: {
+            schemaVersion: "pragma.execution-event/v5",
+            eventId: terminal ? `${id}:terminal` : id,
+            cursor: { executionId: id, sequence: terminal ? 2 : 1 },
+            executionId: id,
+            invocationId: id,
+            type: terminal ? "execution.succeeded" : "invocation.message.appended",
+            occurredAt,
+            data: { message: { role: "user", content: id, timestamp: 1 } },
+          },
+        });
+      await plane.registerMemoryExecutionContext({
+        executionId: "normal",
+        missionId: "normal-mission",
+        projectId: "studio",
+      });
+      await plane.canonical.append([
+        event("unresolved", SKILL_REVISION_EXPERT_REF.slice(7), "2020-01-01T00:00:00.000Z"),
+        event("normal", "7k2m9q4v8np6r3dt", new Date().toISOString()),
+        event("normal", "7k2m9q4v8np6r3dt", new Date().toISOString(), true),
+      ]);
+      plane.start();
+      await vi.waitFor(async () => {
+        expect((await plane.getStatus()).modules).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              moduleId: "pragma.memory.execution-evidence-adapter",
+              status: "degraded",
+              lag: 1,
+              lastErrorCode: "memory_execution_origin_unavailable",
+            }),
+          ]),
+        );
+        expect(await plane.episodicStore.listExtractionJobs()).toHaveLength(1);
+      });
+      await plane.maintainStorage();
+      expect((await plane.getStatus()).feed.safeThroughSequence).toBe(0);
+      expect((await plane.canonical.read({ limit: 1 })).items[0]).toMatchObject({
+        kind: "event",
+        event: { eventId: "unresolved" },
+      });
+      await plane.canonical.forgetCorrelation("unresolved");
+      plane.wakePipeline();
+      await vi.waitFor(async () => {
+        expect((await plane.getStatus()).modules).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              moduleId: "pragma.memory.execution-evidence-adapter",
+              status: "healthy",
+              lag: 0,
+            }),
+          ]),
+        );
+      });
+    } finally {
+      await plane.stop();
+    }
+  });
   it("retains the newest 50 completed task records without age expiry", async () => {
     const pragmaHome = await temporaryRoot("pragma-memory-completed-retention-");
     const plane = await createDesktopMemoryPlane({

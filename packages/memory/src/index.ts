@@ -1,5 +1,6 @@
 export * from "./evidence/evidence-feed.ts";
 export * from "./evidence/execution-evidence-adapter.ts";
+export * from "./evidence/deferred-execution-capture.ts";
 export * from "./pipeline/pipeline-state-store.ts";
 export * from "./pipeline/memory-module.ts";
 export * from "./pipeline/memory-schema-registry.ts";

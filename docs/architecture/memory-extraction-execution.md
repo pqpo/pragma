@@ -83,6 +83,19 @@ window methods reject this origin. Main-process Memory consumers use
 `LocalHostMissionApplication.getInternalConversationSnapshot`, which checks the system origin and reuses the same
 chat projection without opening public Mission IPC access.
 
+The execution Evidence adapter also excludes unattended Knowledge/Skill revision planning.
+Desktop and CLI check the immutable Mission origin in the delivery admission link at their shared
+Local Host capture entry, rather than excluding all uses of the revision Agents. Interactive
+revision tasks remain eligible for capture. If the link has not arrived or cannot be read, the
+adapter preserves a reference in the new `capture-deferred-v1.sqlite` namespace before advancing
+its checkpoint. The bounded queue rotates replay pages across restarts and pins canonical retention
+until replay succeeds or source-owner deletion removes the event. It never stores a second copy of
+the raw transcript or evicts unresolved entries. Other capture and background extraction continue.
+Health reports the adapter module as degraded with `memory_execution_origin_unavailable` while
+references remain pending; internal work never receives invented user/project subjects.
+The existing Curator exclusion remains in place. This changes future capture only; previously
+created extraction jobs and published Memory are preserved.
+
 Knowledge/Skill planning is unattended. Before Interpreter compilation, the Host removes revision
 capabilities and applies an explicit `askUserQuestion` denial, covering
 Core default tools on first execution, corrections and manual retries. Ordinary interactive revision

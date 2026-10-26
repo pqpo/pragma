@@ -11,6 +11,7 @@ import {
   retainMemoryExtractionHistory,
   createEpisodicMemoryModule,
   createExecutionEvidenceAdapter,
+  createDeferredExecutionCaptureStore,
   createFileMemoryExtractionSettingsStore,
   createFileMemoryExtractorProfileStore,
   createFileMemoryPipelineStateStore,
@@ -35,6 +36,7 @@ import {
 import { join } from "node:path";
 import { createSqliteExecutionStore } from "./execution/sqlite-execution-store.ts";
 import { createLocalHostMemorySubjectIdentityStore } from "./memory-subject-identity.ts";
+import { excludeInternalMemoryExecution } from "./memory-execution-capture.ts";
 
 export async function createLocalHostMemoryDataPlane(options: {
   readonly pragmaHome: string;
@@ -148,7 +150,10 @@ export async function createLocalHostMemoryDataPlane(options: {
   registry.register(knowledge);
   registry.register(semantic);
   registry.register(skill);
+  const deferredCapture = createDeferredExecutionCaptureStore(options);
   const adapter = createExecutionEvidenceAdapter({
+    excludeExecution: (event) => excludeInternalMemoryExecution(event, options.pragmaHome),
+    deferred: deferredCapture,
     source: canonical,
     publisher,
     checkpoints: state,
@@ -189,12 +194,25 @@ export async function createLocalHostMemoryDataPlane(options: {
           skillLearningStore: skill.store,
         }),
     );
+  let lastDeferredCount = 0;
   const flushDelivery = async () =>
     await withFileLock(join(paths.memoryStateRoot(), "delivery.lock"), async () => {
       await executionStore.recoverPendingCanonicalEvents();
       const adapted = await adapter.runOnce();
       await scheduler.runOnce({ background: false });
       await retainCompletedJobs();
+      if ((adapted.deferred ?? 0) > 0 && adapted.deferred !== lastDeferredCount) {
+        options.logger.warn(
+          "memory.execution_capture_deferred",
+          "Memory capture is waiting for execution origin.",
+          {
+            moduleId: "pragma.memory.execution-evidence-adapter",
+            code: "memory_execution_origin_unavailable",
+            pending: adapted.deferred,
+          },
+        );
+      }
+      lastDeferredCount = adapted.deferred ?? 0;
       return adapted;
     });
   const registerExecutionContext = async (input: {
@@ -252,6 +270,7 @@ export async function createLocalHostMemoryDataPlane(options: {
     skill,
     activity,
     scheduler,
+    deferredCapture,
     conversationExtraction,
     conversationExtractionJobs: createConversationExtractionJobReader(options),
     flushDelivery,

@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestExecutionStore } from "./execution-test-host.ts";
 
-import { createFileCanonicalEventFeed } from "@pragma/core";
+import { createFileCanonicalEventFeed, createPragmaLogger, PragmaPaths } from "@pragma/core";
+import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
+import { SKILL_REVISION_EXPERT_REF, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
+import { createLocalHostMemoryDataPlane } from "../src/memory-data-plane.ts";
+import { createMissionDelivery } from "../src/missions/mission-delivery.ts";
+import { createMissionStore } from "../src/missions/repository/mission-store.ts";
 import {
   MemoryToolContentPayloadSchema,
   type ExecutionRecord,
@@ -26,6 +32,145 @@ import {
   MemoryModuleRegistry,
 } from "@pragma/memory";
 import { createProbeMemoryModule } from "@pragma/memory/testing";
+
+it.each([
+  [SKILL_REVISION_EXPERT_REF, "system-memory"],
+  [STORE_REVISION_EXPERT_REF, "system-memory"],
+  [SKILL_REVISION_EXPERT_REF, "user"],
+  [STORE_REVISION_EXPERT_REF, "user"],
+  [SKILL_REVISION_EXPERT_REF, "system-skill-revision"],
+  [STORE_REVISION_EXPERT_REF, "system-store-revision"],
+] as const)("captures %s only for user work (%s)", async (ref, originType) => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-planning-capture-"));
+  const logger = createPragmaLogger(undefined, { component: "test.planning-capture" });
+  const missions = createMissionStore({ missionsPath: join(root, "missions") });
+  const mission = await missions.create({
+    workspace: { path: root, basename: "workspace" },
+    goal: "Plan Memory Skill", // A title must never determine whether user work is captured.
+    project: { id: "studio", revision: 1 },
+    executor: { kind: "expert", ref, name: "Revision Agent" },
+    origin:
+      originType === "system-memory"
+        ? { type: "system-memory", jobId: `plan:${randomUUID()}` }
+        : originType === "system-skill-revision"
+          ? { type: "system-skill-revision", jobId: randomUUID(), capabilityId: ref.slice(7) }
+          : originType === "system-store-revision"
+            ? { type: "system-store-revision", jobId: randomUUID(), storeId: randomUUID() }
+            : { type: "user" },
+  });
+  let delivery: Awaited<ReturnType<typeof createMissionDelivery>> | undefined;
+  let data = await createLocalHostMemoryDataPlane({ pragmaHome: root, logger });
+  const closeData = async () => {
+    await data.scheduler.stop();
+    data.episodic.close();
+    data.semantic.close();
+    data.knowledge.close();
+    data.skill.close();
+    await data.executionStore.close?.();
+    await data.canonical.close();
+  };
+  const executionId = randomUUID();
+  try {
+    await data.policies.updateGlobal({
+      expectedRevision: 0,
+      policy: {
+        enabled: "enabled",
+        capture: "enabled",
+        recall: "enabled",
+        learning: "local-candidates",
+      },
+    });
+    const occurredAt = new Date().toISOString();
+    await data.canonical.append(
+      ["invocation.message.appended", "execution.succeeded"].map((type, index) => ({
+        schemaVersion: "pragma.canonical-event/v1" as const,
+        eventId: randomUUID(),
+        topic: "pragma.execution.event.committed",
+        schemaRef: "pragma.execution-event/v5",
+        sourceRef: { type: "pragma.execution-event", id: `${executionId}:${index}` },
+        relatedRefs: [
+          {
+            relation: "pragma.execution-root",
+            ref: { type: "pragma.expert", id: ref.slice("expert:".length) },
+          },
+        ],
+        correlationId: executionId,
+        occurredAt,
+        payload: {
+          schemaVersion: "pragma.execution-event/v5",
+          eventId: `${executionId}:${index}`,
+          cursor: { executionId, sequence: index + 1 },
+          executionId,
+          invocationId: executionId,
+          type,
+          occurredAt,
+          data:
+            index === 0
+              ? { message: { role: "user", content: "Plan this workflow", timestamp: 1 } }
+              : {},
+        },
+      })),
+    );
+    await expect(data.flushDelivery()).resolves.toEqual({ published: 0, skipped: 0, deferred: 2 });
+    expect(await data.episodic.store.listExtractionJobs()).toHaveLength(0);
+    expect(await data.semantic.store.listExtractionJobs()).toHaveLength(0);
+
+    delivery = await createMissionDelivery({
+      path: new PragmaPaths({ pragmaHome: root }).missionDelivery(),
+      feed: data.canonical,
+      logger,
+      usage: async () => undefined,
+      terminal: async () => undefined,
+    });
+    await delivery.register(mission, executionId, randomUUID());
+    await delivery.close();
+    // Reopen the durable admission link: exclusion must survive a Host restart.
+    delivery = await createMissionDelivery({
+      path: new PragmaPaths({ pragmaHome: root }).missionDelivery(),
+      feed: data.canonical,
+      logger,
+      usage: async () => undefined,
+      terminal: async () => undefined,
+    });
+    const receiptPath = new PragmaPaths({ pragmaHome: root }).missionDelivery();
+    const db = new DatabaseSync(receiptPath);
+    const saved = db
+      .prepare("SELECT payload FROM execution_links WHERE execution_id=?")
+      .get(executionId) as { payload: string };
+    db.prepare("UPDATE execution_links SET payload=? WHERE execution_id=?").run("{", executionId);
+    await expect(data.flushDelivery()).resolves.toEqual({ published: 0, skipped: 0, deferred: 2 });
+    db.prepare("UPDATE execution_links SET payload=? WHERE execution_id=?").run(
+      saved.payload,
+      executionId,
+    );
+    db.close();
+    await closeData();
+    data = await createLocalHostMemoryDataPlane({ pragmaHome: root, logger });
+    expect(await data.deferredCapture.inspect()).toEqual({ pending: 2, safeThrough: 0 });
+    const capture = originType !== "system-memory";
+    if (capture) {
+      await data.registerExecutionContext({
+        executionId,
+        missionId: mission.id,
+        projectId: "studio",
+      });
+    }
+    await expect(data.flushDelivery()).resolves.toEqual({
+      published: capture ? 2 : 0,
+      skipped: capture ? 0 : 2,
+    });
+    expect(await data.episodic.store.listExtractionJobs()).toHaveLength(capture ? 1 : 0);
+    expect(await data.semantic.store.listExtractionJobs()).toHaveLength(capture ? 1 : 0);
+    expect((await data.activity.summarize(executionId)).capture).toMatchObject({
+      published: capture ? 2 : 0,
+      skipped: capture ? 0 : 2,
+    });
+  } finally {
+    await delivery?.close();
+    await closeData();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 describe("Host Memory Execution integration", () => {
   it("adapts canonical events, isolates modules, and exposes Probe through Context", async () => {

@@ -330,6 +330,7 @@ export async function createDesktopMemoryPlane(options: {
       const checkpoints = await Promise.all(consumerIds.map(async (id) => await state.read(id)));
       safeThroughSequence = Math.min(
         ...checkpoints.map((checkpoint) => checkpoint.sequence),
+        (await data.deferredCapture.inspect()).safeThrough,
         options.deliverySafeThrough?.() ?? Number.POSITIVE_INFINITY,
       );
       const feed = await canonical.maintain({
@@ -446,6 +447,8 @@ export async function createDesktopMemoryPlane(options: {
         markDegraded("canonical_event_handoff_quarantined");
       } else if (recovery.failed > 0) {
         markDegraded("canonical_event_delivery_failed");
+      } else if ((adapted.deferred ?? 0) > 0) {
+        markDegraded("memory_execution_origin_unavailable");
       } else if (extractionIssues[0] !== undefined) {
         const extractionIssue = extractionIssues[0];
         const code = extractionIssue.work.lastErrorCode ?? "memory_extraction_needs_attention";
@@ -810,6 +813,21 @@ export async function createDesktopMemoryPlane(options: {
     async getStatus() {
       const delivery = await executionStore.inspectCanonicalEventDelivery();
       const modules: import("@pragma/shared").MemoryModuleDiagnostic[] = [];
+      const capture = await data.deferredCapture.inspect();
+      const captureState = await state.read(EXECUTION_EVIDENCE_ADAPTER_ID);
+      if (capture.pending > 0 || captureState.sequence > 0)
+        modules.push({
+          moduleId: EXECUTION_EVIDENCE_ADAPTER_ID,
+          moduleVersion: "1",
+          status: capture.pending > 0 ? "degraded" : "healthy",
+          lag: capture.pending,
+          processed: captureState.processed,
+          retried: captureState.retried,
+          deadLettered: captureState.deadLettered,
+          skipped: captureState.skipped,
+          updatedAt: captureState.updatedAt,
+          ...(capture.pending > 0 ? { lastErrorCode: "memory_execution_origin_unavailable" } : {}),
+        });
       for (const module of registry.list()) {
         const diagnostic = registry.diagnostic(module.descriptor.id);
         if (diagnostic === undefined) continue;

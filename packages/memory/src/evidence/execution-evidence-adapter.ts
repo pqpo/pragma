@@ -21,6 +21,7 @@ import {
 } from "@pragma/shared";
 
 import type { MemoryExtractionSettingsStore } from "../pipeline/extraction-settings.ts";
+import type { DeferredExecutionCaptureStore } from "./deferred-execution-capture.ts";
 import { redactMemoryValue } from "./redact.ts";
 import type { MemoryEvidencePublisher } from "./evidence-feed.ts";
 import type {
@@ -37,7 +38,11 @@ import type {
 export const EXECUTION_EVIDENCE_ADAPTER_ID = "pragma.memory.execution-evidence-adapter";
 
 export interface ExecutionEvidenceAdapter {
-  runOnce(): Promise<{ readonly published: number; readonly skipped: number }>;
+  runOnce(): Promise<{
+    readonly published: number;
+    readonly skipped: number;
+    readonly deferred?: number;
+  }>;
 }
 
 export function createExecutionEvidenceAdapter(options: {
@@ -46,6 +51,9 @@ export function createExecutionEvidenceAdapter(options: {
   readonly checkpoints: MemoryConsumerCheckpointStore;
   readonly deadLetters: MemoryDeadLetterStore;
   readonly policies: Pick<MemoryPolicyStore, "resolveAt">;
+  /** Host-owned origin check. Unavailable identity is deferred without publishing Evidence. */
+  readonly excludeExecution?: ((event: CanonicalEventEnvelope) => Promise<boolean>) | undefined;
+  readonly deferred?: DeferredExecutionCaptureStore | undefined;
   readonly extractionSettings?: Pick<MemoryExtractionSettingsStore, "get"> | undefined;
   readonly batchSize?: number | undefined;
   readonly now?: (() => Date) | undefined;
@@ -60,7 +68,30 @@ export function createExecutionEvidenceAdapter(options: {
         after: { sequence: state.sequence },
         limit: options.batchSize ?? 100,
       });
-      if (page.nextCursor.sequence === state.sequence) {
+      const pending = (await options.deferred?.next(options.batchSize ?? 100)) ?? [];
+      const replay: (typeof page.items)[number][] = [];
+      for (const entry of pending) {
+        const original = await options.source.read({
+          after: { sequence: entry.sequence - 1 },
+          limit: 1,
+        });
+        const item = original.items[0];
+        if (
+          item?.cursor.sequence === entry.sequence &&
+          item.kind === "event" &&
+          item.event.eventId !== entry.eventId
+        )
+          throw new Error("memory_execution_capture_source_changed");
+        if (
+          item?.cursor.sequence === entry.sequence &&
+          (item.kind === "unreadable" || item.event.eventId === entry.eventId)
+        )
+          replay.push(item);
+        else await options.deferred!.remove(entry.eventId); // Owner deletion removed the source.
+      }
+      if (page.nextCursor.sequence === state.sequence && replay.length === 0) {
+        const deferred = (await options.deferred?.inspect())?.pending ?? 0;
+        if (deferred > 0) return { published: 0, skipped: 0, deferred };
         return { published: 0, skipped: 0 };
       }
       // Configuration failures must leave the canonical checkpoint intact for replay.
@@ -72,8 +103,15 @@ export function createExecutionEvidenceAdapter(options: {
       });
       const evidence: MemoryEvidenceEnvelope[] = [];
       const captureDecisions: MemoryCaptureDecision[] = [];
+      const exclusions = new Map<string, boolean>();
+      const unresolved = new Set<string>();
+      const pendingIds = new Set(pending.map((entry) => entry.eventId));
+      const settled = new Set<string>();
+      const seen = new Set<number>();
       let skipped = 0;
-      for (const item of page.items) {
+      for (const item of [...replay, ...page.items]) {
+        if (seen.has(item.cursor.sequence)) continue;
+        seen.add(item.cursor.sequence);
         if (item.kind === "unreadable") {
           await options.deadLetters.put({
             schemaVersion: "pragma.memory-dead-letter/v1",
@@ -84,6 +122,7 @@ export function createExecutionEvidenceAdapter(options: {
             failedAt: now().toISOString(),
           });
           skipped += 1;
+          if (item.eventId !== undefined && pendingIds.has(item.eventId)) settled.add(item.eventId);
           continue;
         }
         if (item.event.topic !== "pragma.execution.event.committed") {
@@ -98,6 +137,32 @@ export function createExecutionEvidenceAdapter(options: {
           addCaptureDecision(captureDecisions, item.event, "skipped", "memory_curator_excluded");
           skipped += 1;
           continue;
+        }
+        if (options.excludeExecution !== undefined) {
+          const executionId = item.event.correlationId ?? item.event.eventId;
+          let excluded = exclusions.get(executionId);
+          if (excluded === undefined) {
+            try {
+              if (unresolved.has(executionId))
+                throw new Error("memory_execution_origin_unavailable");
+              excluded = await options.excludeExecution(item.event);
+            } catch (error) {
+              if (options.deferred === undefined) throw error;
+              unresolved.add(executionId);
+              await options.deferred.put({
+                eventId: item.event.eventId,
+                sequence: item.cursor.sequence,
+              });
+              continue;
+            }
+            exclusions.set(executionId, excluded);
+          }
+          if (pendingIds.has(item.event.eventId)) settled.add(item.event.eventId);
+          if (excluded) {
+            addCaptureDecision(captureDecisions, item.event, "skipped", "system_memory_excluded");
+            skipped += 1;
+            continue;
+          }
         }
         let policy: EffectiveMemoryPolicy;
         try {
@@ -176,6 +241,7 @@ export function createExecutionEvidenceAdapter(options: {
         }
       }
       await options.publisher.publish(evidence);
+      for (const eventId of settled) await options.deferred?.remove(eventId);
       await Promise.all(
         captureDecisions.map(async (decision) => {
           await options.activity?.recordCapture(decision).catch(() => undefined);
@@ -188,7 +254,8 @@ export function createExecutionEvidenceAdapter(options: {
         skipped: current.skipped + skipped,
         updatedAt: now().toISOString(),
       }));
-      return { published: evidence.length, skipped };
+      const deferred = (await options.deferred?.inspect())?.pending ?? 0;
+      return { published: evidence.length, skipped, ...(deferred === 0 ? {} : { deferred }) };
     },
   };
 }
