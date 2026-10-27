@@ -623,12 +623,6 @@
   place-items: center;
   color: var(--ui-text);
 }
-.model-picker-row small {
-  margin-top: 4px;
-  color: var(--ui-text-secondary);
-  font-size: 11px;
-  line-height: 1.35;
-}
 .provider-connection-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1299,6 +1293,10 @@
   min-width: 0;
   min-height: 0;
   gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
 }
 .model-picker-copy {
   display: grid;

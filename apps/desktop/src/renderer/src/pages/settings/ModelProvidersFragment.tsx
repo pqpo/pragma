@@ -490,7 +490,6 @@ export function ProviderEditor(props: {
                           >
                             <span className="model-picker-copy">
                               <strong title={model.name}>{model.name}</strong>
-                              {model.name !== model.id ? <small>{model.id}</small> : null}
                             </span>
                             <span className="capability-tags">
                               {model.kind === "generation" && model.input.includes("image") ? (
