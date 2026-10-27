@@ -81,11 +81,12 @@ export function skillRevisionHistoryEntries(
   );
 }
 
-export function activeSkillRevisionTaskCount(
+export function actionableSkillRevisionTaskCount(
   entries: readonly { readonly job: Pick<ManagedSkillRevisionJob, "state"> }[],
 ): number {
-  return entries.filter(({ job }) => !["completed", "rejected", "superseded"].includes(job.state))
-    .length;
+  return entries.filter(({ job }) =>
+    ["pending_review", "needs_rebase", "needs_attention"].includes(job.state),
+  ).length;
 }
 
 export function skillRevisionAttentionActions(
@@ -411,7 +412,7 @@ export function SkillRevisionFragment(props: {
       ]);
       if (jobsResult.status === "fulfilled") {
         setEntries(jobsResult.value);
-        props.onCountChanged?.(activeSkillRevisionTaskCount(jobsResult.value));
+        props.onCountChanged?.(actionableSkillRevisionTaskCount(jobsResult.value));
       }
       if (recordsResult.status === "fulfilled") setManualRecords(recordsResult.value);
       const failed = [jobsResult, recordsResult].find((result) => result.status === "rejected");

@@ -5,10 +5,14 @@ import type {
   ContextStoreRevisionDiff,
 } from "../../../../shared/contracts/index.ts";
 
-export function activeContextStoreRevisionTaskCount(
-  jobs: readonly Pick<ContextStoreRevisionJob, "state">[],
+export function actionableContextStoreRevisionTaskCount(
+  jobs: readonly Pick<ContextStoreRevisionJob, "state" | "missionId" | "error">[],
 ): number {
-  return jobs.filter((job) => job.state !== "merged" && job.state !== "rejected").length;
+  return jobs.filter(
+    (job) =>
+      ["pending_review", "needs_rebase", "needs_attention"].includes(job.state) ||
+      isDraftAwaitingConfirmation(job),
+  ).length;
 }
 
 export function unlinkedRevisionDrafts(
@@ -43,7 +47,9 @@ export type RevisionEntry =
       job: ContextStoreRevisionJob;
     };
 
-export function isDraftAwaitingConfirmation(job: ContextStoreRevisionJob): boolean {
+export function isDraftAwaitingConfirmation(
+  job: Pick<ContextStoreRevisionJob, "state" | "missionId" | "error">,
+): boolean {
   return (
     (job.state === "editing" && job.missionId !== undefined) ||
     (job.state === "needs_attention" && job.error?.code === "draft_not_submitted")

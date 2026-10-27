@@ -45,7 +45,10 @@ import {
   type ExpertEditorStep,
 } from "./ExpertEditorFragment.tsx";
 import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
-import { activeSkillRevisionTaskCount, SkillRevisionFragment } from "./SkillRevisionFragment.tsx";
+import {
+  actionableSkillRevisionTaskCount,
+  SkillRevisionFragment,
+} from "./SkillRevisionFragment.tsx";
 import { CapabilityDetailFragment } from "./CapabilityDetailFragment.tsx";
 import {
   PragmaResourceDetailFragment,
@@ -60,7 +63,7 @@ import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
 import { PragmaBundleDialog } from "./PragmaBundleDialog.tsx";
 import { BundleSourcePublishDialog } from "./BundleSourcePublishDialog.tsx";
 import { ContextStoreRevisionFragment } from "./ContextStoreRevisionFragment.tsx";
-import { activeContextStoreRevisionTaskCount } from "./context-store-revision-model.ts";
+import { actionableContextStoreRevisionTaskCount } from "./context-store-revision-model.ts";
 import { User } from "@phosphor-icons/react";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import {
@@ -303,7 +306,7 @@ export function StudioPage(props: {
       .listContextStoreRevisions()
       .then((jobs) => {
         if (!cancelled) {
-          setRevisionTaskCount(activeContextStoreRevisionTaskCount(jobs));
+          setRevisionTaskCount(actionableContextStoreRevisionTaskCount(jobs));
         }
       })
       .catch((loadError: unknown) => {
@@ -312,7 +315,7 @@ export function StudioPage(props: {
     void api
       .listSkillRevisionJobs()
       .then((entries) => {
-        if (!cancelled) setSkillRevisionTaskCount(activeSkillRevisionTaskCount(entries));
+        if (!cancelled) setSkillRevisionTaskCount(actionableSkillRevisionTaskCount(entries));
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setExpertError(errorMessage(loadError));

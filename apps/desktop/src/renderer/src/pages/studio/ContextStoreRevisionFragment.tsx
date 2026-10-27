@@ -29,7 +29,7 @@ import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
 import {
-  activeContextStoreRevisionTaskCount,
+  actionableContextStoreRevisionTaskCount,
   filterRevisionEntries,
   isDraftAwaitingConfirmation,
   revisionEntries,
@@ -172,7 +172,7 @@ export function ContextStoreRevisionFragment(props: {
             ? allJobsResult.value
             : undefined;
       if (globalJobs !== undefined) {
-        props.onCountChanged?.(activeContextStoreRevisionTaskCount(globalJobs));
+        props.onCountChanged?.(actionableContextStoreRevisionTaskCount(globalJobs));
       }
     }
     if (draftsResult.status === "fulfilled") setDrafts(draftsResult.value);

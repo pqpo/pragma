@@ -241,7 +241,7 @@ describe("navigation attention monitor", () => {
     expect(f.api.listMemoryExtractionJobs).toHaveBeenCalledTimes(1);
   });
 
-  it("aggregates pending revisions and clears Studio only when both sources are settled", async () => {
+  it("shows revision dots only while user action is needed", async () => {
     const f = fixture();
     const skill = { job: { state: "pending_review" } } as Awaited<
       ReturnType<API["listSkillRevisionJobs"]>
@@ -249,17 +249,23 @@ describe("navigation attention monitor", () => {
     const knowledge = { state: "pending_review" } as Awaited<
       ReturnType<API["listContextStoreRevisions"]>
     >[number];
+    f.api.listSkillRevisionJobs.mockResolvedValue([
+      { ...skill, job: { ...skill.job, state: "running" } },
+    ]);
+    f.api.listContextStoreRevisions.mockResolvedValue([{ ...knowledge, state: "running" }]);
+    const monitor = f.start();
+    await monitor.refresh();
+    expect(f.latest()).toMatchObject({ studio: false, skills: false, knowledge: false });
     f.api.listSkillRevisionJobs.mockResolvedValue([skill]);
     f.api.listContextStoreRevisions.mockResolvedValue([knowledge]);
-    const monitor = f.start();
     await monitor.refresh();
     expect(f.latest()).toMatchObject({ studio: true, skills: true, knowledge: true });
     f.api.listSkillRevisionJobs.mockResolvedValue([
-      { ...skill, job: { ...skill.job, state: "completed" } },
+      { ...skill, job: { ...skill.job, state: "publishing" } },
     ]);
     await monitor.refresh();
     expect(f.latest()).toMatchObject({ studio: true, skills: false, knowledge: true });
-    f.api.listContextStoreRevisions.mockResolvedValue([{ ...knowledge, state: "merged" }]);
+    f.api.listContextStoreRevisions.mockResolvedValue([{ ...knowledge, state: "merging" }]);
     await monitor.refresh();
     expect(f.latest()).toMatchObject({ studio: false, skills: false, knowledge: false });
   });

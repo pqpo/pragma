@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { i18n } from "../../i18n/index.ts";
 import {
-  activeSkillRevisionTaskCount,
+  actionableSkillRevisionTaskCount,
   canDeleteSkillRevisionJob,
   canRetrySkillRevisionJob,
   filterSkillRevisionEntries,
@@ -44,9 +44,9 @@ describe("SkillRevisionEmptyState", () => {
     ).toHaveLength(1);
   });
 
-  it("counts only non-terminal revision tasks", () => {
+  it("counts only revision tasks requiring user action", () => {
     expect(
-      activeSkillRevisionTaskCount([
+      actionableSkillRevisionTaskCount([
         { job: { state: "editing" } },
         { job: { state: "running" } },
         { job: { state: "publishing" } },
@@ -57,7 +57,14 @@ describe("SkillRevisionEmptyState", () => {
         { job: { state: "rejected" } },
         { job: { state: "superseded" } },
       ]),
-    ).toBe(6);
+    ).toBe(3);
+    expect(
+      actionableSkillRevisionTaskCount([
+        { job: { state: "editing" } },
+        { job: { state: "running" } },
+        { job: { state: "publishing" } },
+      ]),
+    ).toBe(0);
   });
 
   it("offers deletion for every revision state", () => {

@@ -1,6 +1,6 @@
 import type { PragmaDesktopAPI } from "../../../shared/contracts/index.ts";
-import { activeContextStoreRevisionTaskCount } from "../pages/studio/context-store-revision-model.ts";
-import { activeSkillRevisionTaskCount } from "../pages/studio/SkillRevisionFragment.tsx";
+import { actionableContextStoreRevisionTaskCount } from "../pages/studio/context-store-revision-model.ts";
+import { actionableSkillRevisionTaskCount } from "../pages/studio/SkillRevisionFragment.tsx";
 import {
   missionNeedsAttention,
   emptyNavigationAttention,
@@ -112,13 +112,13 @@ export function createNavigationAttentionMonitor(
   const refreshSkills = refreshTask(
     () => api.listSkillRevisionJobs(),
     (entries) => {
-      skills = activeSkillRevisionTaskCount(entries) > 0;
+      skills = actionableSkillRevisionTaskCount(entries) > 0;
     },
   );
   const refreshKnowledge = refreshTask(
     () => api.listContextStoreRevisions(),
     (jobs) => {
-      knowledge = activeContextStoreRevisionTaskCount(jobs) > 0;
+      knowledge = actionableContextStoreRevisionTaskCount(jobs) > 0;
     },
   );
   const refreshMemory = refreshTask(

@@ -8,7 +8,7 @@ import {
   skillManualRevisionSummary,
 } from "./SkillManualRevisionFragment.tsx";
 import {
-  activeSkillRevisionTaskCount,
+  actionableSkillRevisionTaskCount,
   skillRevisionHistoryEntries,
   type SkillRevisionEntry,
 } from "./SkillRevisionFragment.tsx";
@@ -54,7 +54,7 @@ describe("Skill manual revision history", () => {
       { kind: "task", entry: job },
     ]);
     expect(skillRevisionHistoryEntries([job], [record], "", "0000000000000002")).toEqual([]);
-    expect(activeSkillRevisionTaskCount([job])).toBe(1);
+    expect(actionableSkillRevisionTaskCount([job])).toBe(1);
   });
 
   it("shows the actual Skill name, saved version and manual source without approval actions", async () => {
