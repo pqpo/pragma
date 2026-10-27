@@ -128,7 +128,7 @@ export async function runMissionRenameUiTests() {
   let now = 0;
   const timers = new Map<number, { at: number; run: () => void }>();
   window.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
-    if ((delay === 100 || delay === 500) && typeof handler === "function") {
+    if (delay === 100 && typeof handler === "function") {
       const id = sequence--;
       timers.set(id, { at: now + delay, run: () => handler(...args) });
       return id;
@@ -152,8 +152,8 @@ export async function runMissionRenameUiTests() {
   try {
     const row = element(".mission-row");
     mouse(row, "mouseover");
-    advance(499);
-    assert(!document.querySelector(".mission-row-preview"), "Preview opened before 500ms");
+    advance(99);
+    assert(!document.querySelector(".mission-row-preview"), "Preview opened before 100ms");
     advance(1);
     const card = element(".mission-row-preview");
     assert(getComputedStyle(card).pointerEvents === "auto", "Preview is not interactive");
@@ -163,7 +163,7 @@ export async function runMissionRenameUiTests() {
     mouse(card, "mouseover");
     advance(200);
     assert(document.body.contains(card), "Preview closed while hovered");
-    flushSync(() => element<HTMLButtonElement>(".mission-row-preview-edit").focus());
+    flushSync(() => element<HTMLButtonElement>(".mission-row-preview-title").focus());
     flushSync(() => element<HTMLButtonElement>("#outside").focus());
     advance(200);
     assert(document.body.contains(card), "Blur dismissed a hovered preview");
@@ -172,7 +172,7 @@ export async function runMissionRenameUiTests() {
     assert(!document.querySelector(".mission-row-preview"), "Preview did not close after leaving");
 
     mouse(row, "mouseover");
-    advance(500);
+    advance(200);
     mouse(row, "mouseout");
     advance(50);
     mouse(row, "mouseover");
@@ -181,7 +181,7 @@ export async function runMissionRenameUiTests() {
       document.querySelector(".mission-row-preview"),
       "Returning to the row did not cancel close",
     );
-    const edit = element<HTMLButtonElement>(".mission-row-preview-edit");
+    const edit = element<HTMLButtonElement>(".mission-row-preview-title");
     mouse(edit, "mousedown");
     mouse(edit, "mouseup");
     mouse(edit, "click");
@@ -247,7 +247,7 @@ export async function runMissionRenameUiTests() {
 
     // Keyboard entry into the interactive Portal and Escape dismissal.
     mouse(row, "mouseover");
-    advance(500);
+    advance(200);
     flushSync(() => element<HTMLButtonElement>(".mission-row-open").focus());
     const lastAction = element<HTMLButtonElement>(".mission-row-actions button:last-child");
     flushSync(() => lastAction.focus());
@@ -256,7 +256,7 @@ export async function runMissionRenameUiTests() {
       document.activeElement?.closest(".mission-row-preview"),
       "Tab cannot reach the edit button",
     );
-    advance(500);
+    advance(200);
     assert(document.querySelector(".mission-row-preview"), "Focused Portal closed");
     key(document.activeElement as HTMLElement, "Tab");
     assert(
@@ -265,7 +265,7 @@ export async function runMissionRenameUiTests() {
     );
     key(document.activeElement as HTMLElement, "Tab", { shiftKey: true });
     assert(
-      document.activeElement === element(".mission-row-preview-edit"),
+      document.activeElement === element(".mission-row-preview-title"),
       "Shift+Tab from delete did not return to rename",
     );
     key(document.activeElement as HTMLElement, "Tab");
@@ -283,8 +283,8 @@ export async function runMissionRenameUiTests() {
     key(document.activeElement as HTMLElement, "Escape");
     assert(!document.querySelector(".mission-row-preview"), "Escape did not dismiss preview");
     mouse(row, "mouseover");
-    advance(500);
-    mouse(element(".mission-row-preview-edit"), "click");
+    advance(200);
+    mouse(element(".mission-row-preview-title"), "click");
     await frames();
     key(element(".mission-rename-input"), "Escape");
     await frames();
@@ -293,7 +293,7 @@ export async function runMissionRenameUiTests() {
     // Deletion from an active task's preview requires explicit confirmation.
     for (const confirm of [false, true]) {
       mouse(row, "mouseover");
-      advance(500);
+      advance(200);
       mouse(element(".mission-row-preview-edit.is-danger"), "click");
       await frames();
       assert(!document.querySelector(".mission-row-preview"), "Delete left preview open");
@@ -311,7 +311,7 @@ export async function runMissionRenameUiTests() {
 
     // Unmounting a row cancels its pending opening timer; long existing titles remain intact.
     mouse(row, "mouseover");
-    advance(100);
+    advance(50);
     flushSync(() =>
       root.render(
         <MissionRenameDialog
@@ -334,8 +334,8 @@ export async function runMissionRenameUiTests() {
     await frames();
     // Leave a focused dialog available for visual inspection.
     mouse(element(".mission-row"), "mouseover");
-    advance(500);
-    mouse(element(".mission-row-preview-edit"), "click");
+    advance(200);
+    mouse(element(".mission-row-preview-title"), "click");
     await frames();
     return {
       passed: true,

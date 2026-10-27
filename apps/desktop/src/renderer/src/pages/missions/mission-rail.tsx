@@ -24,7 +24,6 @@ import {
   Circle,
   MagnifyingGlass,
   Plus,
-  PencilSimple,
   PushPin,
   SpinnerGap,
   SquaresFour,
@@ -440,7 +439,7 @@ export function resolveMissionRowIndicator(
   return hasUnreadOutput ? "unread" : null;
 }
 
-export const MISSION_ROW_PREVIEW_HOVER_DELAY_MS = 500;
+export const MISSION_ROW_PREVIEW_HOVER_DELAY_MS = 100;
 export const MISSION_ROW_PREVIEW_CLOSE_DELAY_MS = 100;
 
 const MISSION_ROW_PREVIEW_GAP = 8;
@@ -587,34 +586,30 @@ function MissionRowPreviewCard(props: {
       }
     >
       <div className="mission-row-preview-heading">
-        <strong>
+        <button
+          type="button"
+          className="mission-row-preview-title"
+          aria-label={t("renameNamed", { title: props.mission.title })}
+          title={t("renameMission")}
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onRename();
+          }}
+        >
           {props.mission.title}
-          {"\u2060"}
-          <button
-            type="button"
-            className="mission-row-preview-edit"
-            aria-label={t("renameNamed", { title: props.mission.title })}
-            title={t("renameMission")}
-            onClick={(event) => {
-              event.stopPropagation();
-              props.onRename();
-            }}
-          >
-            <PencilSimple size={14} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="mission-row-preview-edit is-danger"
-            aria-label={t("deleteNamed", { title: props.mission.title })}
-            title={t("deleteMission")}
-            onClick={(event) => {
-              event.stopPropagation();
-              props.onDelete();
-            }}
-          >
-            <Trash size={14} aria-hidden="true" />
-          </button>
-        </strong>
+        </button>
+        <button
+          type="button"
+          className="mission-row-preview-edit is-danger"
+          aria-label={t("deleteNamed", { title: props.mission.title })}
+          title={t("deleteMission")}
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onDelete();
+          }}
+        >
+          <Trash size={14} aria-hidden="true" />
+        </button>
       </div>
       <dl>
         <div>

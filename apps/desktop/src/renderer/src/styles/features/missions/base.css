@@ -1353,6 +1353,9 @@
 }
 
 .mission-row-preview-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   overflow-wrap: anywhere;
   font-size: 14px;
   line-height: 1.45;
@@ -1382,8 +1385,30 @@
   color: var(--ui-danger);
 }
 
-.mission-row-preview-heading > strong {
+.mission-row-preview-title {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  margin: -4px 0 -4px -4px;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
   font-weight: 600;
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.mission-row-preview-title:hover {
+  background: var(--ui-surface-subtle);
+}
+
+.mission-row-preview-heading > .mission-row-preview-edit {
+  flex-shrink: 0;
+  margin-block: 0;
 }
 
 .mission-row-preview dl {

@@ -900,7 +900,7 @@ describe("MissionsPage", () => {
   });
 
   it("positions Mission previews beside the row and falls back within the viewport", () => {
-    expect(MISSION_ROW_PREVIEW_HOVER_DELAY_MS).toBe(500);
+    expect(MISSION_ROW_PREVIEW_HOVER_DELAY_MS).toBe(100);
     expect(
       positionMissionRowPreview({
         anchor: { top: 100, right: 300, bottom: 140, left: 20, width: 280, height: 40 },
