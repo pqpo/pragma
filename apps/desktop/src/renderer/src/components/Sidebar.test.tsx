@@ -15,6 +15,12 @@ describe("Sidebar", () => {
       />,
     );
 
+  it("merges mission navigation into Home", () => {
+    const html = renderSidebar(false);
+    expect(html).toContain('aria-label="Home"');
+    expect(html).not.toContain('aria-label="Missions"');
+  });
+
   it("hides the Memory top-level entry when memory is disabled", () => {
     expect(renderSidebar(false)).not.toContain('aria-label="Memory"');
   });
@@ -26,16 +32,16 @@ describe("Sidebar", () => {
   it.each([false, true])("shows accessible attention dots with collapsed=%s", (collapsed) => {
     const html = renderToStaticMarkup(
       <Sidebar
-        activeView="missions"
+        activeView="home"
         collapsed={collapsed}
         memoryEnabled
-        attention={{ missions: true, studio: true, memory: true }}
+        attention={{ home: true, studio: true, memory: true }}
         onNavigate={() => undefined}
         onToggle={() => undefined}
       />,
     );
     expect(html.match(/class="navigation-attention-dot"/g)).toHaveLength(3);
     expect(html).toContain('aria-label="Unread messages or pending actions"');
-    expect(html).toContain('aria-label="Missions, Unread messages or pending actions"');
+    expect(html).toContain('aria-label="Home, Unread messages or pending actions"');
   });
 });

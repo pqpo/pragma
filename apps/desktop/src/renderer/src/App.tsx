@@ -34,10 +34,8 @@ export function App() {
   );
   const [sidebarWidth, setSidebarWidth] = usePersistentSidebarWidth(SIDEBAR_WIDTH_PREFERENCES.main);
   const [missionExecutorRef, setMissionExecutorRef] = useState<string>();
-  const [missionWorkspaceToCreate, setMissionWorkspaceToCreate] = useState<Mission["workspace"]>();
   const [missionToOpen, setMissionToOpen] = useState<Mission>();
   const [missionComposerDraftToOpen, setMissionComposerDraftToOpen] = useState<string>();
-  const [autoRunMissionOnOpen, setAutoRunMissionOnOpen] = useState(false);
   const [missionsMemoryState, setMissionsMemoryState] = useState<MissionsPageMemoryState>();
   const [studioExpertRef, setStudioExpertRef] = useState<string>();
   const [studioExpertStep, setStudioExpertStep] = useState<"capabilities" | undefined>();
@@ -52,7 +50,7 @@ export function App() {
   const [evaluationTargetId, setEvaluationTargetId] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
   const [memoryEnabled, setMemoryEnabled] = useState<boolean>();
-  const attention = useNavigationAttention(activeView === "missions", memoryEnabled === true);
+  const attention = useNavigationAttention(activeView === "home", memoryEnabled === true);
   const [assetGitIssues, setAssetGitIssues] = useState<readonly AssetGitStatus[]>([]);
   const assetGitNavigationSequence = useRef(0);
   const leaveGuardRef = useRef<StudioLeaveGuard | null>(null);
@@ -106,16 +104,14 @@ export function App() {
   const navigate = (view: AppView) => {
     const perform = () => {
       setMissionExecutorRef(undefined);
-      setMissionWorkspaceToCreate(undefined);
       setMissionComposerDraftToOpen(undefined);
-      setAutoRunMissionOnOpen(false);
       setStudioExpertRef(undefined);
       setStudioExpertStep(undefined);
       setStudioResourceRef(undefined);
       setStudioCapabilityId(undefined);
       setStudioRevisionStoreId(undefined);
       setStudioAssetGitTarget(undefined);
-      if (view === "missions") setMissionToOpen(undefined);
+      if (view === "home") setMissionToOpen(undefined);
       if (view === "settings") setSettingsView("general");
       setActiveView(view);
     };
@@ -202,7 +198,7 @@ export function App() {
         activeView={activeView}
         collapsed={sidebarCollapsed}
         memoryEnabled={memoryEnabled === true}
-        attention={attention}
+        attention={{ ...attention, home: attention.missions }}
         onNavigate={navigate}
         onToggle={toggleSidebar}
       />
@@ -216,29 +212,11 @@ export function App() {
       ) : null}
 
       {activeView === "home" ? (
-        <HomePage
-          initialExecutorRef={missionExecutorRef}
-          initialWorkspace={missionWorkspaceToCreate}
-          onConfigureModels={openModelSettings}
-          onConfigureRuntime={openRuntimeSettings}
-          onConfigureExpert={openStudioForExecutor}
-          onOpenKnowledgeBases={openKnowledgeBases}
-          onCreated={(mission) => {
-            setMissionToOpen(mission);
-            setMissionComposerDraftToOpen(undefined);
-            setAutoRunMissionOnOpen(true);
-            setMissionWorkspaceToCreate(undefined);
-            setMissionExecutorRef(undefined);
-            setActiveView("missions");
-          }}
-        />
-      ) : activeView === "missions" ? (
         <MissionsPage
           initialMission={missionToOpen}
           initialComposerDraft={missionComposerDraftToOpen}
           initialMemoryState={missionsMemoryState}
           memoryEnabled={memoryEnabled}
-          autoRunInitialMission={autoRunMissionOnOpen}
           onMemoryStateChange={setMissionsMemoryState}
           onConfigureModels={openModelSettings}
           onOpenKnowledgeBases={openKnowledgeBases}
@@ -258,14 +236,22 @@ export function App() {
             setStudioRevisionStoreId(undefined);
             setActiveView("studio");
           }}
-          onCreate={(workspace) => {
-            setMissionWorkspaceToCreate(workspace);
+          onCreate={() => {
+            setMissionExecutorRef(undefined);
             setMissionToOpen(undefined);
             setMissionComposerDraftToOpen(undefined);
-            setAutoRunMissionOnOpen(false);
-            setMissionExecutorRef(undefined);
-            setActiveView("home");
           }}
+          renderNewMission={({ workspace, onCreated }) => (
+            <HomePage
+              initialExecutorRef={missionExecutorRef}
+              initialWorkspace={workspace}
+              onConfigureModels={openModelSettings}
+              onConfigureRuntime={openRuntimeSettings}
+              onConfigureExpert={openStudioForExecutor}
+              onOpenKnowledgeBases={openKnowledgeBases}
+              onCreated={onCreated}
+            />
+          )}
         />
       ) : activeView === "studio" ? (
         <StudioPage
@@ -283,20 +269,26 @@ export function App() {
             leaveGuardRef.current = guard;
           }}
           onUseInSession={(executorRef) => {
+            setMissionsMemoryState((current) =>
+              current === undefined
+                ? undefined
+                : {
+                    ...current,
+                    selectedMission: null,
+                    selectedMissionId: null,
+                  },
+            );
             setMissionExecutorRef(executorRef);
-            setMissionWorkspaceToCreate(undefined);
             setMissionToOpen(undefined);
             setMissionComposerDraftToOpen(undefined);
-            setAutoRunMissionOnOpen(false);
             setActiveView("home");
           }}
           onOpenMission={(missionId, composerDraft) => {
             void window.pragmaDesktop.getMission(missionId).then((mission) => {
               setMissionToOpen(mission);
               setMissionComposerDraftToOpen(composerDraft);
-              setAutoRunMissionOnOpen(false);
               setStudioRevisionStoreId(undefined);
-              setActiveView("missions");
+              setActiveView("home");
             });
           }}
         />

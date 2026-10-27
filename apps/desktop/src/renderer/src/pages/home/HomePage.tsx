@@ -827,6 +827,7 @@ export function HomePage(props: {
       setAttachmentPreviews({});
       setFlowInput(clearedFlowInput);
       await props.onCreated(mission);
+      setSaving(false);
     } catch (submitError) {
       setError(
         localizedMissionError(submitError, (key, options) =>

@@ -9,7 +9,6 @@ import {
   GearSix,
   House,
   Brain,
-  RocketLaunch,
   TestTube,
   Storefront,
   TerminalWindow,
@@ -22,7 +21,7 @@ import { AttentionDot } from "./AttentionDot.tsx";
 import { readPinnedNavigation, writePinnedNavigation } from "../lib/sidebar-preference.ts";
 
 export type AppView =
-  "home" | "missions" | "studio" | "market" | "evaluations" | "memory" | "usage" | "settings";
+  "home" | "studio" | "market" | "evaluations" | "memory" | "usage" | "settings";
 
 const navigationItems: readonly {
   readonly id: AppView;
@@ -30,7 +29,6 @@ const navigationItems: readonly {
   readonly icon: Icon;
 }[] = [
   { id: "home", labelKey: "navigation.home", icon: House },
-  { id: "missions", labelKey: "navigation.missions", icon: RocketLaunch },
   { id: "studio", labelKey: "navigation.studio", icon: TerminalWindow },
   { id: "memory", labelKey: "navigation.memory", icon: Brain },
 ];

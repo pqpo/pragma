@@ -775,21 +775,26 @@
 }
 
 .home-mission-create {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
   position: relative;
   isolation: isolate;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
+  align-content: end;
   place-items: center;
-  padding: 48px;
+  padding: 48px 32px 32px;
   background: var(--ui-canvas);
 }
 
 .home-mission-create > .mission-create {
   position: relative;
   z-index: 2;
-  width: min(900px, 100%);
+  width: min(780px, 100%);
   height: auto;
-  max-height: 100%;
+  max-height: none;
+  margin: 0 auto;
   overflow: visible;
   padding: 0;
 }
@@ -1235,7 +1240,7 @@
 
 @media (max-width: 1060px) {
   .home-mission-create {
-    padding: 36px;
+    padding: 32px;
   }
 
   .home-mission-create .mission-goal-composer footer {
@@ -1245,21 +1250,6 @@
   .home-mission-create .mission-prompt-tools {
     flex-wrap: wrap;
   }
-}
-
-/* Calm, content-first Home screen. The former constellation is intentionally absent. */
-.home-mission-create {
-  display: grid;
-  align-content: end;
-  overflow: auto;
-  padding: clamp(40px, 8vh, 104px) 32px 4px;
-  background: var(--background);
-}
-
-.home-mission-create > .mission-create {
-  width: min(780px, 100%);
-  max-height: none;
-  margin: 0 auto;
 }
 
 .home-mission-create .home-welcome {

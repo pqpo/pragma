@@ -43,6 +43,7 @@
     "test:packaging:contracts": "node --test ./scripts/distribution-builder.test.mjs ./scripts/audit-packaged-app.test.mjs ./scripts/packaging-policy.test.mjs ./scripts/build-desktop-cli.test.mjs",
     "test:claude-worker": "node --test ./scripts/claude-worker-boundary.test.mjs",
     "test:mission-work-ui": "node ./scripts/test-mission-work-ui.mjs",
+    "test:home-missions-ui": "node ./scripts/test-home-missions-ui.mjs",
     "test:mission-rename-ui": "node ./scripts/test-mission-rename-ui.mjs",
     "test:bundle-recovery-ui": "node ./scripts/test-bundle-recovery-ui.mjs",
     "test:mission-chat": "vitest run src/test/mission-queued-chat-refresh.test.tsx src/renderer/src/pages/missions/mission-conversation-model.test.ts && vitest run src/main/features/missions/desktop-mission-adapter.test.ts -t \"streams every queued turn|keeps the captured live answer|projects an already-finished queued turn|projects oversized replies\"",

@@ -25,10 +25,13 @@ describe("App", () => {
   it("renders the mission creation Home by default", () => {
     const html = renderToStaticMarkup(<App />);
 
+    expect(html).toContain('class="missions-page"');
+    expect(html).toContain('class="mission-rail"');
+    expect(html.indexOf('class="mission-rail"')).toBeLessThan(html.indexOf('class="mission-main"'));
     expect(html).toContain('aria-label="Start mission"');
     expect(html).toContain("What can I help you with?");
     expect(html).toContain('aria-label="Mission options"');
-    expect(html).toContain('aria-label="Tool permissions"');
+    expect(html).toContain('aria-label="Knowledge"');
     expect(html).not.toContain("PRAGMA STEWARD");
     expect(html).toContain("Studio");
   });
@@ -41,7 +44,7 @@ describe("App", () => {
     expect(html).toContain("开始任务");
     expect(html).toContain("可以让我帮你做什么呢？");
     expect(html).toContain('aria-label="任务选项"');
-    expect(html).toContain('aria-label="工具权限"');
+    expect(html).toContain('aria-label="知识库"');
   });
 
   it("offers every available application destination", () => {
@@ -49,7 +52,7 @@ describe("App", () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain("Home");
-    expect(html).toContain("Missions");
+    expect(html).not.toContain('aria-label="Missions"');
     expect(html).toContain("Studio");
     expect(html).toContain("Market");
     expect(html).toContain("Evaluations");
@@ -60,7 +63,7 @@ describe("App", () => {
   it("keeps application navigation in the required product order", () => {
     pinAllMoreDestinations();
     const html = renderToStaticMarkup(<App />);
-    const labels = ["Home", "Missions", "Studio", "Market", "Evaluations", "Usage", "Settings"];
+    const labels = ["Home", "Studio", "Market", "Evaluations", "Usage", "Settings"];
     const positions = labels.map((label) => html.indexOf(`aria-label="${label}"`));
 
     expect(positions.every((position) => position >= 0)).toBe(true);
@@ -71,7 +74,7 @@ describe("App", () => {
     pinAllMoreDestinations();
     const html = renderToStaticMarkup(<App />);
 
-    expect(html).toContain("Missions");
+    expect(html).not.toContain('aria-label="Missions"');
     expect(html).toContain("Studio");
     expect(html).toContain("Market");
     expect(html).toContain("Evaluations");

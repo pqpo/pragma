@@ -1,7 +1,7 @@
 import { isValidElement, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import type { HomeProject } from "../../../../shared/contracts/index.ts";
+import type { HomeProject, Mission, MissionSummary } from "../../../../shared/contracts/index.ts";
 import { readHomeDraft, writeHomeDraft } from "../../lib/home-draft.ts";
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import { WorkspacePicker } from "../../components/WorkspacePicker.tsx";
@@ -828,5 +828,182 @@ it("does not scroll backward when a frame timestamp precedes the last pointer ev
   } finally {
     view.unmount();
     now.mockRestore();
+  }
+});
+
+function missionCreationFixture() {
+  fixture([]);
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  const makeMission = (id: string, title: string): Mission =>
+    MissionSchema.parse({
+      schemaVersion: "pragma.mission/v12",
+      origin: { type: "user" },
+      id,
+      title,
+      goal: title,
+      initialMessageId: crypto.randomUUID(),
+      workspace,
+      project: { id: "studio", revision: 1 },
+      contextMounts: [],
+      executor: { kind: "expert", name: "Pragma", ref: executorRef },
+      lifecycleStatus: "active",
+      createdAt: "2026-10-27T00:00:00.000Z",
+      updatedAt: "2026-10-27T00:00:00.000Z",
+    });
+  const existing = makeMission(crypto.randomUUID(), "Existing");
+  const created = makeMission(crypto.randomUUID(), "Created");
+  const summary: MissionSummary = {
+    id: existing.id,
+    title: existing.title,
+    workspace,
+    executor: existing.executor,
+    source: { type: "task" },
+    lifecycleStatus: "active",
+    updatedAt: existing.updatedAt,
+  };
+  const runMission = vi.fn(async () => created);
+  Object.assign(window.pragmaDesktop, {
+    subscribeMissionChatUpdates: () => () => {},
+    subscribeMissionStatusUpdates: () => () => {},
+    subscribeMissionUpdates: () => () => {},
+    reportRendererLog: () => {},
+    listMissions: async () => [summary],
+    getMission: async () => existing,
+    getMissionListSource: async () => ({ type: "task" }),
+    getMissionChatPage: async () => ({
+      missionId: existing.id,
+      entries: [],
+      revision: 1,
+      page: { hasMore: false },
+    }),
+    getMissionConversationState: async () => ({
+      missionId: existing.id,
+      revision: 1,
+      pendingInteractions: [],
+      deliveries: [],
+      hiddenEntryIds: [],
+    }),
+    getMissionCreationDefaults: async () => ({ workspace, recentWorkspaces: [] }),
+    runMission,
+  });
+  const renderNewMission = vi.fn(
+    (input: { workspace: typeof workspace | undefined; onCreated: (mission: Mission) => void }) => (
+      <div data-new-workspace={input.workspace?.path} />
+    ),
+  );
+  const onMemoryStateChange = vi.fn();
+  return { existing, created, summary, runMission, renderNewMission, onMemoryStateChange };
+}
+
+it("creates in the selected empty workspace when switching from the Home composer", async () => {
+  const f = missionCreationFixture();
+  const other = { path: "/workspace/empty", basename: "empty" };
+  const view = renderer(() =>
+    MissionsPage({
+      onCreate: () => {},
+      renderNewMission: f.renderNewMission,
+      initialMemoryState: {
+        missions: [],
+        selectedMission: null,
+        selectedMissionId: null,
+        workspaceTabs: addMissionWorkspaceTab(EMPTY_MISSION_WORKSPACE_TABS, other),
+      },
+    }),
+  );
+  try {
+    await view.flush();
+    (
+      view.props((_props, type) => type === MissionWorkspaceTabs).onChange as (path: string) => void
+    )(other.path);
+    await view.flush();
+    expect(f.renderNewMission.mock.lastCall?.[0].workspace).toEqual(other);
+  } finally {
+    view.unmount();
+  }
+});
+
+it("does not let a delayed creation steal navigation from another mission", async () => {
+  const f = missionCreationFixture();
+  const view = renderer(() =>
+    MissionsPage({
+      onCreate: () => {},
+      renderNewMission: f.renderNewMission,
+      onMemoryStateChange: f.onMemoryStateChange,
+    }),
+  );
+  try {
+    await view.flush();
+    const onCreated = f.renderNewMission.mock.lastCall![0].onCreated;
+    (
+      view.props((_props, type) => type === MissionRail).onOpen as (summary: MissionSummary) => void
+    )(f.summary);
+    await view.flush();
+    onCreated(f.created);
+    await view.flush();
+    expect(f.onMemoryStateChange.mock.lastCall?.[0].selectedMissionId).toBe(f.existing.id);
+    expect(
+      f.onMemoryStateChange.mock.lastCall?.[0].missions.map((m: MissionSummary) => m.id),
+    ).toContain(f.created.id);
+    expect(f.runMission).toHaveBeenCalledExactlyOnceWith(f.created.id);
+  } finally {
+    view.unmount();
+  }
+});
+
+it("keeps a newly created mission when an older initial list request resolves", async () => {
+  const f = missionCreationFixture();
+  let finishList!: (missions: MissionSummary[]) => void;
+  Object.assign(window.pragmaDesktop, {
+    listMissions: () =>
+      new Promise<MissionSummary[]>((resolve) => {
+        finishList = resolve;
+      }),
+  });
+  const view = renderer(() =>
+    MissionsPage({
+      onCreate: () => {},
+      renderNewMission: f.renderNewMission,
+      onMemoryStateChange: f.onMemoryStateChange,
+    }),
+  );
+  try {
+    await view.flush();
+    f.renderNewMission.mock.lastCall![0].onCreated(f.created);
+    await view.flush();
+    finishList([f.summary]);
+    await view.flush();
+    const state = f.onMemoryStateChange.mock.lastCall![0];
+    expect(state.selectedMissionId).toBe(f.created.id);
+    expect(state.missions.map((m: MissionSummary) => m.id)).toContain(f.created.id);
+    expect(f.runMission).toHaveBeenCalledExactlyOnceWith(f.created.id);
+  } finally {
+    view.unmount();
+  }
+});
+
+it("releases the Home submit button when creation finishes without leaving the composer", async () => {
+  fixture([]);
+  const view = renderer(() => HomePage({ onCreated: () => {} }));
+  try {
+    await view.flush();
+    const changeGoal = (value: string) =>
+      (view.props((props) => props.id === "mission-goal").onChange as (event: unknown) => void)({
+        target: { value },
+      });
+    changeGoal("First task");
+    await view.flush();
+    (
+      view.props((props) => String(props.className).split(" ").includes("mission-submit-button"))
+        .onClick as () => void
+    )();
+    await view.flush();
+    changeGoal("Next task");
+    await view.flush();
+    expect(
+      view.props((props) => String(props.className).split(" ").includes("mission-submit-button"))
+        .disabled,
+    ).toBe(false);
+  } finally {
+    view.unmount();
   }
 });

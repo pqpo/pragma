@@ -1684,7 +1684,7 @@ describe("MissionDetailFragment", () => {
     expect(html).toContain("mission-chat-composer-toolbar");
     expect(html).not.toContain("Used 0 tokens");
     expect(html).toContain('aria-label="Model"');
-    expect(html).toContain('aria-label="Tool permissions"');
+    expect(html).toContain('aria-label="Knowledge"');
     expect(html).not.toContain("mission-execution-notice");
     expect(html).not.toContain("Pinned to");
   });

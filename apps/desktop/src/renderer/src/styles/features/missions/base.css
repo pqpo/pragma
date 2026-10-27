@@ -371,6 +371,7 @@
 
 .mission-main {
   grid-area: detail;
+  background: var(--background);
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -1446,10 +1447,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.mission-main {
-  background: var(--background);
 }
 
 .mission-create > header h1,

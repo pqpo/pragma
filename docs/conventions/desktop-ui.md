@@ -20,9 +20,10 @@ Pragma 是长时间使用的 Agent 工作台，不是营销网站，也不是组
 保留现有产品辨识度：
 
 - 纯白画布、浅灰导航、白色选中项、石墨色文字和蓝色主操作。
-- 左侧应用导航保持 Home、Missions、Studio、Memory；“更多”按 Market、Evaluations、Usage、Settings 排列。
+- 左侧应用导航保持 Home、Studio、Memory；“更多”按 Market、Evaluations、Usage、Settings 排列。
   市场使用独立主页面，不再出现在工作室二级导航中，支持沿用“更多”的固定入口操作。
-- Home 的单一 Mission composer、目录/详情分栏、Flow canvas 等已经形成产品心智的结构。
+- Home 统一承载 Mission 列表与工作区：左侧保留任务目录，右侧新建时显示原 Home composer，选中任务后显示对话详情。
+- 单一 Mission composer、目录/详情分栏、Flow canvas 等已经形成产品心智的结构。
 
 所有页面遵循以下视觉优先级：
 
