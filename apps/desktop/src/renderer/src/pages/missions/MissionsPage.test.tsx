@@ -61,7 +61,7 @@ import {
   upsertMissionSummary,
   withMissionUiWatchdog,
   teamMissionsForMentionCandidates,
-  teamParticipantWorkRecords,
+  missionParticipantWorkRecords,
   type MissionHumanQuestion,
 } from "./MissionsPage.tsx";
 import { LocalMissionUserMessageView } from "./mission-chat-presentation.tsx";
@@ -1706,6 +1706,42 @@ describe("MissionDetailFragment", () => {
     expect(html).not.toContain("mission-team-inspector");
   });
 
+  it("keeps delegated expert output out of the host conversation", () => {
+    const mission = missionFixture("expert");
+    const createdAt = "2026-07-21T00:00:00.000Z";
+    const chat: MissionConversationSnapshot = {
+      missionId: mission.id,
+      revision: 1,
+      entries: [
+        { id: "user", kind: "user", content: "Review this", createdAt },
+        {
+          id: "host",
+          kind: "assistant",
+          content: "Host answer",
+          streaming: false,
+          executorId: mission.executor.ref.slice("expert:".length),
+          createdAt,
+        },
+        {
+          id: "child",
+          kind: "assistant",
+          content: "Private delegated findings",
+          streaming: false,
+          executorId: "delegated-expert",
+          createdAt,
+        },
+      ],
+      page: {},
+      pendingInteractions: [],
+    };
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+    );
+    expect(html).toContain("Host answer");
+    expect(html).toContain("Review this");
+    expect(html).not.toContain("Private delegated findings");
+  });
+
   it("uses one interrupt-or-send action and exposes queued-message shortcuts", () => {
     const mission = missionFixture("expert");
     mission.execution = {
@@ -2038,7 +2074,7 @@ describe("Mission work grid", () => {
         createdAt: "2026-07-21T00:00:03.000Z",
       },
     ];
-    const participants = teamParticipantWorkRecords(records, [
+    const participants = missionParticipantWorkRecords(records, [
       {
         ref: "expert:coordinator-id",
         name: "Coordinator",
@@ -2071,6 +2107,65 @@ describe("Mission work grid", () => {
     expect(html).toContain("mission-team-participant is-running");
     expect(html).toContain("mission-team-participant-work-link");
     expect(html.match(/role="listitem"/g)).toHaveLength(3);
+  });
+
+  it("includes delegated experts and native subagents as separate avatar entries", () => {
+    const base: MissionWorkRecord = {
+      recordId: "root",
+      kind: "root",
+      sessionId: "host",
+      title: "Host",
+      origin: "core",
+      status: "running",
+      tasks: [],
+      summary: "Working",
+      createdAt: "2026-07-21T00:00:00.000Z",
+      updatedAt: "2026-07-21T00:00:00.000Z",
+    };
+    const records: MissionWorkRecord[] = [
+      base,
+      {
+        ...base,
+        recordId: "expert",
+        kind: "agent",
+        sessionId: "expert-session",
+        title: "Reviewer",
+      },
+      {
+        ...base,
+        recordId: "native-a",
+        kind: "runtime-agent",
+        origin: "runtime",
+        sessionId: "a",
+        title: "Researcher",
+      },
+      {
+        ...base,
+        recordId: "native-b",
+        kind: "runtime-agent",
+        origin: "runtime",
+        sessionId: "b",
+        title: "Researcher",
+      },
+      { ...base, recordId: "task", kind: "task" },
+    ];
+    const participants = missionParticipantWorkRecords(records);
+    expect(participants.map((record) => record.recordId)).toEqual([
+      "expert",
+      "native-a",
+      "native-b",
+    ]);
+    const html = renderToStaticMarkup(
+      <MissionTeamParticipantList
+        records={participants}
+        allRecords={records}
+        onOpenWork={() => undefined}
+        onSelect={() => undefined}
+      />,
+    );
+    expect(html.match(/mission-team-participant-avatar/g)).toHaveLength(3);
+    expect(html).toContain("Reviewer");
+    expect(html).toContain("Researcher");
   });
 
   it("renders the participant summary card above the avatar after a 200ms hover delay", async () => {

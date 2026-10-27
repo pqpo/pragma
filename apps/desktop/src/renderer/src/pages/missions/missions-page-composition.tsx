@@ -43,7 +43,7 @@ export {
 } from "./mission-detail.tsx";
 export {
   missionWorkCallOrder,
-  teamParticipantWorkRecords,
+  missionParticipantWorkRecords,
   MISSION_TEAM_PARTICIPANT_PREVIEW_HOVER_DELAY_MS,
   positionMissionTeamParticipantPreview,
   MissionTeamParticipantPreviewCard,

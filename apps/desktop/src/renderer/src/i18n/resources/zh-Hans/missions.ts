@@ -486,6 +486,8 @@ export const missions = {
   readOnlyConversation: "只读对话",
   mainAgent: "主 Agent",
   streaming: "正在输出",
+  workConversationUnavailable: "无法读取代理对话",
+  workEarlierConversationUnavailable: "无法读取更早的消息",
   waitingForAgentConversation: "正在等待此 Agent 回复…",
   thinkingActive: "{{name}} 正在思考…",
   expandThinking: "展开思考过程",

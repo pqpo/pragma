@@ -6,6 +6,7 @@ import {
   type MissionWorkRecord,
   type ExpertMentionCandidate,
 } from "../../../../shared/contracts/index.ts";
+import { MissionWorkErrorNotice } from "./mission-work-error-notice.tsx";
 import { groupMissionConversationEntries } from "./mission-conversation-model.ts";
 import { MissionChatEntryView, MissionToolCallBlock } from "./mission-chat-presentation.tsx";
 import {
@@ -21,10 +22,15 @@ export function MissionWorkDrawer(props: {
   readonly mentionCandidates?: readonly ExpertMentionCandidate[] | undefined;
   readonly entries: readonly MissionChatEntry[];
   readonly loading: boolean;
+  readonly error?: string | null | undefined;
+  readonly earlierError?: string | null | undefined;
+  readonly onRetry?: (() => void) | undefined;
   readonly onLoadEarlier?: (() => void | Promise<void>) | undefined;
   readonly onClose: () => void;
 }) {
   const { t } = useTranslation(["missions", "common"]);
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const followLatestRef = useRef(true);
   const prependScrollHeightRef = useRef<number | null>(null);
@@ -41,6 +47,36 @@ export function MissionWorkDrawer(props: {
     lastEntry === undefined
       ? "empty"
       : `${lastEntry.id}:${lastEntry.kind}:${entryContentLength(lastEntry)}`;
+
+  // Image previews open a portalled dialog above this drawer.
+  const isTopmostDialog = () =>
+    [
+      ...document.querySelectorAll(
+        '[aria-modal="true"][role="dialog"], [aria-modal="true"][role="alertdialog"]',
+      ),
+    ].at(-1) === drawerRef.current;
+
+  useEffect(() => {
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeRef.current?.focus();
+    const containFocus = (event: FocusEvent) => {
+      if (
+        isTopmostDialog() &&
+        event.target instanceof Node &&
+        !drawerRef.current?.contains(event.target)
+      ) {
+        closeRef.current?.focus();
+      }
+    };
+    document.addEventListener("focusin", containFocus);
+    return () => {
+      document.removeEventListener("focusin", containFocus);
+      document.body.style.overflow = previousOverflow;
+      if (trigger?.isConnected) trigger.focus();
+    };
+  }, []);
 
   useEffect(() => {
     const scroll = scrollRef.current;
@@ -83,14 +119,45 @@ export function MissionWorkDrawer(props: {
       <button
         className="mission-work-drawer-scrim"
         type="button"
+        tabIndex={-1}
         aria-label={t("actions.close", { ns: "common" })}
         onClick={props.onClose}
       />
       <aside
         className="mission-work-drawer"
+        ref={drawerRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="mission-work-drawer-title"
+        onKeyDown={(event) => {
+          if (event.defaultPrevented || !isTopmostDialog()) return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onClose();
+          } else if (event.key === "Tab") {
+            const focusable = [
+              ...event.currentTarget.querySelectorAll<HTMLElement>(
+                'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]',
+              ),
+            ].filter(
+              (element) =>
+                !element.hasAttribute("disabled") &&
+                element.tabIndex >= 0 &&
+                element.getClientRects().length > 0 &&
+                getComputedStyle(element).visibility !== "hidden",
+            );
+            const first = focusable[0];
+            const last = focusable.at(-1);
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault();
+              last?.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first?.focus();
+            }
+          }
+        }}
       >
         <header>
           <div>
@@ -108,6 +175,7 @@ export function MissionWorkDrawer(props: {
             </p>
           </div>
           <button
+            ref={closeRef}
             type="button"
             aria-label={t("actions.close", { ns: "common" })}
             onClick={props.onClose}
@@ -129,6 +197,18 @@ export function MissionWorkDrawer(props: {
             }}
           >
             <div className="mission-chat-list mission-work-conversation-list">
+              <MissionWorkErrorNotice
+                title={t("workConversationUnavailable", { ns: "missions" })}
+                error={props.error}
+                loading={props.loading}
+                onRetry={props.onRetry}
+              />
+              <MissionWorkErrorNotice
+                title={t("workEarlierConversationUnavailable", { ns: "missions" })}
+                error={props.earlierError}
+                loading={props.loading}
+                onRetry={props.onLoadEarlier === undefined ? undefined : () => void loadEarlier()}
+              />
               {props.onLoadEarlier === undefined ? null : (
                 <button
                   className="mission-load-earlier"
@@ -146,7 +226,8 @@ export function MissionWorkDrawer(props: {
                   <SpinnerGap size={14} aria-hidden="true" />
                   {t("streaming", { ns: "missions" })}
                 </p>
-              ) : props.entries.length === 0 ? (
+              ) : props.entries.length === 0 && props.error != null ? null : props.entries
+                  .length === 0 ? (
                 <p className="mission-work-conversation-empty">
                   {t("waitingForAgentConversation", { ns: "missions" })}
                 </p>

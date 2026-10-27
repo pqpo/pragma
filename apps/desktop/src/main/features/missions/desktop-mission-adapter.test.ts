@@ -5749,6 +5749,26 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
     const expertChat = await runner.getChatPage({ id: expertMission.id, limit: 50 });
     const teamChat = await runner.getChatPage({ id: teamMission.id, limit: 50 });
     const flowChat = await runner.getChatPage({ id: flowMission.id, limit: 50 });
+    const expertWork = await runner.getWork(expertMission.id);
+    const delegatedWork = expertWork.records.find(
+      (record) => record.kind === "agent" && record.executorId === reviewer.metadata.id,
+    );
+    expect(delegatedWork).toMatchObject({ title: "Reviewer", status: "succeeded" });
+    const delegatedConversation = await runner.getWorkConversation({
+      id: expertMission.id,
+      recordId: delegatedWork!.recordId,
+      limit: 50,
+    });
+    expect(delegatedConversation.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "assistant", executorId: reviewer.metadata.id }),
+      ]),
+    );
+    expect(delegatedConversation.entries).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "assistant", executorId: writer.metadata.id }),
+      ]),
+    );
     const expertOutputs = expertChat.entries.filter((entry) => entry.kind === "assistant");
     const teamOutputs = teamChat.entries.filter((entry) => entry.kind === "assistant");
     const flowOutputs = flowChat.entries.filter((entry) => entry.kind === "assistant");

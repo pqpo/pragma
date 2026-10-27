@@ -14,7 +14,17 @@ export function useMissionWork(options: {
   readonly missionId: string;
   readonly executionId?: string | undefined;
   readonly active: boolean;
-  readonly api?: PragmaDesktopAPI | undefined;
+  readonly api?:
+    | Pick<
+        PragmaDesktopAPI,
+        | "getMissionWork"
+        | "subscribeMissionWork"
+        | "subscribeMissionWorkConversationUpdates"
+        | "openMissionWorkConversationStream"
+        | "closeMissionWorkConversationStream"
+        | "getMissionWorkConversation"
+      >
+    | undefined;
   readonly formatError: (error: unknown) => string;
 }) {
   const [records, setRecords] = useState<readonly MissionWorkRecord[]>([]);
@@ -24,6 +34,10 @@ export function useMissionWork(options: {
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshRevision, setRefreshRevision] = useState(0);
+  const [conversationError, setConversationError] = useState<string | null>(null);
+  const [earlierError, setEarlierError] = useState<string | null>(null);
+  const [conversationRefreshRevision, setConversationRefreshRevision] = useState(0);
+  const conversationGenerationRef = useRef(0);
   const conversationRef = useRef<MissionWorkConversationSnapshot | null>(null);
   const updateConversation = useCallback(
     (value: SetStateAction<MissionWorkConversationSnapshot | null>): void => {
@@ -44,20 +58,13 @@ export function useMissionWork(options: {
     updateConversation(null);
     setSelectedRecordId(null);
     setError(null);
+    setConversationError(null);
+    setEarlierError(null);
   }, [options.missionId, updateConversation]);
 
   useEffect(() => {
     if (selectedRecordId !== null && selectedRecord === undefined) setSelectedRecordId(null);
   }, [selectedRecord, selectedRecordId]);
-
-  useEffect(() => {
-    if (selectedRecord === undefined) return;
-    const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedRecordId(null);
-    };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [selectedRecord]);
 
   useEffect(() => {
     if (options.api === undefined || !options.active || options.executionId === undefined) {
@@ -110,6 +117,9 @@ export function useMissionWork(options: {
   ]);
 
   useEffect(() => {
+    conversationGenerationRef.current += 1;
+    setConversationError(null);
+    setEarlierError(null);
     if (
       options.api === undefined ||
       !options.active ||
@@ -117,6 +127,7 @@ export function useMissionWork(options: {
       selectedRecordId === null
     ) {
       updateConversation(null);
+      setConversationLoading(false);
       return;
     }
     let cancelled = false;
@@ -133,6 +144,10 @@ export function useMissionWork(options: {
       });
       if (cancelled) return;
       updateConversation((current) => mergeLatestMissionWorkConversation(current, next));
+      setConversationError(null);
+    };
+    const reportConversationError = (loadError: unknown): void => {
+      if (!cancelled) setConversationError(options.formatError(loadError));
     };
     function drainPendingUpdates(): void {
       if (streamId === undefined) return;
@@ -157,7 +172,7 @@ export function useMissionWork(options: {
       }
       nextSequence += 1;
       if (update.kind === "invalidate") {
-        void refreshConversation().catch(() => undefined);
+        void refreshConversation().catch(reportConversationError);
         drainPendingUpdates();
         return;
       }
@@ -175,7 +190,7 @@ export function useMissionWork(options: {
       };
       const patched = applyMissionChatPatches(projected, update.patches, update.sequence);
       if (patched === null) {
-        void refreshConversation().catch(() => undefined);
+        void refreshConversation().catch(reportConversationError);
         return;
       }
       updateConversation({ ...current, entries: patched.entries });
@@ -192,21 +207,21 @@ export function useMissionWork(options: {
       .then((next) => {
         if (cancelled) return;
         streamId = next.streamId;
-        updateConversation(next.snapshot);
+        updateConversation((current) => mergeLatestMissionWorkConversation(current, next.snapshot));
+        setConversationError(null);
         for (const update of pendingUpdates
           .splice(0)
           .toSorted((left, right) => left.sequence - right.sequence)) {
           applyUpdate(update);
         }
       })
-      .catch((loadError) => {
-        if (!cancelled) console.error("Failed to load Mission work conversation.", loadError);
-      })
+      .catch(reportConversationError)
       .finally(() => {
         if (!cancelled) setConversationLoading(false);
       });
     return () => {
       cancelled = true;
+      conversationGenerationRef.current += 1;
       unsubscribe();
       void options
         .api!.closeMissionWorkConversationStream({ subscriptionId })
@@ -217,7 +232,8 @@ export function useMissionWork(options: {
     options.api,
     options.executionId,
     options.missionId,
-    refreshRevision,
+    options.formatError,
+    conversationRefreshRevision,
     selectedRecordId,
     updateConversation,
   ]);
@@ -231,7 +247,9 @@ export function useMissionWork(options: {
     ) {
       return;
     }
+    const generation = conversationGenerationRef.current;
     setConversationLoading(true);
+    setEarlierError(null);
     try {
       const earlier = await options.api.getMissionWorkConversation({
         id: options.missionId,
@@ -239,18 +257,25 @@ export function useMissionWork(options: {
         beforeCursor: conversation.nextBeforeCursor,
         limit: MISSION_WORK_CONVERSATION_PAGE_SIZE,
       });
-      if (conversationRef.current?.recordId !== earlier.recordId) return;
+      if (
+        generation !== conversationGenerationRef.current ||
+        conversationRef.current?.recordId !== earlier.recordId
+      )
+        return;
       updateConversation((current) => prependMissionWorkConversation(current, earlier));
     } catch (loadError) {
-      console.error("Failed to load earlier Mission work conversation.", loadError);
+      if (generation === conversationGenerationRef.current) {
+        setEarlierError(options.formatError(loadError));
+      }
     } finally {
-      setConversationLoading(false);
+      if (generation === conversationGenerationRef.current) setConversationLoading(false);
     }
   }, [
     conversation,
     conversationLoading,
     options.api,
     options.missionId,
+    options.formatError,
     selectedRecord,
     updateConversation,
   ]);
@@ -262,11 +287,17 @@ export function useMissionWork(options: {
     retry: () => setRefreshRevision((current) => current + 1),
     selectedRecord,
     selectRecord: (recordId: string | null) => {
+      conversationGenerationRef.current += 1;
       updateConversation(null);
+      setConversationError(null);
+      setEarlierError(null);
       setSelectedRecordId(recordId);
     },
     conversation,
     conversationLoading,
+    conversationError,
+    earlierError,
+    retryConversation: () => setConversationRefreshRevision((current) => current + 1),
     loadEarlier,
   };
 }

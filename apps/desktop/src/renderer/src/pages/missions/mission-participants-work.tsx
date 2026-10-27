@@ -63,17 +63,21 @@ export function expertIdFromRef(ref: string): string {
   return ref.startsWith("expert:") ? ref.slice("expert:".length) : ref;
 }
 
-export function teamParticipantWorkRecords(
+export function missionParticipantWorkRecords(
   records: readonly MissionWorkRecord[],
-  members: readonly ExpertMentionCandidate[],
+  members?: readonly ExpertMentionCandidate[],
 ): MissionWorkRecord[] {
-  const memberIds = new Set(members.map((member) => expertIdFromRef(member.ref)));
+  const memberIds =
+    members === undefined
+      ? undefined
+      : new Set(members.map((member) => expertIdFromRef(member.ref)));
   return records
     .filter(
       (record) =>
         record.kind !== "root" &&
-        record.executorId !== undefined &&
-        memberIds.has(record.executorId),
+        (memberIds === undefined
+          ? record.kind === "agent" || record.kind === "runtime-agent"
+          : record.executorId !== undefined && memberIds.has(record.executorId)),
     )
     .toSorted((left, right) => {
       const updated = right.updatedAt.localeCompare(left.updatedAt);

@@ -28,7 +28,6 @@ import {
   type MissionContextMount,
   type MissionChatEntry,
   type MissionConversationSnapshot,
-  type MissionWorkRecord,
   type DesktopMissionMemoryActivity,
   type ExpertMentionCandidate,
   type MissionMentionCandidates,
@@ -119,10 +118,11 @@ import {
   MissionTeamParticipantList,
   MissionWorkGrid,
   expertIdFromRef,
-  teamParticipantWorkRecords,
+  missionParticipantWorkRecords,
 } from "./mission-participants-work.tsx";
 import { MissionChatSkeleton } from "./mission-rail.tsx";
 import { MissionHumanComposer } from "./mission-human-question.tsx";
+import { MissionWorkErrorNotice } from "./mission-work-error-notice.tsx";
 import { MissionWorkDrawer } from "./mission-work-drawer.tsx";
 
 type MissionQueuedMessageAction = "steer" | "remove";
@@ -264,11 +264,14 @@ export function MissionDetailFragment(props: {
     selectRecord: selectWorkRecord,
     conversation: workConversation,
     conversationLoading: workConversationLoading,
+    conversationError: workConversationError,
+    earlierError: workConversationEarlierError,
+    retryConversation: retryWorkConversation,
     loadEarlier: loadEarlierWorkConversation,
   } = useMissionWork({
     missionId: props.mission.id,
     executionId: props.mission.execution?.id,
-    active: activeTab === "work" || (isTeam && activeTab === "chat"),
+    active: activeTab === "work" || (!isFlow && activeTab === "chat"),
     api: desktopApi(),
     formatError: missionError,
   });
@@ -306,11 +309,14 @@ export function MissionDetailFragment(props: {
     },
   });
   const coordinatorId =
+    (props.mission.executor.kind === "expert"
+      ? expertIdFromRef(props.mission.executor.ref)
+      : undefined) ??
     (teamCoordinator === undefined ? undefined : expertIdFromRef(teamCoordinator.ref)) ??
     workRecords.find((record) => record.kind === "root")?.executorId;
   const isChatOutputVisible = useCallback(
-    (entry: MissionChatEntry) => !isTeam || isMissionCoordinatorChatEntry(entry, coordinatorId),
-    [isTeam, coordinatorId],
+    (entry: MissionChatEntry) => isFlow || isMissionCoordinatorChatEntry(entry, coordinatorId),
+    [isFlow, coordinatorId],
   );
   const {
     chat,
@@ -354,8 +360,6 @@ export function MissionDetailFragment(props: {
   const followLatestRef = useRef(true);
   const chatScrollTopRef = useRef(0);
   const chatScrollMissionIdRef = useRef(props.mission.id);
-  const selectedWorkTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const previousSelectedWorkRecordRef = useRef<MissionWorkRecord | undefined>(undefined);
   const bindComposerRef = useCallback((composer: MissionComposerHandle | null): void => {
     composerRef.current = composer;
     if (composer !== null) lastUnmountedComposerSnapshotRef.current = undefined;
@@ -427,19 +431,6 @@ export function MissionDetailFragment(props: {
       cancelled = true;
     };
   }, [props.mission.executor.kind, props.mission.id, props.teamIdentityCache, teamIdentityKey]);
-
-  useEffect(() => {
-    if (
-      previousSelectedWorkRecordRef.current !== undefined &&
-      selectedWorkRecord === undefined &&
-      selectedWorkTriggerRef.current !== null
-    ) {
-      const trigger = selectedWorkTriggerRef.current;
-      selectedWorkTriggerRef.current = null;
-      requestAnimationFrame(() => trigger.focus());
-    }
-    previousSelectedWorkRecordRef.current = selectedWorkRecord;
-  }, [selectedWorkRecord]);
 
   useEffect(() => {
     if (!contextStorePickerOpen) return;
@@ -1038,14 +1029,17 @@ export function MissionDetailFragment(props: {
   );
   const displayEntries = useMemo(
     () =>
-      isTeam
-        ? teamCoordinatorChatEntries(unfilteredDisplayEntries, coordinatorId)
-        : unfilteredDisplayEntries,
-    [coordinatorId, isTeam, unfilteredDisplayEntries],
+      isFlow
+        ? unfilteredDisplayEntries
+        : teamCoordinatorChatEntries(unfilteredDisplayEntries, coordinatorId),
+    [coordinatorId, isFlow, unfilteredDisplayEntries],
   );
   const participantWorkRecords = useMemo(
-    () => (isTeam ? teamParticipantWorkRecords(workRecords, mentionCandidates) : []),
-    [isTeam, mentionCandidates, workRecords],
+    () =>
+      isFlow
+        ? []
+        : missionParticipantWorkRecords(workRecords, isTeam ? mentionCandidates : undefined),
+    [isFlow, isTeam, mentionCandidates, workRecords],
   );
   const participantWorkFingerprint = participantWorkRecords
     .map((record) => `${record.recordId}:${record.status}:${record.updatedAt}`)
@@ -1237,6 +1231,7 @@ export function MissionDetailFragment(props: {
     lastEntryFingerprint,
     lastContextOperationFingerprint,
     participantWorkFingerprint,
+    workError,
     interactions.length,
     scheduleFollowLatest,
   ]);
@@ -1595,15 +1590,20 @@ export function MissionDetailFragment(props: {
                             executorName={props.mission.executor.name}
                             onVisibilityChange={scheduleFollowLatest}
                           />
+                          {isFlow ? null : (
+                            <MissionWorkErrorNotice
+                              title={t("workHistoryUnavailable", { ns: "missions" })}
+                              error={workError}
+                              loading={workLoading}
+                              onRetry={retryWork}
+                            />
+                          )}
                           {participantWorkRecords.length === 0 ? null : (
                             <MissionTeamParticipantList
                               records={participantWorkRecords}
                               allRecords={workRecords}
                               onOpenWork={() => changeTab("work")}
-                              onSelect={(recordId, trigger) => {
-                                selectedWorkTriggerRef.current = trigger;
-                                selectWorkRecord(recordId);
-                              }}
+                              onSelect={selectWorkRecord}
                             />
                           )}
                           <span aria-hidden="true" className="mission-chat-bottom-anchor" />
@@ -2110,15 +2110,13 @@ export function MissionDetailFragment(props: {
           <MissionWorkGrid
             records={workRecords}
             mentionCandidates={mentionCandidates}
-            onSelect={(recordId) => {
-              selectedWorkTriggerRef.current = null;
-              selectWorkRecord(recordId);
-            }}
+            onSelect={selectWorkRecord}
           />
         )}
       </div>
       {selectedWorkRecord === undefined ? null : (
         <MissionWorkDrawer
+          key={selectedWorkRecord.recordId}
           missionId={props.mission.id}
           record={selectedWorkRecord}
           inputSenderName={selectedWorkInputSenderName}
@@ -2129,6 +2127,9 @@ export function MissionDetailFragment(props: {
               : []
           }
           loading={workConversationLoading}
+          error={workConversationError}
+          earlierError={workConversationEarlierError}
+          onRetry={retryWorkConversation}
           onLoadEarlier={
             workConversation?.recordId === selectedWorkRecord.recordId &&
             workConversation.nextBeforeCursor !== undefined

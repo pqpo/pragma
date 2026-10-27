@@ -511,6 +511,8 @@ export const missions = {
   readOnlyConversation: "Read-only conversation",
   mainAgent: "Main agent",
   streaming: "Streaming",
+  workConversationUnavailable: "Unable to load agent conversation",
+  workEarlierConversationUnavailable: "Unable to load earlier messages",
   waitingForAgentConversation: "Waiting for this agent to reply…",
   thinkingActive: "{{name}} is thinking…",
   expandThinking: "Expand thinking",
