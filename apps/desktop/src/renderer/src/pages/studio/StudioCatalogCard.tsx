@@ -55,7 +55,7 @@ export function StudioCatalogCard(props: {
               {t("assetUsedByExperts", { count: props.expertNames?.length })}
             </span>
           ) : null}
-          {updatedLabel !== null && props.updatedAt !== undefined ? (
+          {props.builtIn !== true && updatedLabel !== null && props.updatedAt !== undefined ? (
             <time dateTime={props.updatedAt} title={formatMissionDateTime(props.updatedAt)}>
               {t("assetUpdatedAt", { date: updatedLabel })}
             </time>

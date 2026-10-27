@@ -89,5 +89,5 @@ export function AssetGitSyncIndicator(props: { readonly target: AssetGitTarget }
       unsubscribe();
     };
   }, [kind, id]);
-  return <AssetGitSyncIcon state={state} />;
+  return state === "unbound" ? null : <AssetGitSyncIcon state={state} />;
 }

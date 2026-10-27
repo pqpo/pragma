@@ -864,6 +864,7 @@ function ConnectorCard(props: {
         name={capability.manifest.name}
         description={definition.description}
         updatedAt={capability.manifest.updatedAt}
+        builtIn={isBuiltIn}
         expertNames={linkedExperts?.map((expert) => expert.name)}
         badge={
           <span className="connector-card-badges">
