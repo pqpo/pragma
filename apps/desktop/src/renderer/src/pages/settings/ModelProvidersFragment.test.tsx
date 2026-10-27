@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import type { ModelProviderModel } from "../../../../shared/contracts/index.ts";
+
 import {
+  addManualModel,
+  type ProviderDraft,
   ModelProviderEditorPage,
   ProviderEditor,
   reconcileDiscoveredModels,
@@ -102,6 +106,46 @@ describe("ProviderEditor", () => {
     expect(html).toContain("Back to Models &amp; Providers");
     expect(html).toContain("Edit DeepSeek");
     expect(html).toContain('class="provider-editor-surface"');
+  });
+
+  it("keeps unselected discovered models when a model is added manually", () => {
+    const selected = model("selected-model");
+    const unselected = model("unselected-discovered-model");
+    let draft: ProviderDraft = {
+      presetId: "deepseek",
+      name: "DeepSeek",
+      protocol: "openai-completions",
+      baseUrl: "https://api.deepseek.com/v1",
+      apiKey: "",
+      requiresApiKey: true,
+      compatibilityProfileId: "",
+      models: [selected],
+    };
+    let catalog: readonly ModelProviderModel[] = [selected, unselected];
+    let input = "  manual-model  ";
+
+    addManualModel(
+      input,
+      draft,
+      (next) => {
+        draft = next;
+      },
+      (update) => {
+        catalog = update(catalog);
+      },
+      (value) => {
+        input = value;
+      },
+    );
+
+    expect(catalog).toContain(unselected);
+    expect(catalog.map((entry) => entry.id).sort()).toEqual([
+      "manual-model",
+      "selected-model",
+      "unselected-discovered-model",
+    ]);
+    expect(draft.models.map((entry) => entry.id)).toEqual(["selected-model", "manual-model"]);
+    expect(input).toBe("");
   });
 
   it("uses the runtime-neutral declared thinking levels", () => {

@@ -12,7 +12,7 @@ import {
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
@@ -70,6 +70,44 @@ export function ProviderEditor(props: {
   );
   const [modelQuery, setModelQuery] = useState("");
   const [manualModelId, setManualModelId] = useState("");
+  const [scrollTargetId, setScrollTargetId] = useState<string | null>(null);
+  const modelConfigPaneRef = useRef<HTMLDivElement>(null);
+  const wizardContentRef = useRef<HTMLDivElement>(null);
+  const modelEditorRefs = useRef(new Map<string, HTMLElement>());
+
+  useLayoutEffect(() => {
+    if (scrollTargetId === null) return;
+    const pane = modelConfigPaneRef.current;
+    const editor = modelEditorRefs.current.get(scrollTargetId);
+    const scroller =
+      pane &&
+      getComputedStyle(pane).overflowY !== "visible" &&
+      pane.scrollHeight > pane.clientHeight
+        ? pane
+        : wizardContentRef.current;
+    if (scroller && editor) {
+      scroller.scrollTo({
+        top:
+          scroller.scrollTop +
+          editor.getBoundingClientRect().top -
+          scroller.getBoundingClientRect().top,
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "instant"
+          : "smooth",
+      });
+    }
+    setScrollTargetId(null);
+  }, [scrollTargetId, draft.models]);
+
+  const selectModel = (model: ModelProviderModel) => {
+    setDraft((current) =>
+      current.models.some((candidate) => candidate.id === model.id)
+        ? current
+        : { ...current, models: [...current.models, model] },
+    );
+    setScrollTargetId(model.id);
+  };
+
   const [discoveryMessage, setDiscoveryMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -203,326 +241,355 @@ export function ProviderEditor(props: {
 
   return (
     <div className="provider-editor provider-wizard">
-      {isEditing ? <p>{t("models.sharedConnectionImpact", { ns: "settings" })}</p> : null}
-      <ol
+      <div
+        ref={wizardContentRef}
         className={
-          props.mode === "edit" ? "provider-wizard-steps is-edit" : "provider-wizard-steps"
+          step === "models" ? "provider-wizard-content is-models" : "provider-wizard-content"
         }
-        aria-label={t("models.setupProgress", { ns: "settings" })}
       >
-        {wizardSteps.map((wizardStep, index) => (
-          <li
-            className={
-              index === currentStepIndex
-                ? "is-current"
-                : index < currentStepIndex
-                  ? "is-complete"
-                  : ""
-            }
-            key={wizardStep.id}
-            aria-current={index === currentStepIndex ? "step" : undefined}
-          >
-            <span className="provider-wizard-step-index">
-              {index < currentStepIndex ? <Check size={13} weight="bold" /> : index + 1}
-            </span>
-            <span className="provider-wizard-step-copy">
-              <span className="provider-wizard-step-label">{wizardStep.label}</span>
-              <small>
-                {index === currentStepIndex
-                  ? t("models.currentStep", { ns: "settings" })
+        {isEditing ? <p>{t("models.sharedConnectionImpact", { ns: "settings" })}</p> : null}
+        <ol
+          className={
+            props.mode === "edit" ? "provider-wizard-steps is-edit" : "provider-wizard-steps"
+          }
+          aria-label={t("models.setupProgress", { ns: "settings" })}
+        >
+          {wizardSteps.map((wizardStep, index) => (
+            <li
+              className={
+                index === currentStepIndex
+                  ? "is-current"
                   : index < currentStepIndex
-                    ? t("models.completedStep", { ns: "settings" })
-                    : t("models.upcomingStep", { ns: "settings" })}
-              </small>
-            </span>
-          </li>
-        ))}
-      </ol>
-
-      {step === "provider" ? (
-        <section className="provider-wizard-panel">
-          <div className="wizard-heading">
-            <h3>{t("models.chooseProvider", { ns: "settings" })}</h3>
-            <p>{t("models.chooseProviderDescription", { ns: "settings" })}</p>
-          </div>
-          {(["official", "gateway", "local", "custom"] as const).map((category) => (
-            <div className="provider-preset-section" key={category}>
-              <h4>
-                {t(`models.category.${category}` as "models.category.official", { ns: "settings" })}
-              </h4>
-              <div className="provider-preset-grid">
-                {MODEL_PROVIDER_PRESETS.filter((preset) => preset.category === category).map(
-                  (preset) => (
-                    <button
-                      className="provider-preset-card"
-                      type="button"
-                      key={preset.id}
-                      onClick={() => selectPreset(preset.id)}
-                    >
-                      <span className="provider-preset-mark">
-                        <ModelProviderLogo presetId={preset.id} />
-                      </span>
-                      <span>
-                        <strong>{preset.name}</strong>
-                        <small>
-                          {t(
-                            `models.presetDescription.${preset.category}` as "models.presetDescription.official",
-                            {
-                              ns: "settings",
-                            },
-                          )}
-                        </small>
-                      </span>
-                      <ArrowRight size={16} aria-hidden="true" />
-                    </button>
-                  ),
-                )}
-              </div>
-            </div>
-          ))}
-        </section>
-      ) : null}
-
-      {step === "connection" ? (
-        <section className="provider-wizard-panel">
-          <div className="wizard-heading">
-            <h3>{t("models.configureConnection", { ns: "settings" })}</h3>
-            <p>{t("models.configureConnectionDescription", { ns: "settings" })}</p>
-          </div>
-          <div className="provider-connection-grid">
-            <label className="static-field">
-              <span>{t("models.providerName", { ns: "settings" })}</span>
-              <input
-                value={draft.name}
-                onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-                autoFocus
-              />
-            </label>
-            <label className="static-field provider-url-field">
-              <span>{t("models.baseUrl", { ns: "settings" })}</span>
-              <input
-                value={draft.baseUrl}
-                onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })}
-                inputMode="url"
-              />
-            </label>
-            <label className="static-field provider-key-field">
-              <span>
-                {t("models.apiKey", { ns: "settings" })}
-                {draft.requiresApiKey ? "" : ` · ${t("models.optional", { ns: "settings" })}`}
-              </span>
-              <span className="key-input-wrap">
-                <Key size={16} aria-hidden="true" />
-                <input
-                  type="password"
-                  value={draft.apiKey}
-                  onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
-                  placeholder={
-                    isEditing
-                      ? t("models.savedSecurelyReplace", { ns: "settings" })
-                      : draft.requiresApiKey
-                        ? "sk-…"
-                        : t("models.noKeyRequired", { ns: "settings" })
-                  }
-                  autoComplete="off"
-                />
-              </span>
-            </label>
-            {draft.presetId === "custom-openai" ? (
-              <div className="static-field">
-                <span>{t("models.protocol", { ns: "settings" })}</span>
-                <SelectMenu<ModelProvider["protocol"]>
-                  ariaLabel={t("models.protocol", { ns: "settings" })}
-                  className="form-select"
-                  value={draft.protocol}
-                  placement="bottom"
-                  options={[
-                    { value: "openai-completions", label: "OpenAI Chat Completions" },
-                    { value: "openai-responses", label: "OpenAI Responses" },
-                  ]}
-                  onChange={(value) =>
-                    setDraft({
-                      ...draft,
-                      protocol: value,
-                      compatibilityProfileId: "",
-                      models: draft.models.map((model) =>
-                        model.kind === "embedding"
-                          ? model
-                          : {
-                              ...model,
-                              compatibilityProfileId: undefined,
-                            },
-                      ),
-                    })
-                  }
-                />
-              </div>
-            ) : null}
-            {compatibleProfiles.length > 0 ? (
-              <div className="static-field provider-compatibility-field">
-                <span>{t("models.compatibilityProfile", { ns: "settings" })}</span>
-                <SelectMenu
-                  ariaLabel={t("models.compatibilityProfile", { ns: "settings" })}
-                  className="form-select"
-                  value={draft.compatibilityProfileId}
-                  placement="bottom"
-                  options={[
-                    { value: "", label: t("models.automaticCompatibility", { ns: "settings" }) },
-                    ...compatibleProfiles.map((profile) => ({
-                      value: profile.id,
-                      label: profile.displayName,
-                      description: profile.description,
-                    })),
-                  ]}
-                  onChange={(value) => setDraft({ ...draft, compatibilityProfileId: value })}
-                />
-                <small>
-                  {compatibleProfiles.find((profile) => profile.id === draft.compatibilityProfileId)
-                    ?.description ??
-                    t("models.automaticCompatibilityDescription", { ns: "settings" })}
-                </small>
-              </div>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
-
-      {step === "models" ? (
-        <section className="provider-wizard-panel">
-          <div className="wizard-heading wizard-heading-with-summary">
-            <h3>{t("models.chooseModels", { ns: "settings" })}</h3>
-            <div>
-              <p>{discoveryMessage ?? t("models.chooseModelsDescription", { ns: "settings" })}</p>
-              <span className="model-selection-summary">
-                <strong>{draft.models.length}</strong>
-                {t("models.selectedCountLabel", { ns: "settings" })}
-              </span>
-            </div>
-          </div>
-          <div className="model-discovery-toolbar">
-            <label className="model-search-shell">
-              <MagnifyingGlass size={17} aria-hidden="true" />
-              <input
-                value={modelQuery}
-                onChange={(event) => setModelQuery(event.target.value)}
-                placeholder={t("models.searchModels", { ns: "settings" })}
-              />
-            </label>
-            <span className="model-discovery-count">
-              {filteredModels.length} {t("models.availableModels", { ns: "settings" })}
-            </span>
-          </div>
-          {filteredModels.length > 0 ? (
-            <div className="model-picker-list" role="list">
-              {filteredModels.map((model) => {
-                const selected = draft.models.some((candidate) => candidate.id === model.id);
-                return (
-                  <button
-                    className={selected ? "model-picker-row is-selected" : "model-picker-row"}
-                    type="button"
-                    key={model.id}
-                    onClick={() =>
-                      setDraft({
-                        ...draft,
-                        models: selected
-                          ? draft.models.filter((candidate) => candidate.id !== model.id)
-                          : [...draft.models, model],
-                      })
-                    }
-                  >
-                    <span className="model-picker-check">
-                      {selected ? <Check size={13} weight="bold" /> : null}
-                    </span>
-                    <span>
-                      <strong>{model.name}</strong>
-                      <small>{model.id}</small>
-                    </span>
-                    <span className="capability-tags">
-                      {model.kind === "generation" && model.input.includes("image") ? (
-                        <em>{t("models.imageInput", { ns: "settings" })}</em>
-                      ) : null}
-                      {model.kind === "generation" && model.reasoning ? (
-                        <em>{t("models.reasoning", { ns: "settings" })}</em>
-                      ) : null}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-          <div className="manual-model-row">
-            <input
-              value={manualModelId}
-              onChange={(event) => setManualModelId(event.target.value)}
-              placeholder={t("models.manualModelPlaceholder", { ns: "settings" })}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  addManualModel(
-                    manualModelId,
-                    draft,
-                    setDraft,
-                    setAvailableModels,
-                    setManualModelId,
-                  );
-                }
-              }}
-            />
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() =>
-                addManualModel(manualModelId, draft, setDraft, setAvailableModels, setManualModelId)
+                    ? "is-complete"
+                    : ""
               }
+              key={wizardStep.id}
+              aria-current={index === currentStepIndex ? "step" : undefined}
             >
-              <Plus size={16} />
-              {t("models.addModel", { ns: "settings" })}
-            </button>
-          </div>
-          {draft.models.length > 0 ? (
-            <div className="selected-model-config">
-              <div className="selected-model-config-heading">
-                <div>
-                  <h4>
-                    {t("models.selectedModels", { ns: "settings", count: draft.models.length })}
-                  </h4>
-                  <p>{t("models.selectedModelsDescription", { ns: "settings" })}</p>
+              <span className="provider-wizard-step-index">
+                {index < currentStepIndex ? <Check size={13} weight="bold" /> : index + 1}
+              </span>
+              <span className="provider-wizard-step-copy">
+                <span className="provider-wizard-step-label">{wizardStep.label}</span>
+                <small>
+                  {index === currentStepIndex
+                    ? t("models.currentStep", { ns: "settings" })
+                    : index < currentStepIndex
+                      ? t("models.completedStep", { ns: "settings" })
+                      : t("models.upcomingStep", { ns: "settings" })}
+                </small>
+              </span>
+            </li>
+          ))}
+        </ol>
+
+        {step === "provider" ? (
+          <section className="provider-wizard-panel">
+            <div className="wizard-heading">
+              <h3>{t("models.chooseProvider", { ns: "settings" })}</h3>
+              <p>{t("models.chooseProviderDescription", { ns: "settings" })}</p>
+            </div>
+            {(["official", "gateway", "local", "custom"] as const).map((category) => (
+              <div className="provider-preset-section" key={category}>
+                <h4>
+                  {t(`models.category.${category}` as "models.category.official", {
+                    ns: "settings",
+                  })}
+                </h4>
+                <div className="provider-preset-grid">
+                  {MODEL_PROVIDER_PRESETS.filter((preset) => preset.category === category).map(
+                    (preset) => (
+                      <button
+                        className="provider-preset-card"
+                        type="button"
+                        key={preset.id}
+                        onClick={() => selectPreset(preset.id)}
+                      >
+                        <span className="provider-preset-mark">
+                          <ModelProviderLogo presetId={preset.id} />
+                        </span>
+                        <span>
+                          <strong>{preset.name}</strong>
+                        </span>
+                        <ArrowRight size={16} aria-hidden="true" />
+                      </button>
+                    ),
+                  )}
                 </div>
-                <span className="selected-model-config-count">{draft.models.length}</span>
               </div>
-              <div className="selected-model-list">
-                {draft.models.map((model) => (
-                  <ModelCapabilityEditor
-                    key={model.id}
-                    model={model}
-                    compatibilityProfiles={compatibleProfiles}
-                    onChange={(next) =>
+            ))}
+          </section>
+        ) : null}
+
+        {step === "connection" ? (
+          <section className="provider-wizard-panel">
+            <div className="wizard-heading">
+              <h3>{t("models.configureConnection", { ns: "settings" })}</h3>
+              <p>{t("models.configureConnectionDescription", { ns: "settings" })}</p>
+            </div>
+            <div className="provider-connection-grid">
+              <label className="static-field">
+                <span>{t("models.providerName", { ns: "settings" })}</span>
+                <input
+                  value={draft.name}
+                  onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                  autoFocus
+                />
+              </label>
+              <label className="static-field provider-url-field">
+                <span>{t("models.baseUrl", { ns: "settings" })}</span>
+                <input
+                  value={draft.baseUrl}
+                  onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })}
+                  inputMode="url"
+                />
+              </label>
+              <label className="static-field provider-key-field">
+                <span>
+                  {t("models.apiKey", { ns: "settings" })}
+                  {draft.requiresApiKey ? "" : ` · ${t("models.optional", { ns: "settings" })}`}
+                </span>
+                <span className="key-input-wrap">
+                  <Key size={16} aria-hidden="true" />
+                  <input
+                    type="password"
+                    value={draft.apiKey}
+                    onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
+                    placeholder={
+                      isEditing
+                        ? t("models.savedSecurelyReplace", { ns: "settings" })
+                        : draft.requiresApiKey
+                          ? "sk-…"
+                          : t("models.noKeyRequired", { ns: "settings" })
+                    }
+                    autoComplete="off"
+                  />
+                </span>
+              </label>
+              {draft.presetId === "custom-openai" ? (
+                <div className="static-field">
+                  <span>{t("models.protocol", { ns: "settings" })}</span>
+                  <SelectMenu<ModelProvider["protocol"]>
+                    ariaLabel={t("models.protocol", { ns: "settings" })}
+                    className="form-select"
+                    value={draft.protocol}
+                    placement="bottom"
+                    options={[
+                      { value: "openai-completions", label: "OpenAI Chat Completions" },
+                      { value: "openai-responses", label: "OpenAI Responses" },
+                    ]}
+                    onChange={(value) =>
                       setDraft({
                         ...draft,
-                        models: draft.models.map((candidate) =>
-                          candidate.id === next.id ? next : candidate,
+                        protocol: value,
+                        compatibilityProfileId: "",
+                        models: draft.models.map((model) =>
+                          model.kind === "embedding"
+                            ? model
+                            : {
+                                ...model,
+                                compatibilityProfileId: undefined,
+                              },
                         ),
                       })
                     }
-                    onRemove={() =>
-                      setDraft({
-                        ...draft,
-                        models: draft.models.filter((candidate) => candidate.id !== model.id),
-                      })
-                    }
                   />
-                ))}
+                </div>
+              ) : null}
+              {compatibleProfiles.length > 0 ? (
+                <div className="static-field provider-compatibility-field">
+                  <span>{t("models.compatibilityProfile", { ns: "settings" })}</span>
+                  <SelectMenu
+                    ariaLabel={t("models.compatibilityProfile", { ns: "settings" })}
+                    className="form-select"
+                    value={draft.compatibilityProfileId}
+                    placement="bottom"
+                    options={[
+                      { value: "", label: t("models.automaticCompatibility", { ns: "settings" }) },
+                      ...compatibleProfiles.map((profile) => ({
+                        value: profile.id,
+                        label: profile.displayName,
+                        description: profile.description,
+                      })),
+                    ]}
+                    onChange={(value) => setDraft({ ...draft, compatibilityProfileId: value })}
+                  />
+                  <small>
+                    {compatibleProfiles.find(
+                      (profile) => profile.id === draft.compatibilityProfileId,
+                    )?.description ??
+                      t("models.automaticCompatibilityDescription", { ns: "settings" })}
+                  </small>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
+        {step === "models" ? (
+          <section className="provider-wizard-panel provider-models-panel">
+            <div className="wizard-heading">
+              <div>
+                <h3>{t("models.chooseModels", { ns: "settings" })}</h3>
+                <p>{discoveryMessage ?? t("models.chooseModelsDescription", { ns: "settings" })}</p>
               </div>
             </div>
-          ) : null}
-        </section>
-      ) : null}
+            <div className="model-selection-workspace">
+              <div className="model-discovery-pane">
+                <div className="model-discovery-toolbar">
+                  <label className="model-search-shell">
+                    <MagnifyingGlass size={17} aria-hidden="true" />
+                    <input
+                      aria-label={t("models.searchModels", { ns: "settings" })}
+                      value={modelQuery}
+                      onChange={(event) => setModelQuery(event.target.value)}
+                      placeholder={t("models.searchModels", { ns: "settings" })}
+                    />
+                  </label>
+                  <span className="model-discovery-count">
+                    {filteredModels.length} {t("models.availableModels", { ns: "settings" })}
+                  </span>
+                </div>
+                {filteredModels.length > 0 ? (
+                  <div className="model-picker-list" role="list">
+                    {filteredModels.map((model) => {
+                      const selected = draft.models.some((candidate) => candidate.id === model.id);
+                      return (
+                        <div
+                          className={selected ? "model-picker-row is-selected" : "model-picker-row"}
+                          role="listitem"
+                          key={model.id}
+                        >
+                          <label className="model-picker-toggle">
+                            <input
+                              type="checkbox"
+                              aria-label={model.name}
+                              checked={selected}
+                              onChange={(event) => {
+                                if (event.target.checked) {
+                                  selectModel(model);
+                                } else {
+                                  setDraft((current) => ({
+                                    ...current,
+                                    models: current.models.filter(
+                                      (candidate) => candidate.id !== model.id,
+                                    ),
+                                  }));
+                                }
+                              }}
+                            />
+                            <span className="model-picker-check" aria-hidden="true">
+                              {selected ? <Check size={13} weight="bold" /> : null}
+                            </span>
+                          </label>
+                          <button
+                            className="model-picker-target"
+                            type="button"
+                            aria-label={model.name}
+                            onClick={() => selectModel(model)}
+                          >
+                            <span className="model-picker-copy">
+                              <strong title={model.name}>{model.name}</strong>
+                              {model.name !== model.id ? <small>{model.id}</small> : null}
+                            </span>
+                            <span className="capability-tags">
+                              {model.kind === "generation" && model.input.includes("image") ? (
+                                <em>{t("models.imageInput", { ns: "settings" })}</em>
+                              ) : null}
+                              {model.kind === "generation" && model.reasoning ? (
+                                <em>{t("models.reasoning", { ns: "settings" })}</em>
+                              ) : null}
+                            </span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                <div className="manual-model-row">
+                  <input
+                    aria-label={t("models.manualModelPlaceholder", { ns: "settings" })}
+                    value={manualModelId}
+                    onChange={(event) => setManualModelId(event.target.value)}
+                    placeholder={t("models.manualModelPlaceholder", { ns: "settings" })}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                        event.preventDefault();
+                        addManualModel(
+                          manualModelId,
+                          draft,
+                          setDraft,
+                          setAvailableModels,
+                          setManualModelId,
+                        );
+                      }
+                    }}
+                  />
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() =>
+                      addManualModel(
+                        manualModelId,
+                        draft,
+                        setDraft,
+                        setAvailableModels,
+                        setManualModelId,
+                      )
+                    }
+                  >
+                    <Plus size={16} />
+                    {t("models.addModel", { ns: "settings" })}
+                  </button>
+                </div>
+              </div>
+              <div className="selected-model-config" ref={modelConfigPaneRef}>
+                <div className="selected-model-config-heading">
+                  <div>
+                    <h4>
+                      {t("models.selectedModels", { ns: "settings", count: draft.models.length })}
+                    </h4>
+                    <p>{t("models.selectedModelsDescription", { ns: "settings" })}</p>
+                  </div>
+                </div>
+                <div className="selected-model-list">
+                  {draft.models.map((model) => (
+                    <ModelCapabilityEditor
+                      key={model.id}
+                      editorRef={(element) => {
+                        if (element) modelEditorRefs.current.set(model.id, element);
+                        else modelEditorRefs.current.delete(model.id);
+                      }}
+                      model={model}
+                      compatibilityProfiles={compatibleProfiles}
+                      onChange={(next) =>
+                        setDraft({
+                          ...draft,
+                          models: draft.models.map((candidate) =>
+                            candidate.id === next.id ? next : candidate,
+                          ),
+                        })
+                      }
+                      onRemove={() =>
+                        setDraft({
+                          ...draft,
+                          models: draft.models.filter((candidate) => candidate.id !== model.id),
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
 
-      {error ? (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      ) : null}
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </div>
       <div className="provider-actions provider-wizard-actions">
         <button
           className="secondary-button"
@@ -600,28 +667,11 @@ export function ModelProviderEditorPage(props: {
             {t("models.backToProviders")}
           </button>
           <header className="panel-heading provider-editor-heading">
-            <span className="provider-editor-title-icon" aria-hidden="true">
-              {props.draft.presetId ? (
-                <ModelProviderLogo presetId={props.draft.presetId} />
-              ) : (
-                <Robot size={23} weight="duotone" />
-              )}
-            </span>
-            <div className="provider-editor-heading-copy">
-              <span className="provider-editor-eyebrow">
-                {isEditing ? t("models.editProviderLabel") : t("models.addProviderLabel")}
-              </span>
-              <h2 id="provider-editor-heading">
-                {isEditing
-                  ? t("models.editProviderTitle", { name: props.draft.name })
-                  : t("models.addProviderTitle")}
-              </h2>
-              <p>
-                {isEditing
-                  ? t("models.editProviderPageDescription")
-                  : t("models.addProviderPageDescription")}
-              </p>
-            </div>
+            <h2 id="provider-editor-heading">
+              {isEditing
+                ? t("models.editProviderTitle", { name: props.draft.name })
+                : t("models.addProviderTitle")}
+            </h2>
           </header>
         </>
       }
@@ -641,6 +691,7 @@ export function ModelProviderEditorPage(props: {
 }
 
 function ModelCapabilityEditor(props: {
+  readonly editorRef: Ref<HTMLElement>;
   readonly model: ModelProviderModel;
   readonly compatibilityProfiles: readonly ModelCompatibilityProfileDescriptor[];
   readonly onChange: (model: ModelProviderModel) => void;
@@ -677,11 +728,26 @@ function ModelCapabilityEditor(props: {
     );
   };
   return (
-    <div className="model-capability-editor">
+    <article className="model-capability-editor" ref={props.editorRef}>
+      <header className="selected-model-card-header">
+        <div className="model-identity-copy">
+          <strong title={props.model.name}>{props.model.name}</strong>
+          {props.model.name !== props.model.id ? <small>{props.model.id}</small> : null}
+        </div>
+        <button
+          className="model-remove-button"
+          type="button"
+          onClick={props.onRemove}
+          aria-label={t("models.removeModel", { model: props.model.name })}
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+      </header>
       <div className="model-kind-row">
         <span>{t("models.kind")}</span>
         <SelectMenu
           ariaLabel={t("models.kind")}
+          className="form-select"
           value={props.model.kind}
           options={[
             { value: "generation", label: t("models.generation") },
@@ -693,84 +759,68 @@ function ModelCapabilityEditor(props: {
       {props.model.kind === "generation" ? (
         <GenerationModelCapabilityEditor {...props} model={props.model} />
       ) : (
-        <article className="selected-model-row selected-model-card">
-          <header className="selected-model-card-header">
-            <div className="model-identity-copy">
-              <strong>{props.model.name}</strong>
-              <small>{props.model.id}</small>
-            </div>
-            <button
-              className="model-remove-button"
-              type="button"
-              onClick={props.onRemove}
-              aria-label={t("models.removeModel", { model: props.model.id })}
-            >
-              <X size={16} weight="bold" />
-            </button>
-          </header>
-          <div className="model-card-body">
-            <div className="model-token-grid">
-              <label className="model-token-limit-field">
-                <span>{t("models.maxInputTokens")}</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={props.model.maxInputTokens ?? ""}
-                  onChange={(event) => {
-                    const value = Number(event.target.value);
-                    if (value > 0 && Number.isInteger(value) && props.model.kind === "embedding")
-                      props.onChange({
-                        ...props.model,
-                        maxInputTokens: value,
-                        maxInputTokensSource: "manual" as const,
-                      });
-                  }}
-                />
-              </label>
+        <div className="model-card-body">
+          <div className="model-token-grid">
+            <label className="model-token-limit-field">
+              <span>{t("models.maxInputTokens")}</span>
+              <input
+                type="number"
+                min={1}
+                value={props.model.maxInputTokens ?? ""}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (value > 0 && Number.isInteger(value) && props.model.kind === "embedding")
+                    props.onChange({
+                      ...props.model,
+                      maxInputTokens: value,
+                      maxInputTokensSource: "manual" as const,
+                    });
+                }}
+              />
+            </label>
 
-              <label className="model-token-limit-field">
-                <span>{t("models.maxBatchInputs")}</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={2048}
-                  value={props.model.maxBatchInputs}
-                  onChange={(event) => {
-                    const value = Number(event.target.value);
-                    if (
-                      value > 0 &&
-                      value <= 2048 &&
-                      Number.isInteger(value) &&
-                      props.model.kind === "embedding"
-                    )
-                      props.onChange({ ...props.model, maxBatchInputs: value });
-                  }}
-                />
-              </label>
-              <label className="model-token-limit-field">
-                <span>{t("models.maxBatchTokens")}</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={props.model.maxBatchTokens ?? ""}
-                  onChange={(event) => {
-                    if (props.model.kind !== "embedding") return;
-                    const value = Number(event.target.value);
-                    if (event.target.value === "")
-                      props.onChange({ ...props.model, maxBatchTokens: undefined });
-                    else if (value > 0 && Number.isInteger(value))
-                      props.onChange({ ...props.model, maxBatchTokens: value });
-                  }}
-                />
-              </label>
-            </div>
-            <small className="embedding-limit-description">
-              {t("models.embeddingLimitDescription")}
-            </small>
+            <label className="model-token-limit-field">
+              <span>{t("models.maxBatchInputs")}</span>
+              <input
+                type="number"
+                min={1}
+                max={2048}
+                value={props.model.maxBatchInputs}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (
+                    value > 0 &&
+                    value <= 2048 &&
+                    Number.isInteger(value) &&
+                    props.model.kind === "embedding"
+                  )
+                    props.onChange({ ...props.model, maxBatchInputs: value });
+                }}
+              />
+            </label>
+            <label className="model-token-limit-field">
+              <span>{t("models.maxBatchTokens")}</span>
+              <input
+                type="number"
+                min={1}
+                value={props.model.maxBatchTokens ?? ""}
+                onChange={(event) => {
+                  if (props.model.kind !== "embedding") return;
+                  const value = Number(event.target.value);
+                  if (event.target.value === "")
+                    props.onChange({ ...props.model, maxBatchTokens: undefined });
+                  else if (value > 0 && Number.isInteger(value))
+                    props.onChange({ ...props.model, maxBatchTokens: value });
+                }}
+              />
+            </label>
           </div>
-        </article>
+          <small className="embedding-limit-description">
+            {t("models.embeddingLimitDescription")}
+          </small>
+        </div>
       )}
-    </div>
+    </article>
   );
 }
 function GenerationModelCapabilityEditor(props: {
@@ -803,214 +853,184 @@ function GenerationModelCapabilityEditor(props: {
     });
   };
   return (
-    <article className="selected-model-row selected-model-card">
-      <header className="selected-model-card-header">
-        <div className="model-identity">
-          <span className="model-identity-mark" aria-hidden="true">
-            <Robot size={18} weight="duotone" />
-          </span>
-          <div className="model-identity-copy">
-            <strong>{props.model.name}</strong>
-            <small>{props.model.id}</small>
-          </div>
-        </div>
-        <div className="model-support-tags" aria-label={t("models.capabilities")}>
-          {props.model.input.includes("image") ? (
-            <span className="model-support-tag is-vision">{t("models.imageInput")}</span>
+    <div className="model-card-body">
+      <div className="model-token-grid">
+        <label className="model-token-limit-field">
+          <span>{t("models.contextWindow")}</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={props.model.contextWindow}
+            onChange={(event) => {
+              const value = Number.parseInt(event.target.value, 10);
+              if (!Number.isSafeInteger(value) || value <= 0) return;
+              props.onChange({
+                ...props.model,
+                contextWindow: value,
+                contextWindowSource: "manual",
+              });
+            }}
+          />
+          {props.model.contextWindowSource === "default" ? (
+            <small>{t("models.conservativeDefault")}</small>
           ) : null}
-          {props.model.reasoning ? (
-            <span className="model-support-tag is-reasoning">{t("models.reasoning")}</span>
+        </label>
+        <label className="model-token-limit-field">
+          <span>{t("models.maxOutputTokens")}</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={props.model.maxTokens}
+            onChange={(event) => {
+              const value = Number.parseInt(event.target.value, 10);
+              if (!Number.isSafeInteger(value) || value <= 0) return;
+              props.onChange({ ...props.model, maxTokens: value, maxTokensSource: "manual" });
+            }}
+          />
+          {props.model.maxTokensSource === "default" ? (
+            <small>{t("models.conservativeDefault")}</small>
           ) : null}
-        </div>
-        <button
-          className="model-remove-button"
-          type="button"
-          onClick={props.onRemove}
-          aria-label={t("models.removeModel", { model: props.model.id })}
-        >
-          <X size={16} weight="bold" />
-        </button>
-      </header>
-
-      <div className="model-card-body">
-        <div className="model-token-grid">
-          <label className="model-token-limit-field">
-            <span>{t("models.contextWindow")}</span>
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={props.model.contextWindow}
-              onChange={(event) => {
-                const value = Number.parseInt(event.target.value, 10);
-                if (!Number.isSafeInteger(value) || value <= 0) return;
-                props.onChange({
-                  ...props.model,
-                  contextWindow: value,
-                  contextWindowSource: "manual",
-                });
-              }}
-            />
-            {props.model.contextWindowSource === "default" ? (
-              <small>{t("models.conservativeDefault")}</small>
-            ) : null}
-          </label>
-          <label className="model-token-limit-field">
-            <span>{t("models.maxOutputTokens")}</span>
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={props.model.maxTokens}
-              onChange={(event) => {
-                const value = Number.parseInt(event.target.value, 10);
-                if (!Number.isSafeInteger(value) || value <= 0) return;
-                props.onChange({ ...props.model, maxTokens: value, maxTokensSource: "manual" });
-              }}
-            />
-            {props.model.maxTokensSource === "default" ? (
-              <small>{t("models.conservativeDefault")}</small>
-            ) : null}
-          </label>
-        </div>
-
-        <fieldset className="model-capability-group">
-          <legend>{t("models.capabilities")}</legend>
-          <div className="capability-toggle-list">
-            <label className="capability-toggle">
-              <input
-                type="checkbox"
-                checked={props.model.input.includes("image")}
-                onChange={(event) => setImageInput(event.target.checked)}
-              />
-              <span className="capability-toggle-indicator" aria-hidden="true" />
-              <span className="capability-toggle-copy">
-                <strong>{t("models.imageInput")}</strong>
-                <small>{t("models.imageInputDescription")}</small>
-              </span>
-            </label>
-            <label className="capability-toggle">
-              <input
-                type="checkbox"
-                checked={props.model.reasoning}
-                onChange={(event) => setReasoning(event.target.checked)}
-              />
-              <span className="capability-toggle-indicator" aria-hidden="true" />
-              <span className="capability-toggle-copy">
-                <strong>{t("models.reasoning")}</strong>
-                <small>{t("models.reasoningDescription")}</small>
-              </span>
-            </label>
-          </div>
-        </fieldset>
-
-        {props.model.reasoning ? (
-          <div className="thinking-settings">
-            <div className="thinking-settings-header">
-              <div>
-                <strong>{t("models.thinkingLevels")}</strong>
-                <small>{t("models.thinkingLevelsDescription")}</small>
-              </div>
-              <label className="capability-toggle capability-toggle-compact">
-                <input
-                  type="checkbox"
-                  checked={props.model.thinking !== undefined}
-                  onChange={(event) => setAdjustableThinking(event.target.checked)}
-                />
-                <span className="capability-toggle-indicator" aria-hidden="true" />
-                <span className="capability-toggle-copy">
-                  <strong>{t("models.adjustableThinking")}</strong>
-                </span>
-              </label>
-            </div>
-            {props.model.thinking === undefined ? (
-              <p className="fixed-thinking-note">{t("models.fixedThinking")}</p>
-            ) : (
-              <div className="thinking-controls">
-                <div className="thinking-level-options" aria-label={t("models.thinkingLevels")}>
-                  {THINKING_LEVELS.map((level) => (
-                    <label key={level}>
-                      <input
-                        type="checkbox"
-                        checked={supported.includes(level)}
-                        disabled={supported.length === 1 && supported.includes(level)}
-                        onChange={() => {
-                          const next = supported.includes(level)
-                            ? supported.filter((value) => value !== level)
-                            : THINKING_LEVELS.filter(
-                                (candidate) => supported.includes(candidate) || candidate === level,
-                              );
-                          const currentDefault = props.model.thinking?.defaultLevel;
-                          props.onChange({
-                            ...props.model,
-                            thinking: {
-                              supportedLevels: next,
-                              ...(currentDefault !== undefined && next.includes(currentDefault)
-                                ? { defaultLevel: currentDefault }
-                                : { defaultLevel: next[0] }),
-                            },
-                          });
-                        }}
-                      />
-                      <span>{level}</span>
-                    </label>
-                  ))}
-                </div>
-                <div className="thinking-default-field">
-                  <span>{t("models.defaultThinkingLevel")}</span>
-                  <SelectMenu
-                    ariaLabel={t("models.defaultThinkingLevel")}
-                    className="form-select"
-                    value={props.model.thinking.defaultLevel ?? ""}
-                    placement="bottom"
-                    options={[
-                      { value: "", label: t("models.runtimeDefault") },
-                      ...supported.map((level) => ({ value: level, label: level })),
-                    ]}
-                    onChange={(value) =>
-                      props.onChange({
-                        ...props.model,
-                        thinking: {
-                          ...props.model.thinking!,
-                          defaultLevel:
-                            value === "" ? undefined : (value as (typeof THINKING_LEVELS)[number]),
-                        },
-                      })
-                    }
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        ) : null}
-
-        {props.compatibilityProfiles.length > 0 ? (
-          <div className="model-profile-field">
-            <span>{t("models.modelCompatibilityOverride")}</span>
-            <SelectMenu
-              ariaLabel={t("models.modelCompatibilityOverride")}
-              className="form-select"
-              value={props.model.compatibilityProfileId ?? ""}
-              placement="bottom"
-              options={[
-                { value: "", label: t("models.inheritCompatibility") },
-                ...props.compatibilityProfiles.map((profile) => ({
-                  value: profile.id,
-                  label: profile.displayName,
-                  description: profile.description,
-                })),
-              ]}
-              onChange={(value) =>
-                props.onChange({
-                  ...props.model,
-                  compatibilityProfileId: value === "" ? undefined : value,
-                })
-              }
-            />
-          </div>
-        ) : null}
+        </label>
       </div>
-    </article>
+
+      <div className="model-capability-group" role="group" aria-label={t("models.capabilities")}>
+        <span className="model-field-label">{t("models.capabilities")}</span>
+        <div className="capability-toggle-list">
+          <label className="capability-toggle">
+            <input
+              type="checkbox"
+              checked={props.model.input.includes("image")}
+              onChange={(event) => setImageInput(event.target.checked)}
+            />
+            <span className="capability-toggle-indicator" aria-hidden="true" />
+            <span className="capability-toggle-copy">
+              <strong>{t("models.imageInput")}</strong>
+              <small>{t("models.imageInputDescription")}</small>
+            </span>
+          </label>
+          <label className="capability-toggle">
+            <input
+              type="checkbox"
+              checked={props.model.reasoning}
+              onChange={(event) => setReasoning(event.target.checked)}
+            />
+            <span className="capability-toggle-indicator" aria-hidden="true" />
+            <span className="capability-toggle-copy">
+              <strong>{t("models.reasoning")}</strong>
+              <small>{t("models.reasoningDescription")}</small>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      {props.model.reasoning ? (
+        <div className="thinking-settings">
+          <div className="thinking-settings-header">
+            <div>
+              <strong>{t("models.thinkingLevels")}</strong>
+              <small>{t("models.thinkingLevelsDescription")}</small>
+            </div>
+            <label className="capability-toggle capability-toggle-compact">
+              <input
+                type="checkbox"
+                checked={props.model.thinking !== undefined}
+                onChange={(event) => setAdjustableThinking(event.target.checked)}
+              />
+              <span className="capability-toggle-indicator" aria-hidden="true" />
+              <span className="capability-toggle-copy">
+                <strong>{t("models.adjustableThinking")}</strong>
+              </span>
+            </label>
+          </div>
+          {props.model.thinking === undefined ? (
+            <p className="fixed-thinking-note">{t("models.fixedThinking")}</p>
+          ) : (
+            <div className="thinking-controls">
+              <div className="thinking-level-options" aria-label={t("models.thinkingLevels")}>
+                {THINKING_LEVELS.map((level) => (
+                  <label key={level}>
+                    <input
+                      type="checkbox"
+                      checked={supported.includes(level)}
+                      disabled={supported.length === 1 && supported.includes(level)}
+                      onChange={() => {
+                        const next = supported.includes(level)
+                          ? supported.filter((value) => value !== level)
+                          : THINKING_LEVELS.filter(
+                              (candidate) => supported.includes(candidate) || candidate === level,
+                            );
+                        const currentDefault = props.model.thinking?.defaultLevel;
+                        props.onChange({
+                          ...props.model,
+                          thinking: {
+                            supportedLevels: next,
+                            ...(currentDefault !== undefined && next.includes(currentDefault)
+                              ? { defaultLevel: currentDefault }
+                              : { defaultLevel: next[0] }),
+                          },
+                        });
+                      }}
+                    />
+                    <span>{level}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="thinking-default-field">
+                <span>{t("models.defaultThinkingLevel")}</span>
+                <SelectMenu
+                  ariaLabel={t("models.defaultThinkingLevel")}
+                  className="form-select"
+                  value={props.model.thinking.defaultLevel ?? ""}
+                  placement="bottom"
+                  options={[
+                    { value: "", label: t("models.runtimeDefault") },
+                    ...supported.map((level) => ({ value: level, label: level })),
+                  ]}
+                  onChange={(value) =>
+                    props.onChange({
+                      ...props.model,
+                      thinking: {
+                        ...props.model.thinking!,
+                        defaultLevel:
+                          value === "" ? undefined : (value as (typeof THINKING_LEVELS)[number]),
+                      },
+                    })
+                  }
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {props.compatibilityProfiles.length > 0 ? (
+        <div className="model-profile-field">
+          <span>{t("models.modelCompatibilityOverride")}</span>
+          <SelectMenu
+            ariaLabel={t("models.modelCompatibilityOverride")}
+            className="form-select"
+            value={props.model.compatibilityProfileId ?? ""}
+            placement="bottom"
+            options={[
+              { value: "", label: t("models.inheritCompatibility") },
+              ...props.compatibilityProfiles.map((profile) => ({
+                value: profile.id,
+                label: profile.displayName,
+                description: profile.description,
+              })),
+            ]}
+            onChange={(value) =>
+              props.onChange({
+                ...props.model,
+                compatibilityProfileId: value === "" ? undefined : value,
+              })
+            }
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1352,11 +1372,13 @@ export function supportedThinkingLevels(
   if (model.kind !== "generation" || !model.reasoning) return [];
   return model.thinking?.supportedLevels.filter((level) => THINKING_LEVELS.includes(level)) ?? [];
 }
-function addManualModel(
+export function addManualModel(
   idValue: string,
   draft: ProviderDraft,
   setDraft: (draft: ProviderDraft) => void,
-  setAvailable: (models: readonly ModelProviderModel[]) => void,
+  setAvailable: (
+    update: (models: readonly ModelProviderModel[]) => readonly ModelProviderModel[],
+  ) => void,
   clear: (value: string) => void,
 ) {
   const id = idValue.trim();
@@ -1376,6 +1398,6 @@ function addManualModel(
     capabilitiesSource: "manual",
   };
   setDraft({ ...draft, models: [...draft.models, model] });
-  setAvailable(mergeModels([model], draft.models));
+  setAvailable((available) => mergeModels([model], available));
   clear("");
 }
