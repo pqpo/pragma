@@ -1,8 +1,9 @@
-import { useDialogMotion } from "./OverlayMotion.tsx";
+import { OverlayPresence, useDialogMotion } from "./OverlayMotion.tsx";
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-export function Dialog(props: {
+type DialogProps = {
+  readonly open?: boolean | undefined;
   readonly title: string;
   readonly description?: string | undefined;
   readonly children?: ReactNode | undefined;
@@ -14,7 +15,18 @@ export function Dialog(props: {
   readonly hideHeader?: boolean | undefined;
   readonly busy?: boolean | undefined;
   readonly onCancel: () => void;
-}) {
+};
+
+/** Keep controlled dialogs mounted while their shared exit motion completes. */
+export function Dialog(props: DialogProps) {
+  return (
+    <OverlayPresence open={props.open ?? true}>
+      <DialogSurface {...props} />
+    </OverlayPresence>
+  );
+}
+
+function DialogSurface(props: DialogProps) {
   const motion = useDialogMotion();
   const titleId = useId();
   const descriptionId = useId();

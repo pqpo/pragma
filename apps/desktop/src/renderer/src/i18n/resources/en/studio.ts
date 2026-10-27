@@ -34,7 +34,7 @@ export const studio = {
     "cloud-pi-agent": {
       "full-access": "Run with host permissions",
     },
-    antigravity: {
+    "antigravity-local": {
       "full-access": "Full access without approval",
       "request-approval": "Ask before changes and commands",
       "native-auto": "Automatically review sandbox requests",
@@ -45,7 +45,7 @@ export const studio = {
       "auto-review":
         "This integration is not connected, so this option cannot currently be selected.",
     },
-    antigravity: {
+    "antigravity-local": {
       "native-auto":
         "This integration is not connected, so this option cannot currently be selected.",
     },
@@ -86,7 +86,7 @@ export const studio = {
       "full-access":
         "For direct execution using the host account. Can read and write files and run commands without native approval, including network or external-file access allowed by the host. Pi provides no built-in sandbox; this is its only available mode.",
     },
-    antigravity: {
+    "antigravity-local": {
       "full-access":
         "For direct execution. Allows native file and command tools without asking, using host permissions; the native command sandbox is not enabled.",
       "request-approval":

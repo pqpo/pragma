@@ -11,6 +11,7 @@
 @import "./components/markdown-document.css";
 @import "./components/mission-controls.css";
 @import "./components/shared.css";
+@import "./components/selection-highlight.css";
 @import "./components/studio-file-detail.css";
 
 @import "./features/settings/base.css";

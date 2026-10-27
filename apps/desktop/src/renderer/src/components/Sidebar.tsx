@@ -17,6 +17,7 @@ import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import pragmaIcon from "../assets/pragma-icon.png";
+import { SelectionHighlight } from "./SelectionHighlight.tsx";
 import { AttentionDot } from "./AttentionDot.tsx";
 import { readPinnedNavigation, writePinnedNavigation } from "../lib/sidebar-preference.ts";
 
@@ -69,7 +70,8 @@ export function Sidebar(props: {
         </div>
       </div>
 
-      <nav className="navigation" aria-label={t("navigation.main")}>
+      <nav className="navigation selection-highlight-scope" aria-label={t("navigation.main")}>
+        <SelectionHighlight activeKey={props.activeView} />
         {visibleNavigationItems.map((item) => {
           const NavigationIcon = item.icon;
           const label = t(item.labelKey);
@@ -81,6 +83,7 @@ export function Sidebar(props: {
               className={isActive ? "navigation-item is-active" : "navigation-item"}
               type="button"
               aria-current={isActive ? "page" : undefined}
+              data-selection-active={isActive}
               aria-label={
                 props.attention?.[item.id] ? `${label}, ${t("navigation.needsAttention")}` : label
               }
@@ -116,6 +119,9 @@ export function Sidebar(props: {
           }}
         >
           <button
+            data-selection-active={moreNavigationItems.some(
+              (item) => item.id === props.activeView && !pinnedItems.includes(item.id),
+            )}
             ref={moreButton}
             className={
               moreNavigationItems.some(

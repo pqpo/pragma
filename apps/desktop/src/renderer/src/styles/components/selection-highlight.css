@@ -1,0 +1,32 @@
+.selection-highlight-scope {
+  position: relative;
+}
+
+.selection-highlight-scope [data-selection-active] {
+  position: relative;
+  z-index: 1;
+}
+
+.selection-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-selection);
+  pointer-events: none;
+  transition:
+    transform 160ms ease-out,
+    width 160ms ease-out,
+    height 160ms ease-out;
+}
+
+.selection-highlight-scope:has(> .selection-highlight) [data-selection-active="true"] {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .selection-highlight {
+    transition: none;
+  }
+}

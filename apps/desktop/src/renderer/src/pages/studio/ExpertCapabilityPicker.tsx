@@ -18,6 +18,8 @@ import type { PragmaExpertResource, PragmaResource } from "@pragma/interpreter/a
 import { useTranslation } from "react-i18next";
 
 import type { Capability, ContextStore } from "../../../../shared/contracts/index.ts";
+import { Dialog } from "../../components/Dialog.tsx";
+import { OverlayPresence } from "../../components/OverlayMotion.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import {
   PragmaResourcePickerDialog,
@@ -275,21 +277,6 @@ export function ExpertCapabilityPicker(props: {
     setActivePicker(picker);
   };
 
-  useEffect(() => {
-    if (activePicker === null || activePicker === "context-stores" || activePicker === "resources")
-      return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closePicker();
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [activePicker]);
-
   const selectedResourceRefs = props.resourceTools.flatMap(expertResourceToolRefs);
   const selectedResourceNames = selectedResourceRefs.flatMap((ref) => {
     const resource = resourcePickerItems.find((candidate) => candidate.ref === ref);
@@ -403,10 +390,10 @@ export function ExpertCapabilityPicker(props: {
 
   return (
     <>
-      <section className="capability-summary-section" aria-labelledby="capability-library-heading">
+      <section className="capability-summary-section" aria-labelledby="add-capabilities-heading">
         <div className="capability-section-heading">
-          <div>
-            <h3 id="capability-library-heading">{t("capabilityLibrary")}</h3>
+          <div className="expert-step-heading">
+            <h2 id="add-capabilities-heading">{t("addCapabilities")}</h2>
             <p>{t("capabilityLibraryDescription")}</p>
           </div>
           <span>
@@ -453,58 +440,53 @@ export function ExpertCapabilityPicker(props: {
         </div>
       </section>
 
-      {activePicker === "resources" ? (
-        <PragmaResourcePickerDialog
-          title={pickerCopy.resources.title}
-          description={pickerCopy.resources.description}
-          items={resourcePickerItems}
-          selectedRefs={selectedResourceRefs}
-          selectionMode="multiple"
-          searchPlaceholder={pickerCopy.resources.searchPlaceholder}
-          onSelectedRefsChange={(refs) => {
-            const next = updateResourceToolSelection(
-              props.resourceTools,
-              refs,
-              resourcePickerItems,
-              props.toolApprovals,
-            );
-            props.onResourceToolsChange(next.resourceTools);
-            props.onToolApprovalsChange(next.toolApprovals);
-          }}
-          onClose={closePicker}
-        />
-      ) : activePicker === "context-stores" ? (
-        <ContextStorePickerDialog
-          stores={props.contextStores}
-          selectedStoreIds={props.contextStoreMounts.map((mount) => mount.storeId)}
-          description={pickerCopy["context-stores"].description}
-          footerHint={t("changesImmediate")}
-          onSelectedStoreIdsChange={(storeIds) => {
-            const currentMounts = new Map(
-              props.contextStoreMounts.map((mount) => [mount.storeId, mount]),
-            );
-            props.onContextStoreMountsChange(
-              storeIds.map((storeId, priority) => ({
-                ...(currentMounts.get(storeId) ?? { storeId, enabled: true }),
-                priority,
-              })),
-            );
-          }}
-          onClose={closePicker}
-        />
-      ) : activePicker !== null ? (
-        <div
-          className="expert-picker-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) closePicker();
-          }}
-        >
-          <aside
+      <OverlayPresence open={activePicker !== null}>
+        {activePicker === "resources" ? (
+          <PragmaResourcePickerDialog
+            title={pickerCopy.resources.title}
+            description={pickerCopy.resources.description}
+            items={resourcePickerItems}
+            selectedRefs={selectedResourceRefs}
+            selectionMode="multiple"
+            searchPlaceholder={pickerCopy.resources.searchPlaceholder}
+            onSelectedRefsChange={(refs) => {
+              const next = updateResourceToolSelection(
+                props.resourceTools,
+                refs,
+                resourcePickerItems,
+                props.toolApprovals,
+              );
+              props.onResourceToolsChange(next.resourceTools);
+              props.onToolApprovalsChange(next.toolApprovals);
+            }}
+            onClose={closePicker}
+          />
+        ) : activePicker === "context-stores" ? (
+          <ContextStorePickerDialog
+            stores={props.contextStores}
+            selectedStoreIds={props.contextStoreMounts.map((mount) => mount.storeId)}
+            description={pickerCopy["context-stores"].description}
+            footerHint={t("changesImmediate")}
+            onSelectedStoreIdsChange={(storeIds) => {
+              const currentMounts = new Map(
+                props.contextStoreMounts.map((mount) => [mount.storeId, mount]),
+              );
+              props.onContextStoreMountsChange(
+                storeIds.map((storeId, priority) => ({
+                  ...(currentMounts.get(storeId) ?? { storeId, enabled: true }),
+                  priority,
+                })),
+              );
+            }}
+            onClose={closePicker}
+          />
+        ) : activePicker !== null ? (
+          <Dialog
+            title={pickerCopy[activePicker].title}
+            hideHeader
             className="expert-picker-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="expert-picker-heading"
+            backdropClassName="expert-picker-backdrop"
+            onCancel={closePicker}
           >
             <header className="expert-picker-heading">
               <div>
@@ -520,7 +502,7 @@ export function ExpertCapabilityPicker(props: {
               <MagnifyingGlass size={18} aria-hidden="true" />
               <span className="sr-only">{pickerCopy[activePicker].searchPlaceholder}</span>
               <input
-                autoFocus
+                data-dialog-initial-focus
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder={pickerCopy[activePicker].searchPlaceholder}
@@ -572,9 +554,9 @@ export function ExpertCapabilityPicker(props: {
                 {t("common:actions.done")}
               </button>
             </footer>
-          </aside>
-        </div>
-      ) : null}
+          </Dialog>
+        ) : null}
+      </OverlayPresence>
     </>
   );
 }

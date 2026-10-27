@@ -6,6 +6,8 @@ export {
   type MissionRailResolvedGroups,
 } from "./mission-rail-groups.ts";
 import {
+  createContext,
+  useContext,
   useCallback,
   useEffect,
   useId,
@@ -18,6 +20,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
+  type ReactNode,
 } from "react";
 import {
   CheckCircle,
@@ -32,6 +35,8 @@ import {
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { type MissionSummary } from "../../../../shared/contracts/index.ts";
+import { SelectionHighlight } from "../../components/SelectionHighlight.tsx";
+import { useOverlayMotion } from "../../components/OverlayMotion.tsx";
 import { i18n } from "../../i18n/index.ts";
 import { formatMissionDateTime } from "../../lib/mission-time.ts";
 import type { MissionListSource } from "./missions-page-state.tsx";
@@ -275,73 +280,95 @@ export function MissionRail(props: {
   };
 
   return (
-    <aside className="mission-rail">
-      <div
-        className={
-          searchCollapsed ? "mission-rail-header is-search-collapsed" : "mission-rail-header"
-        }
-      >
-        <button
-          className="mission-new-button"
-          type="button"
-          onClick={props.onCreate}
-          onPointerEnter={updateCreateGlow}
-          onPointerMove={updateCreateGlow}
-        >
-          <Plus size={18} aria-hidden="true" />
-          {t("newMission")}
-        </button>
+    <MissionRowPreviewProvider>
+      <aside className="mission-rail">
         <div
-          className={`mission-source-tabs is-${props.source}`}
-          role="tablist"
-          aria-label={t("missionSources")}
+          className={
+            searchCollapsed ? "mission-rail-header is-search-collapsed" : "mission-rail-header"
+          }
         >
-          <span className="mission-source-indicator" aria-hidden="true" />
           <button
+            className="mission-new-button"
             type="button"
-            role="tab"
-            aria-selected={props.source === "task"}
-            className={props.source === "task" ? "is-active" : undefined}
-            onClick={() => props.onSourceChange("task")}
+            onClick={props.onCreate}
+            onPointerEnter={updateCreateGlow}
+            onPointerMove={updateCreateGlow}
           >
-            {t("sourceTabs.task")}
+            <Plus size={18} aria-hidden="true" />
+            {t("newMission")}
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={props.source === "automation"}
-            className={props.source === "automation" ? "is-active" : undefined}
-            onClick={() => props.onSourceChange("automation")}
+          <div
+            className={`mission-source-tabs is-${props.source}`}
+            role="tablist"
+            aria-label={t("missionSources")}
           >
-            {t("sourceTabs.automation")}
-          </button>
+            <span className="mission-source-indicator" aria-hidden="true" />
+            <button
+              type="button"
+              role="tab"
+              aria-selected={props.source === "task"}
+              className={props.source === "task" ? "is-active" : undefined}
+              onClick={() => props.onSourceChange("task")}
+            >
+              {t("sourceTabs.task")}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={props.source === "automation"}
+              className={props.source === "automation" ? "is-active" : undefined}
+              onClick={() => props.onSourceChange("automation")}
+            >
+              {t("sourceTabs.automation")}
+            </button>
+          </div>
+          <div className="mission-search-slot" aria-hidden={searchCollapsed ? "true" : undefined}>
+            <label className="mission-search" ref={searchRef}>
+              <MagnifyingGlass size={18} aria-hidden="true" />
+              <span className="sr-only">{t("search")}</span>
+              <input
+                value={props.search}
+                onFocus={() => {
+                  if (!searchCollapsed) return;
+                  lockSearchTransition();
+                  setSearchCollapsed(false);
+                }}
+                onChange={(event) => props.onSearch(event.target.value)}
+                placeholder={t("search")}
+                tabIndex={searchCollapsed ? -1 : undefined}
+              />
+            </label>
+          </div>
         </div>
-        <div className="mission-search-slot" aria-hidden={searchCollapsed ? "true" : undefined}>
-          <label className="mission-search" ref={searchRef}>
-            <MagnifyingGlass size={18} aria-hidden="true" />
-            <span className="sr-only">{t("search")}</span>
-            <input
-              value={props.search}
-              onFocus={() => {
-                if (!searchCollapsed) return;
-                lockSearchTransition();
-                setSearchCollapsed(false);
-              }}
-              onChange={(event) => props.onSearch(event.target.value)}
-              placeholder={t("search")}
-              tabIndex={searchCollapsed ? -1 : undefined}
+        <div
+          key={props.source}
+          className="mission-rail-list selection-highlight-scope"
+          onScroll={handleScroll}
+        >
+          <SelectionHighlight activeKey={props.selectedMissionId} />
+          {missionGroups.waitingInput.visibleMissions.length > 0 ||
+          missionGroups.waitingInput.hiddenCount > 0 ? (
+            <MissionRailGroup
+              label={t("waitingInput")}
+              emptyLabel={t("noWaitingInput")}
+              missions={missionGroups.waitingInput.visibleMissions}
+              hiddenCount={missionGroups.waitingInput.hiddenCount}
+              pinnedMissionIds={pinnedMissionIdSet}
+              unreadMissionOutputIds={unreadMissionOutputIdSet}
+              selectedMissionId={props.selectedMissionId}
+              onOpen={props.onOpen}
+              onTogglePin={props.onTogglePin}
+              onMarkComplete={props.onMarkComplete}
+              onRename={props.onRename}
+              onDelete={props.onDelete}
+              onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("waitingInput"))}
             />
-          </label>
-        </div>
-      </div>
-      <div key={props.source} className="mission-rail-list" onScroll={handleScroll}>
-        {missionGroups.waitingInput.visibleMissions.length > 0 ||
-        missionGroups.waitingInput.hiddenCount > 0 ? (
+          ) : null}
           <MissionRailGroup
-            label={t("waitingInput")}
-            emptyLabel={t("noWaitingInput")}
-            missions={missionGroups.waitingInput.visibleMissions}
-            hiddenCount={missionGroups.waitingInput.hiddenCount}
+            label={t("active")}
+            emptyLabel={t(props.source === "automation" ? "noActiveAutomations" : "noActive")}
+            missions={missionGroups.active.visibleMissions}
+            hiddenCount={missionGroups.active.hiddenCount}
             pinnedMissionIds={pinnedMissionIdSet}
             unreadMissionOutputIds={unreadMissionOutputIdSet}
             selectedMissionId={props.selectedMissionId}
@@ -350,42 +377,27 @@ export function MissionRail(props: {
             onMarkComplete={props.onMarkComplete}
             onRename={props.onRename}
             onDelete={props.onDelete}
-            onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("waitingInput"))}
+            onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("active"))}
           />
-        ) : null}
-        <MissionRailGroup
-          label={t("active")}
-          emptyLabel={t(props.source === "automation" ? "noActiveAutomations" : "noActive")}
-          missions={missionGroups.active.visibleMissions}
-          hiddenCount={missionGroups.active.hiddenCount}
-          pinnedMissionIds={pinnedMissionIdSet}
-          unreadMissionOutputIds={unreadMissionOutputIdSet}
-          selectedMissionId={props.selectedMissionId}
-          onOpen={props.onOpen}
-          onTogglePin={props.onTogglePin}
-          onMarkComplete={props.onMarkComplete}
-          onRename={props.onRename}
-          onDelete={props.onDelete}
-          onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("active"))}
-        />
-        <MissionRailGroup
-          label={t("completed")}
-          emptyLabel={t(props.source === "automation" ? "noCompletedAutomations" : "noCompleted")}
-          variant="completed"
-          missions={missionGroups.completed.visibleMissions}
-          hiddenCount={missionGroups.completed.hiddenCount}
-          pinnedMissionIds={pinnedMissionIdSet}
-          unreadMissionOutputIds={unreadMissionOutputIdSet}
-          selectedMissionId={props.selectedMissionId}
-          onOpen={props.onOpen}
-          onTogglePin={props.onTogglePin}
-          onMarkComplete={props.onMarkComplete}
-          onRename={props.onRename}
-          onDelete={props.onDelete}
-          onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("completed"))}
-        />
-      </div>
-    </aside>
+          <MissionRailGroup
+            label={t("completed")}
+            emptyLabel={t(props.source === "automation" ? "noCompletedAutomations" : "noCompleted")}
+            variant="completed"
+            missions={missionGroups.completed.visibleMissions}
+            hiddenCount={missionGroups.completed.hiddenCount}
+            pinnedMissionIds={pinnedMissionIdSet}
+            unreadMissionOutputIds={unreadMissionOutputIdSet}
+            selectedMissionId={props.selectedMissionId}
+            onOpen={props.onOpen}
+            onTogglePin={props.onTogglePin}
+            onMarkComplete={props.onMarkComplete}
+            onRename={props.onRename}
+            onDelete={props.onDelete}
+            onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("completed"))}
+          />
+        </div>
+      </aside>
+    </MissionRowPreviewProvider>
   );
 }
 
@@ -517,29 +529,87 @@ export function positionMissionRowPreview(input: {
 export const useMissionRowPreviewLayoutEffect =
   typeof document === "undefined" ? useEffect : useLayoutEffect;
 
-function MissionRowPreviewCard(props: {
+interface MissionRowPreviewProps {
   readonly anchorRef: RefObject<HTMLDivElement | null>;
   readonly cardRef: RefObject<HTMLElement | null>;
   readonly onEnter: () => void;
   readonly onLeave: () => void;
   readonly onRename: () => void;
   readonly onDelete: () => void;
+  readonly onDismiss: () => void;
   readonly id: string;
   readonly mission: MissionSummary;
   readonly open: boolean;
-}) {
+  readonly onBlur: (event: ReactFocusEvent<HTMLElement>) => void;
+  readonly onFocus: (event: ReactFocusEvent<HTMLElement>) => void;
+  readonly onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
+}
+
+const MissionRowPreviewContext = createContext<{
+  readonly update: (preview: MissionRowPreviewProps) => void;
+  readonly dismiss: (id: string) => void;
+} | null>(null);
+
+function MissionRowPreviewProvider(props: { readonly children: ReactNode }) {
+  const [preview, setPreview] = useState<MissionRowPreviewProps | null>(null);
+  const activePreviewRef = useRef<MissionRowPreviewProps | null>(null);
+  const controller = useMemo(
+    () => ({
+      update: (next: MissionRowPreviewProps) => {
+        const previous = activePreviewRef.current;
+        activePreviewRef.current = next;
+        // Retire the old row's timers and open state when the shared card changes owner.
+        if (previous?.id !== next.id) previous?.onDismiss();
+        setPreview(next);
+      },
+      dismiss: (id: string) => {
+        const current = activePreviewRef.current;
+        if (current?.id !== id || !current.open) return;
+        const closed = { ...current, open: false };
+        activePreviewRef.current = closed;
+        setPreview(closed);
+      },
+    }),
+    [],
+  );
+  return (
+    <MissionRowPreviewContext value={controller}>
+      {props.children}
+      {preview === null ? null : <MissionRowPreviewCard {...preview} />}
+    </MissionRowPreviewContext>
+  );
+}
+
+function MissionRowPreview(props: MissionRowPreviewProps) {
+  const controller = useContext(MissionRowPreviewContext);
+  useMissionRowPreviewLayoutEffect(() => {
+    if (props.open) controller?.update(props);
+    else controller?.dismiss(props.id);
+  });
+  useMissionRowPreviewLayoutEffect(
+    () => () => controller?.dismiss(props.id),
+    [controller, props.id],
+  );
+  return null;
+}
+
+function MissionRowPreviewCard(props: MissionRowPreviewProps) {
+  const motion = useOverlayMotion(props.open);
   const { t } = useTranslation("missions");
   const cardRef = props.cardRef;
   const [position, setPosition] = useState<MissionRowPreviewPosition | null>(null);
+  const [positionMotionReady, setPositionMotionReady] = useState(false);
+  const positioned = position !== null;
 
   const updatePosition = useCallback(() => {
     const anchor = props.anchorRef.current?.getBoundingClientRect();
-    const card = cardRef.current?.getBoundingClientRect();
-    if (anchor === undefined || card === undefined) return;
+    const card = cardRef.current;
+    if (anchor === undefined || card === null) return;
     setPosition(
       positionMissionRowPreview({
         anchor,
-        card,
+        // Measure layout size independently of the enter/exit scale animation.
+        card: { width: card.offsetWidth, height: card.offsetHeight },
         viewport: { width: window.innerWidth, height: window.innerHeight },
       }),
     );
@@ -550,10 +620,7 @@ function MissionRowPreviewCard(props: {
   }, [props.open, updatePosition]);
 
   useEffect(() => {
-    if (!props.open) {
-      setPosition(null);
-      return;
-    }
+    if (!props.open) return;
     const reposition = () => updatePosition();
     window.addEventListener("resize", reposition);
     window.addEventListener("scroll", reposition, true);
@@ -568,10 +635,31 @@ function MissionRowPreviewCard(props: {
     };
   }, [props.anchorRef, props.open, updatePosition, cardRef]);
 
-  if (!props.open) return null;
+  useEffect(() => {
+    if (!motion.present) setPosition(null);
+  }, [motion.present]);
+
+  useEffect(() => {
+    if (!motion.present || !positioned) {
+      setPositionMotionReady(false);
+      return;
+    }
+    // Commit the initial coordinates before enabling transitions between rows.
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => setPositionMotionReady(true));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [motion.present, positioned]);
+
+  if (!motion.present) return null;
   const content = (
     <aside
       className={position === null ? "mission-row-preview" : "mission-row-preview is-positioned"}
+      data-position-motion={positionMotionReady ? "ready" : undefined}
+      {...motion.attributes("menu")}
+      onBlur={props.onBlur}
+      onFocus={props.onFocus}
+      onKeyDown={props.onKeyDown}
       data-placement={position?.placement}
       id={props.id}
       ref={cardRef}
@@ -642,7 +730,18 @@ function MissionRowPreviewCard(props: {
   return typeof document === "undefined" ? content : createPortal(content, document.body);
 }
 
-export function MissionRailRow(props: {
+export function MissionRailRow(props: MissionRailRowProps) {
+  const controller = useContext(MissionRowPreviewContext);
+  return controller === null ? (
+    <MissionRowPreviewProvider>
+      <MissionRailRowContent {...props} />
+    </MissionRowPreviewProvider>
+  ) : (
+    <MissionRailRowContent {...props} />
+  );
+}
+
+interface MissionRailRowProps {
   readonly mission: MissionSummary;
   readonly completed: boolean;
   readonly pinned: boolean;
@@ -653,7 +752,9 @@ export function MissionRailRow(props: {
   readonly onMarkComplete: (mission: MissionSummary) => void | Promise<void>;
   readonly onRename: (mission: MissionSummary) => void;
   readonly onDelete: (mission: MissionSummary) => void;
-}) {
+}
+
+function MissionRailRowContent(props: MissionRailRowProps) {
   const previewId = useId();
   const rowRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLElement>(null);
@@ -719,19 +820,19 @@ export function MissionRailRow(props: {
     [],
   );
 
-  const handleBlur = (event: ReactFocusEvent<HTMLDivElement>) => {
+  const handleBlur = (event: ReactFocusEvent<HTMLElement>) => {
     const next = event.relatedTarget as Node | null;
     if (next !== null && (rowRef.current?.contains(next) || cardRef.current?.contains(next)))
       return;
     scheduleHide();
   };
-  const handleFocus = (event: ReactFocusEvent<HTMLDivElement>) => {
+  const handleFocus = (event: ReactFocusEvent<HTMLElement>) => {
     cancelHide();
     if (event.target instanceof HTMLElement && event.target.matches(":focus-visible")) {
       showPreview();
     }
   };
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {
       event.stopPropagation();
       rowRef.current?.querySelector<HTMLButtonElement>(".mission-row-open")?.focus();
@@ -795,6 +896,7 @@ export function MissionRailRow(props: {
         .join(" ")}
       ref={rowRef}
       data-mission-id={props.mission.id}
+      data-selection-active={props.selected}
       onBlur={handleBlur}
       onFocus={handleFocus}
       onKeyDown={handleKeyDown}
@@ -881,7 +983,11 @@ export function MissionRailRow(props: {
           </button>
         )}
       </div>
-      <MissionRowPreviewCard
+      <MissionRowPreview
+        onDismiss={hidePreview}
+        onBlur={handleBlur}
+        onFocus={handleFocus}
+        onKeyDown={handleKeyDown}
         anchorRef={rowRef}
         cardRef={cardRef}
         onEnter={() => {

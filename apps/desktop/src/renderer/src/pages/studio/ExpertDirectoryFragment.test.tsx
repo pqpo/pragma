@@ -521,6 +521,101 @@ describe("ExpertEditorFragment", () => {
   const draft = { ...expert, tagInput: "" };
 
   it.each([
+    ["test", "test", false],
+    ["removed-model", "test", true],
+    ["test", "removed-provider", true],
+  ] as const)(
+    "only labels a saved model unavailable when missing (%s / %s)",
+    (modelId, providerId, missing) => {
+      const html = renderToStaticMarkup(
+        <ExpertEditorFragment
+          mode="edit"
+          initialStep="model"
+          initialValue={{ ...draft, model: { runtimeId: "test", modelId, providerId } }}
+          runtimes={[
+            {
+              id: "test",
+              kind: "codex-local",
+              displayName: "Codex",
+              isDefault: true,
+              status: "available",
+              models: [
+                {
+                  id: "test",
+                  displayName: "Test Model",
+                  provider: { kind: "runtime-managed", id: "test", displayName: "Test" },
+                },
+              ],
+            },
+          ]}
+          contextStores={[]}
+          capabilities={[]}
+          experts={[]}
+          resources={[]}
+          memoryEnabled={true}
+          onCancel={() => undefined}
+          onCreated={async () => undefined}
+        />,
+      );
+      expect(html.includes(`Unavailable: ${modelId}`)).toBe(missing);
+      expect(html).toContain("Test Model");
+      if (!missing) expect(html).toContain("Select a model");
+    },
+  );
+
+  it.each([
+    ["en", "1 model", "unavailable"],
+    ["zh-Hans", "1 个模型", "不可用"],
+    ["zh-Hant", "1 個模型", "無法使用"],
+  ])(
+    "shows runtime choices with logos, counts and availability in %s",
+    async (locale, count, unavailable) => {
+      await i18n.changeLanguage(locale);
+      const runtime: DesktopRuntimeAvailability = {
+        id: "test",
+        kind: "codex-local",
+        displayName: "My Codex",
+        isDefault: true,
+        status: "available",
+        models: [
+          {
+            id: "test",
+            displayName: "Test Model",
+            provider: { kind: "runtime-managed", id: "test", displayName: "Test" },
+          },
+        ],
+      };
+      const html = renderToStaticMarkup(
+        <ExpertEditorFragment
+          mode="edit"
+          initialStep="model"
+          initialValue={draft}
+          runtimes={[
+            runtime,
+            { ...runtime, id: "offline", displayName: "Offline Runtime", status: "unavailable" },
+          ]}
+          contextStores={[]}
+          capabilities={[]}
+          experts={[]}
+          resources={[]}
+          memoryEnabled={true}
+          onCancel={() => undefined}
+          onCreated={async () => undefined}
+        />,
+      );
+      expect(html).toContain('role="radiogroup"');
+      expect(html).toMatch(/type="radio"[^>]*checked=""[^>]*value="test"/);
+      expect(html).toMatch(/type="radio"[^>]*disabled=""[^>]*value="offline"/);
+      expect(html).toContain("My Codex");
+      expect(html).toContain('class="runtime-logo"');
+      expect(html).toContain(count);
+      expect(html).toContain(`<small>${unavailable}</small>`);
+      expect(html).toContain('aria-pressed="false"');
+      expect(html).toContain('role="combobox"');
+    },
+  );
+
+  it.each([
     [undefined, "Full access"],
     ["read-only", "Read only"],
   ] as const)(
@@ -770,19 +865,19 @@ describe("ExpertEditorFragment", () => {
         ["Run with host permissions", "使用宿主权限执行", "使用宿主權限執行"],
       ],
       [
-        "antigravity",
+        "antigravity-local",
         "full-access",
         true,
         ["Full access without approval", "完全访问（免审批）", "完全存取（免審批）"],
       ],
       [
-        "antigravity",
+        "antigravity-local",
         "request-approval",
         true,
         ["Ask before changes and commands", "修改与命令先询问", "修改與命令先詢問"],
       ],
       [
-        "antigravity",
+        "antigravity-local",
         "native-auto",
         false,
         ["Automatically review sandbox requests", "自动审核沙箱请求", "自動審核沙箱請求"],
@@ -878,7 +973,7 @@ describe("ExpertEditorFragment", () => {
                 ? "仅支持此模式"
                 : "僅支援此模式",
           );
-        if (kind === "antigravity" && permissionModeId === "request-approval")
+        if (kind === "antigravity-local" && permissionModeId === "request-approval")
           expect(html).toContain(
             locale === "en"
               ? "approval does not remove"

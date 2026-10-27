@@ -51,10 +51,11 @@
 }
 
 .studio-navigation {
+  position: relative;
   align-self: stretch;
   align-content: start;
   display: grid;
-  gap: 7px;
+  gap: 6px;
   min-height: 0;
   overflow: hidden;
   margin: 0;
@@ -65,19 +66,20 @@
 
 .studio-nav-item {
   position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: auto 1fr auto;
-  min-height: 48px;
+  min-height: 44px;
   align-items: center;
   gap: 13px;
   padding: 0 13px;
-  border: 0;
-  border-radius: 9px;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-md);
   background: transparent;
   color: var(--ui-text-secondary);
   cursor: pointer;
   font-size: 14px;
-  font-weight: 560;
+  font-weight: 500;
   text-align: left;
 }
 
@@ -95,8 +97,9 @@
 
 .studio-nav-item.is-active {
   background: var(--ui-selection);
-  color: var(--text);
-  font-weight: 680;
+  color: var(--ui-text);
+  font-weight: 500;
+  box-shadow: none;
 }
 
 .studio-nav-item em {
@@ -1001,7 +1004,7 @@
 .review-summary dl {
   display: grid;
   gap: 24px;
-  margin: 16px 0 0;
+  margin: 0;
 }
 
 .review-summary dl div {
@@ -1094,14 +1097,9 @@
 .instructions-field {
   display: grid;
   grid-template-rows: auto minmax(280px, 1fr) auto;
-  gap: 8px;
+  gap: 16px;
   color: var(--ui-text);
   font-size: 13px;
-}
-
-.instructions-field > header {
-  display: grid;
-  gap: 8px;
 }
 
 .creator-form .field-hint.instructions-count {
@@ -1110,30 +1108,6 @@
 
 .studio-page {
   background: var(--background);
-}
-
-.studio-navigation {
-  gap: 6px;
-  border-right: 0;
-}
-
-.studio-nav-item {
-  min-height: 44px;
-  border: 1px solid transparent;
-  border-radius: var(--ui-radius-md);
-  font-weight: 500;
-}
-
-.studio-nav-item:hover {
-  background: var(--ui-surface-subtle);
-}
-
-.studio-nav-item.is-active {
-  border-color: transparent;
-  background: var(--ui-selection);
-  color: var(--ui-text);
-  font-weight: 500;
-  box-shadow: none;
 }
 
 .studio-heading {

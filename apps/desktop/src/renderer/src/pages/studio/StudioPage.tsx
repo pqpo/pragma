@@ -27,6 +27,7 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import { ContextStoreSchema } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { SelectionHighlight } from "../../components/SelectionHighlight.tsx";
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
 import { AttentionDot } from "../../components/AttentionDot.tsx";
 import {
@@ -804,7 +805,8 @@ export function StudioPage(props: {
       className="studio-page"
       style={{ "--sidebar-width": `${navigationWidth}px` } as CSSProperties}
     >
-      <nav className="studio-navigation" aria-label={t("sections")}>
+      <nav className="studio-navigation selection-highlight-scope" aria-label={t("sections")}>
+        <SelectionHighlight activeKey={activeView} />
         {studioSections.map((section) => {
           const SectionIcon = section.icon;
           const isActive = section.id === activeView;
@@ -832,6 +834,7 @@ export function StudioPage(props: {
               className={isActive ? "studio-nav-item is-active" : "studio-nav-item"}
               type="button"
               aria-current={isActive ? "page" : undefined}
+              data-selection-active={isActive}
               onClick={() => openStudioView(section.id)}
             >
               <SectionIcon size={20} aria-hidden="true" />

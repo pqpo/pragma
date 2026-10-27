@@ -1,4 +1,4 @@
-import { OverlayMotionScope, OverlayPresence } from "../../components/OverlayMotion.tsx";
+import { OverlayPresence } from "../../components/OverlayMotion.tsx";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowCounterClockwise,
@@ -2139,7 +2139,7 @@ export function MissionDetailFragment(props: {
           onClose={() => selectWorkRecord(null)}
         />
       )}
-      <OverlayMotionScope>
+      <>
         <OverlayPresence open={contextStorePickerOpen}>
           {contextStorePickerOpen ? (
             <ContextStorePickerDialog
@@ -2180,7 +2180,7 @@ export function MissionDetailFragment(props: {
             />
           ) : null}
         </OverlayPresence>
-      </OverlayMotionScope>
+      </>
       {branchCandidate === undefined ? null : (
         <ConfirmationDialog
           title={t("createBranchTitle", { ns: "missions" })}

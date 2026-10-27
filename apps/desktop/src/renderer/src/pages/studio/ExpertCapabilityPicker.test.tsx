@@ -192,7 +192,10 @@ describe("ExpertCapabilityPicker", () => {
       />,
     );
 
-    expect(html).toContain("Capability library");
+    expect(html).toContain(
+      "Add capabilities</h2><p>Open a category to search and choose only what this expert needs.</p>",
+    );
+    expect(html).not.toContain("Capability library");
     expect(html).toContain("Experts, teams &amp; flows");
     expect(html).toContain("5 available");
     expect(html).not.toContain("searchCodeWiki");

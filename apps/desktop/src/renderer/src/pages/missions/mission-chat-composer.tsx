@@ -1,4 +1,3 @@
-import { OverlayMotionScope } from "../../components/OverlayMotion.tsx";
 import {
   forwardRef,
   useCallback,
@@ -336,7 +335,7 @@ export const MissionChatComposer = forwardRef<
   });
 
   return (
-    <OverlayMotionScope>
+    <>
       <div className="mission-chat-composer" aria-busy={props.clientOperationBusy}>
         <MissionAttachmentList
           attachments={attachments}
@@ -447,7 +446,7 @@ export const MissionChatComposer = forwardRef<
           </div>
         </div>
       </div>
-    </OverlayMotionScope>
+    </>
   );
 });
 

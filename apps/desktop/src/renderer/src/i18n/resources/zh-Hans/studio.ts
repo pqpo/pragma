@@ -33,7 +33,7 @@ export const studio = {
     "cloud-pi-agent": {
       "full-access": "使用宿主权限执行",
     },
-    antigravity: {
+    "antigravity-local": {
       "full-access": "完全访问（免审批）",
       "request-approval": "修改与命令先询问",
       "native-auto": "自动审核沙箱请求",
@@ -41,7 +41,7 @@ export const studio = {
   },
   permissionModeReasons: {
     "codex-local": { "auto-review": "当前尚未接通，暂不可选。" },
-    antigravity: { "native-auto": "当前尚未接通，暂不可选。" },
+    "antigravity-local": { "native-auto": "当前尚未接通，暂不可选。" },
   },
   permissionModeDescriptions: {
     "opencode-local": {
@@ -79,7 +79,7 @@ export const studio = {
       "full-access":
         "适合直接执行任务。按宿主账号权限读写文件和运行命令，无原生审批；可执行宿主允许的联网或外部文件访问。Pi 不提供内置沙箱，目前仅支持此模式。",
     },
-    antigravity: {
+    "antigravity-local": {
       "full-access":
         "适合直接执行任务。原生文件和命令工具按宿主权限运行，无需逐次确认；不启用原生命令沙箱。",
       "request-approval":
@@ -1071,7 +1071,7 @@ export const studio = {
   deleteExpert: "删除此专家？",
   deleteExpertAction: "删除专家",
   deleteExpertDescription: "“{{name}}”将被永久删除。必须先更新使用它的专家团队、流程和工具。",
-  useInSession: "在回话中使用",
+  useInSession: "在会话中使用",
   instructions: "指令",
   noInstructions: "尚未提供指令。",
   additionalInstructions: "附加指令",

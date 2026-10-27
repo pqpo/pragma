@@ -33,7 +33,7 @@ export const studio = {
     "cloud-pi-agent": {
       "full-access": "使用宿主權限執行",
     },
-    antigravity: {
+    "antigravity-local": {
       "full-access": "完全存取（免審批）",
       "request-approval": "修改與命令先詢問",
       "native-auto": "自動審核沙箱請求",
@@ -41,7 +41,7 @@ export const studio = {
   },
   permissionModeReasons: {
     "codex-local": { "auto-review": "目前尚未接通，暫不可選。" },
-    antigravity: { "native-auto": "目前尚未接通，暫不可選。" },
+    "antigravity-local": { "native-auto": "目前尚未接通，暫不可選。" },
   },
   permissionModeDescriptions: {
     "opencode-local": {
@@ -79,7 +79,7 @@ export const studio = {
       "full-access":
         "適合直接執行任務。按宿主帳號權限讀寫檔案和執行命令，無原生審批；可執行宿主允許的連網或外部檔案存取。Pi 不提供內建沙箱，目前僅支援此模式。",
     },
-    antigravity: {
+    "antigravity-local": {
       "full-access":
         "適合直接執行任務。原生檔案和命令工具按宿主權限執行，無需逐次確認；不啟用原生命令沙箱。",
       "request-approval":

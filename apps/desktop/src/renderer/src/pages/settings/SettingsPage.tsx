@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
+import { SelectionHighlight } from "../../components/SelectionHighlight.tsx";
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
 import {
   SIDEBAR_WIDTH_PREFERENCES,
@@ -46,11 +47,16 @@ export function SettingsPage(
       className="settings-page"
       style={{ "--sidebar-width": `${navigationWidth}px` } as CSSProperties}
     >
-      <nav className="settings-navigation" aria-label={t("navigationLabel")}>
+      <nav
+        className="settings-navigation selection-highlight-scope"
+        aria-label={t("navigationLabel")}
+      >
+        <SelectionHighlight activeKey={activeView} />
         <button
           className={activeView === "general" ? "settings-nav-item is-active" : "settings-nav-item"}
           type="button"
           aria-selected={activeView === "general"}
+          data-selection-active={activeView === "general"}
           aria-controls="general-panel"
           onClick={() => setActiveView("general")}
         >
@@ -60,6 +66,7 @@ export function SettingsPage(
           className={activeView === "models" ? "settings-nav-item is-active" : "settings-nav-item"}
           type="button"
           aria-selected={activeView === "models"}
+          data-selection-active={activeView === "models"}
           aria-controls="models-panel"
           onClick={() => setActiveView("models")}
         >
@@ -71,6 +78,7 @@ export function SettingsPage(
           }
           type="button"
           aria-selected={activeView === "runtimes"}
+          data-selection-active={activeView === "runtimes"}
           aria-controls="runtimes-panel"
           onClick={() => setActiveView("runtimes")}
         >
@@ -80,6 +88,7 @@ export function SettingsPage(
           className={activeView === "memory" ? "settings-nav-item is-active" : "settings-nav-item"}
           type="button"
           aria-selected={activeView === "memory"}
+          data-selection-active={activeView === "memory"}
           aria-controls="memory-panel"
           onClick={() => setActiveView("memory")}
         >
@@ -91,6 +100,7 @@ export function SettingsPage(
           }
           type="button"
           aria-selected={activeView === "evaluations"}
+          data-selection-active={activeView === "evaluations"}
           aria-controls="evaluations-panel"
           onClick={() => setActiveView("evaluations")}
         >
@@ -102,6 +112,7 @@ export function SettingsPage(
           }
           type="button"
           aria-selected={activeView === "bundle-sources"}
+          data-selection-active={activeView === "bundle-sources"}
           aria-controls="bundle-sources-panel"
           onClick={() => setActiveView("bundle-sources")}
         >
@@ -113,6 +124,7 @@ export function SettingsPage(
           }
           type="button"
           aria-selected={activeView === "core-asset-sync"}
+          data-selection-active={activeView === "core-asset-sync"}
           aria-controls="core-asset-sync-panel"
           onClick={() => setActiveView("core-asset-sync")}
         >
@@ -122,6 +134,7 @@ export function SettingsPage(
           className={activeView === "storage" ? "settings-nav-item is-active" : "settings-nav-item"}
           type="button"
           aria-selected={activeView === "storage"}
+          data-selection-active={activeView === "storage"}
           aria-controls="storage-panel"
           onClick={() => setActiveView("storage")}
         >

@@ -1,8 +1,4 @@
-import {
-  OverlayMotionScope,
-  OverlayPresence,
-  useOverlayMotion,
-} from "../../components/OverlayMotion.tsx";
+import { OverlayPresence, useOverlayMotion } from "../../components/OverlayMotion.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
 import { HomeProjects, HomeProjectEditor } from "./HomeProjects.tsx";
 import { orderHomeProjects, previewHomeItemDragOrder } from "./home-ordering.ts";
@@ -839,7 +835,7 @@ export function HomePage(props: {
   };
 
   return (
-    <OverlayMotionScope>
+    <>
       <section className="default-agent-home home-mission-create">
         <section className="mission-create" aria-labelledby="new-mission-title">
           <header className="home-welcome">
@@ -1256,7 +1252,7 @@ export function HomePage(props: {
           ) : null}
         </OverlayPresence>
       </section>
-    </OverlayMotionScope>
+    </>
   );
 }
 

@@ -52,7 +52,7 @@ describe("StudioPage", () => {
     const resourceIndex = html.indexOf(">Knowledge bases</span>");
     const capabilitiesIndex = html.indexOf(">Capabilities</span>");
 
-    expect(html).toContain('class="studio-navigation"');
+    expect(html).toContain('class="studio-navigation selection-highlight-scope"');
     expect(html).toContain('aria-label="Resize navigation"');
     expect(html).toContain('role="separator"');
     expect(html).not.toContain(">Revision tasks</span><em>");

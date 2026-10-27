@@ -810,6 +810,9 @@
 }
 
 .creator-preview p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
   display: -webkit-box;
   overflow: hidden;
   overflow-wrap: anywhere;
@@ -1376,7 +1379,6 @@
   place-items: center;
   padding: 28px;
   background: rgb(var(--ui-shadow-rgb) / 34%);
-  backdrop-filter: blur(2px);
 }
 
 body > .ui-select-menu[data-ui-overlay-owner="expert-capability-picker"] {
@@ -1388,6 +1390,7 @@ body > .ui-select-menu[data-ui-overlay-owner="expert-capability-picker"] {
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   width: min(760px, 100%);
   height: min(760px, calc(100vh - 56px));
+  max-height: calc(100vh - 56px);
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--ui-surface) 50%, transparent);
   border-radius: 16px;
@@ -1400,7 +1403,7 @@ body > .ui-select-menu[data-ui-overlay-owner="expert-capability-picker"] {
   height: min(560px, calc(100vh - 56px));
 }
 
-.context-store-picker-dialog > .ui-dialog-body {
+.expert-picker-dialog > .ui-dialog-body {
   display: contents;
 }
 

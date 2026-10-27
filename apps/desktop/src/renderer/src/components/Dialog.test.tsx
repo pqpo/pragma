@@ -21,6 +21,16 @@ describe("Dialog", () => {
     expect(html).toMatch(/aria-labelledby="([^"]+)"/);
     expect(html).toContain("Update the current configuration.");
     expect(html).toContain('aria-label="Close"');
+    expect(html).toContain('data-ui-motion="backdrop"');
+    expect(html).toContain('data-ui-motion="dialog"');
+    expect(html).toContain('data-ui-motion-state="open"');
+  });
+
+  it("does not mount a controlled dialog before it is opened", () => {
+    const html = renderToStaticMarkup(
+      <Dialog open={false} title="Configure" onCancel={() => undefined} />,
+    );
+    expect(html).toBe("");
   });
 
   it("uses a restrained alert dialog for destructive confirmation", () => {

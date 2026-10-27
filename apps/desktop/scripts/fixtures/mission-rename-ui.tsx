@@ -2,7 +2,10 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { i18n } from "../../src/renderer/src/i18n/index.ts";
-import { MissionRailRow } from "../../src/renderer/src/pages/missions/mission-rail.tsx";
+import {
+  MissionRail,
+  MissionRailRow,
+} from "../../src/renderer/src/pages/missions/mission-rail.tsx";
 import { MissionRenameDialog } from "../../src/renderer/src/pages/missions/mission-rename-dialog.tsx";
 import { ConfirmationDialog } from "../../src/renderer/src/components/Dialog.tsx";
 import type { MissionSummary } from "../../src/shared/contracts/index.ts";
@@ -150,6 +153,118 @@ export async function runMissionRenameUiTests() {
     });
   };
   try {
+    const secondMission = {
+      ...mission,
+      id: "00000000-0000-4000-8000-000000000002",
+      title: "Second conversation",
+    };
+    flushSync(() =>
+      root.render(
+        <div style={{ width: 300 }}>
+          <MissionRail
+            missions={[mission, secondMission]}
+            source="task"
+            search=""
+            pinnedMissionIds={[]}
+            unreadMissionOutputIds={[]}
+            selectedMissionId={null}
+            onSearch={() => undefined}
+            onSourceChange={() => undefined}
+            onCreate={() => undefined}
+            onOpen={() => undefined}
+            onTogglePin={() => undefined}
+            onMarkComplete={() => undefined}
+            onRename={() => undefined}
+            onDelete={() => undefined}
+          />
+        </div>,
+      ),
+    );
+    await frames();
+    const rows = [...document.querySelectorAll<HTMLElement>(".mission-row")];
+    const firstRow = rows.find((row) => row.dataset.missionId === mission.id)!;
+    const secondRow = rows.find((row) => row.dataset.missionId === secondMission.id)!;
+    mouse(firstRow, "mouseover");
+    advance(100);
+    const sharedCard = element(".mission-row-preview");
+    const assertInitialPosition = (card: HTMLElement) => {
+      const style = getComputedStyle(card);
+      assert(
+        Math.abs(parseFloat(style.left) - parseFloat(card.style.left)) < 0.1 &&
+          Math.abs(parseFloat(style.top) - parseFloat(card.style.top)) < 0.1,
+        "Opening preview animated from the viewport origin",
+      );
+      assert(
+        !card
+          .getAnimations()
+          .some(
+            (animation) =>
+              animation instanceof CSSTransition &&
+              ["left", "top"].includes(animation.transitionProperty),
+          ),
+        "Opening preview has a position transition",
+      );
+    };
+    assertInitialPosition(sharedCard);
+    await frames();
+    assertInitialPosition(sharedCard);
+    const initialTop = sharedCard.getBoundingClientRect().top;
+    mouse(firstRow, "mouseout", secondRow);
+    mouse(secondRow, "mouseover", firstRow);
+    advance(100);
+    assert(
+      element(".mission-row-preview") === sharedCard,
+      "Switching conversations replaced the preview",
+    );
+    assert(
+      sharedCard.textContent?.includes(secondMission.title),
+      "Switching lost the new conversation content",
+    );
+    assert(
+      document.querySelectorAll(".mission-row-preview").length === 1,
+      "Switching created overlapping previews",
+    );
+    await frames();
+    const movingTop = sharedCard.getBoundingClientRect().top;
+    await new Promise((resolve) => nativeSet(resolve, 200));
+    assert(
+      Math.abs(sharedCard.getBoundingClientRect().top - initialTop) > 1,
+      "Preview did not move to the new row",
+    );
+    assert(
+      Math.abs(movingTop - sharedCard.getBoundingClientRect().top) > 0.1,
+      "Preview jumped without a position transition",
+    );
+    mouse(secondRow, "mouseout");
+    advance(100);
+    assert(
+      sharedCard.inert && sharedCard.getAttribute("aria-hidden") === "true",
+      "Exiting preview remains interactive or accessible",
+    );
+    assert(
+      getComputedStyle(sharedCard).pointerEvents === "none",
+      "Exiting preview captures the pointer",
+    );
+    mouse(firstRow, "mouseover");
+    advance(100);
+    assert(
+      element(".mission-row-preview") === sharedCard && !sharedCard.inert,
+      "Returning during exit did not reuse the preview",
+    );
+    mouse(firstRow, "mouseout");
+    advance(100);
+    await new Promise((resolve) => nativeSet(resolve, 150));
+    assert(
+      !document.querySelector(".mission-row-preview"),
+      "Preview was not removed after its exit animation",
+    );
+    mouse(secondRow, "mouseover");
+    advance(100);
+    assertInitialPosition(element(".mission-row-preview"));
+    await frames();
+    assertInitialPosition(element(".mission-row-preview"));
+    flushSync(() => root.render(<App />));
+    await frames();
     const row = element(".mission-row");
     mouse(row, "mouseover");
     advance(99);
@@ -169,7 +284,15 @@ export async function runMissionRenameUiTests() {
     assert(document.body.contains(card), "Blur dismissed a hovered preview");
     mouse(card, "mouseout");
     advance(100);
-    assert(!document.querySelector(".mission-row-preview"), "Preview did not close after leaving");
+    assert(
+      card.inert && card.getAttribute("aria-hidden") === "true",
+      "Preview did not close after leaving",
+    );
+    await new Promise((resolve) => nativeSet(resolve, 150));
+    assert(
+      !document.querySelector(".mission-row-preview"),
+      "Preview did not unmount after fading out",
+    );
 
     mouse(row, "mouseover");
     advance(200);
@@ -281,7 +404,7 @@ export async function runMissionRenameUiTests() {
       "Cannot re-enter preview using Tab",
     );
     key(document.activeElement as HTMLElement, "Escape");
-    assert(!document.querySelector(".mission-row-preview"), "Escape did not dismiss preview");
+    assert(element(".mission-row-preview").inert, "Escape did not dismiss preview");
     mouse(row, "mouseover");
     advance(200);
     mouse(element(".mission-row-preview-title"), "click");
@@ -296,7 +419,10 @@ export async function runMissionRenameUiTests() {
       advance(200);
       mouse(element(".mission-row-preview-edit.is-danger"), "click");
       await frames();
-      assert(!document.querySelector(".mission-row-preview"), "Delete left preview open");
+      assert(
+        !document.querySelector(".mission-row-preview:not([inert])"),
+        "Delete left preview open",
+      );
       assert(deleteCalls === 0 && opened === 0, "Delete ran before confirmation or opened task");
       const dialog = element('[role="alertdialog"]');
       assert(dialog.textContent?.includes("修改后的任务"), "Delete confirmation lost task title");
@@ -340,7 +466,7 @@ export async function runMissionRenameUiTests() {
     return {
       passed: true,
       checks:
-        "hover timers, Portal click and Tab order, delete confirmation and cancel, Unicode validation, IME defaults and Escape, busy focus trap, retry, duplicate save, refresh",
+        "shared preview movement, exit and re-entry, hover timers, Portal click and Tab order, delete confirmation and cancel, Unicode validation, IME defaults and Escape, busy focus trap, retry, duplicate save, refresh",
     };
   } finally {
     window.setTimeout = nativeSet;

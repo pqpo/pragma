@@ -1031,6 +1031,8 @@
 }
 
 .mission-rail-group h2 {
+  position: relative;
+  z-index: 1;
   padding: 0 8px 4px;
   border-bottom: 0;
   color: var(--muted);
@@ -1140,6 +1142,28 @@
   font-weight: 500;
 }
 
+/* Keep titles clear of revealed actions without painting a second selection background. */
+.mission-row:hover .mission-row-open strong,
+.mission-row:has(:focus-visible) .mission-row-open strong {
+  --mission-row-action-clearance: 48px;
+
+  mask-image: linear-gradient(to left, transparent, var(--ui-text) 8px);
+  mask-size: calc(100% - var(--mission-row-action-clearance)) 100%;
+  mask-repeat: no-repeat;
+}
+
+.mission-row:is(.is-completed, .is-pinned, .has-loading):hover .mission-row-open strong,
+.mission-row:is(.is-completed, .is-pinned, .has-loading):has(:focus-visible)
+  .mission-row-open
+  strong {
+  --mission-row-action-clearance: 24px;
+}
+
+.mission-row.is-pinned.has-loading:hover .mission-row-open strong,
+.mission-row.is-pinned.has-loading:has(:focus-visible) .mission-row-open strong {
+  mask-image: none;
+}
+
 .mission-status-slot {
   display: grid;
   width: 8px;
@@ -1206,7 +1230,7 @@
   padding: 0;
   border: 0;
   border-radius: var(--ui-radius-md);
-  background: inherit;
+  background: transparent;
   color: var(--faint);
   cursor: pointer;
   opacity: 0;
@@ -1219,21 +1243,11 @@
   right: 100%;
 }
 
-.mission-row:hover .mission-row-actions,
-.mission-row:has(:focus-visible) .mission-row-actions {
-  background: var(--ui-surface-subtle);
-}
-
 .mission-row:hover .mission-row-icon-action,
 .mission-row:has(:focus-visible) .mission-row-icon-action,
 .mission-row-icon-action[aria-pressed="true"] {
   opacity: 1;
   pointer-events: auto;
-}
-
-.mission-row.is-active:hover .mission-row-actions,
-.mission-row.is-active:has(:focus-visible) .mission-row-actions {
-  background: var(--ui-selection);
 }
 
 .mission-row:hover .mission-row-loading,
@@ -1344,13 +1358,27 @@
   background: var(--ui-surface-raised);
   box-shadow: var(--ui-shadow-overlay);
   color: var(--text);
-  opacity: 0;
-  pointer-events: none;
+  visibility: hidden;
+  transform-origin: center;
+  transition:
+    left var(--mission-preview-move-duration, 0ms) cubic-bezier(0.2, 0.8, 0.2, 1),
+    top var(--mission-preview-move-duration, 0ms) cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 120ms ease-out,
+    scale 120ms ease-out;
+}
+
+.mission-row-preview[data-position-motion="ready"] {
+  --mission-preview-move-duration: 180ms;
 }
 
 .mission-row-preview.is-positioned {
-  opacity: 1;
-  pointer-events: auto;
+  visibility: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-row-preview {
+    transition: none;
+  }
 }
 
 .mission-row-preview-heading {

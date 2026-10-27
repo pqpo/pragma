@@ -1,4 +1,4 @@
-import { ArrowLeft, User } from "@phosphor-icons/react";
+import { ArrowLeft, Check, User } from "@phosphor-icons/react";
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PragmaResource } from "@pragma/interpreter/ast";
@@ -9,6 +9,7 @@ import {
 } from "@pragma/shared";
 
 import { SelectMenu } from "../../components/SelectMenu.tsx";
+import { RuntimeLogo } from "../../components/RuntimeLogo.tsx";
 import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
@@ -49,6 +50,7 @@ export function ExpertEditorFragment(props: {
   readonly onCreated: (expert: ExpertRecord) => Promise<void>;
 }) {
   const { t } = useTranslation(["studio", "common"]);
+  const runtimeGroupId = useId();
   const instructionsId = useId();
   const foundationInstructionsId = useId();
   const [draft, setDraft] = useState(props.initialValue);
@@ -438,7 +440,7 @@ export function ExpertEditorFragment(props: {
               <div className="instructions-editor">
                 {isBuiltIn ? (
                   <div className="instructions-field">
-                    <header>
+                    <header className="expert-step-heading">
                       <h2>
                         <label htmlFor={foundationInstructionsId}>
                           {t("builtInFoundationInstructions", { ns: "studio" })}
@@ -455,7 +457,7 @@ export function ExpertEditorFragment(props: {
                   </div>
                 ) : null}
                 <div className="instructions-field">
-                  <header>
+                  <header className="expert-step-heading">
                     <h2>
                       <label htmlFor={instructionsId}>
                         {t(isBuiltIn ? "additionalInstructions" : "instructions", { ns: "studio" })}
@@ -509,34 +511,63 @@ export function ExpertEditorFragment(props: {
             ) : null}
             {step === "model" ? (
               <div className="capability-editor">
-                <h2>{t("configureModel", { ns: "studio" })}</h2>
-                <p>{t("modelSelectionHint", { ns: "studio" })}</p>
+                <header className="expert-step-heading">
+                  <h2>{t("configureModel", { ns: "studio" })}</h2>
+                  <p>{t("modelSelectionHint", { ns: "studio" })}</p>
+                </header>
                 <div className="capability-editor-field">
-                  <span>{t("runtime", { ns: "studio" })}</span>
-                  <SelectMenu
-                    ariaLabel={t("runtime", { ns: "studio" })}
-                    className="form-select"
-                    value={selectedRuntime}
-                    options={[
-                      {
-                        value: "",
-                        label: t(isBuiltIn ? "systemDefault" : "notConfigured", { ns: "studio" }),
-                      },
-                      ...props.runtimes.map((runtime) => ({
-                        value: runtime.id,
-                        label: `${runtimeDisplayName(t, runtime)}${
-                          runtime.status === "available"
-                            ? ""
-                            : ` (${t("unavailable", { ns: "studio" })})`
-                        }`,
-                        disabled: runtime.status !== "available",
-                      })),
-                    ]}
-                    onChange={(runtimeId) => {
-                      setSelectedRuntime(runtimeId);
-                      setDraft({ ...draft, model: null });
-                    }}
-                  />
+                  <div className="expert-runtime-heading">
+                    <span id={runtimeGroupId}>{t("runtime", { ns: "studio" })}</span>
+                    <button
+                      type="button"
+                      className="text-button"
+                      aria-pressed={selectedRuntime === ""}
+                      onClick={() => {
+                        setSelectedRuntime("");
+                        setDraft({ ...draft, model: null });
+                      }}
+                    >
+                      {t(isBuiltIn ? "systemDefault" : "notConfigured", { ns: "studio" })}
+                    </button>
+                  </div>
+                  <div
+                    className="expert-runtime-options"
+                    role="radiogroup"
+                    aria-labelledby={runtimeGroupId}
+                  >
+                    {props.runtimes.map((runtime) => (
+                      <label className="expert-runtime-option" key={runtime.id}>
+                        <input
+                          type="radio"
+                          name={runtimeGroupId}
+                          value={runtime.id}
+                          checked={selectedRuntime === runtime.id}
+                          disabled={runtime.status !== "available"}
+                          onChange={() => {
+                            setSelectedRuntime(runtime.id);
+                            setDraft({ ...draft, model: null });
+                          }}
+                        />
+                        <RuntimeLogo runtime={runtime} />
+                        <span className="expert-runtime-copy">
+                          <span>{runtimeDisplayName(t, runtime)}</span>
+                          <small>
+                            {runtime.status !== "available"
+                              ? t("unavailable", { ns: "studio" })
+                              : runtime.models === undefined
+                                ? t("runtimes.catalogUnavailable", { ns: "settings" })
+                                : t("counts.model", { ns: "common", count: runtime.models.length })}
+                          </small>
+                        </span>
+                        <Check
+                          className="expert-runtime-check"
+                          size={14}
+                          weight="bold"
+                          aria-hidden="true"
+                        />
+                      </label>
+                    ))}
+                  </div>
                 </div>
                 {selectedRuntime ? (
                   <div className="capability-editor-field">
@@ -550,7 +581,7 @@ export function ExpertEditorFragment(props: {
                         {
                           value: "",
                           label:
-                            draft.model === null
+                            draft.model === null || selectedModel !== undefined
                               ? t("selectModel", { ns: "studio" })
                               : t("unavailableModel", {
                                   ns: "studio",
@@ -655,7 +686,6 @@ export function ExpertEditorFragment(props: {
             ) : null}
             {step === "capabilities" ? (
               <div className="capability-editor">
-                <h2>{t("addCapabilities", { ns: "studio" })}</h2>
                 <ExpertCapabilityPicker
                   currentExpertId={draft.id}
                   experts={props.experts}
@@ -689,16 +719,18 @@ export function ExpertEditorFragment(props: {
             ) : null}
             {step === "review" ? (
               <div className="review-summary">
-                <h2>
-                  {isEditing
-                    ? t("readySave", { ns: "studio" })
-                    : t("readyCreate", { ns: "studio" })}
-                </h2>
-                <p>
-                  {isEditing
-                    ? t("reviewSave", { ns: "studio" })
-                    : t("reviewCreate", { ns: "studio" })}
-                </p>
+                <header className="expert-step-heading">
+                  <h2>
+                    {isEditing
+                      ? t("readySave", { ns: "studio" })
+                      : t("readyCreate", { ns: "studio" })}
+                  </h2>
+                  <p>
+                    {isEditing
+                      ? t("reviewSave", { ns: "studio" })
+                      : t("reviewCreate", { ns: "studio" })}
+                  </p>
+                </header>
                 <dl>
                   <div>
                     <dt>{t("name", { ns: "studio" })}</dt>

@@ -1,4 +1,3 @@
-import { OverlayMotionScope } from "../../components/OverlayMotion.tsx";
 import {
   useEffect,
   useId,
@@ -251,7 +250,7 @@ export function MissionWorkspaceTabs(props: {
           ))}
         </div>
       </div>
-      <OverlayMotionScope>
+      <>
         <SelectMenu
           ariaLabel={t("addWorkspaceTab")}
           title={t("addWorkspaceTab")}
@@ -277,7 +276,7 @@ export function MissionWorkspaceTabs(props: {
           emptyLabel={t("workspaceSearchEmpty")}
           align="end"
         />
-      </OverlayMotionScope>
+      </>
     </div>
   );
 }

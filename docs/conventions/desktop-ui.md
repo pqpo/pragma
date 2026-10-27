@@ -307,6 +307,10 @@ box-shadow: var(--ui-shadow-overlay);
 
 - Dialog 和 menu 是浮层，可以使用 `--ui-radius-lg`、strong border 和浮层阴影。
 - Dialog header、body、footer 不需要各自完整边框；只在滚动内容与固定 footer 之间使用一条分隔线。
+- 弹窗统一复用 `Dialog` 与 `OverlayMotion` 的背景模糊、淡入淡出和轻微缩放，不在业务页面复制动效参数。
+  `Dialog` 动效默认开启；常驻渲染时通过 `open` 控制显示，关闭后由公共层保留到退场结束再卸载。
+  需要按条件创建业务弹窗时，在条件外使用 `OverlayPresence open={open}`；禁止直接用条件卸载导致退场动效丢失。
+  关闭期间浮层必须不可交互并从可访问性树隐藏；遵循 `prefers-reduced-motion`。
 - 在同一选择弹窗内切换“作为工具”、知识库、技能或工具等列表时，弹窗高度必须保持固定；只让结果列表区域占用
   剩余空间并滚动，禁止按筛选结果或列表内容改变弹窗高度。
 - 危险确认要说明对象、影响和可恢复性，不依靠红色大卡片制造严重感。
