@@ -673,7 +673,7 @@
 }
 
 .capability-detail.has-tool-workspace {
-  row-gap: 16px;
+  row-gap: 24px;
 }
 
 .capability-detail.has-tool-workspace .capability-detail-header {
