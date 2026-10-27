@@ -32,6 +32,8 @@
 
 通用构建一次产生 Desktop out、插件包与 CLI metafile，以及 CLI dist/staging/metafile。prepared 模式检查提交、包含未提交修改的 source hash、完整文件集合及 SHA-256；缺失、过期或改动产物直接失败。
 
+发行身份由外部构建配置决定，配置内容摘要进入源码身份和 prepared 清单。Desktop/CLI 应用构建禁用 Turbo 输出缓存，以覆盖直接调用 Turbo 时无法散列仓库外配置内容的情况；中立依赖包继续缓存。根构建同时传入发行摘要，详见[派生发行版](../usage/derived-distribution.md)。
+
 Turbo 缓存包含上述完整副产物，按 OS/arch/Node/pnpm/lockfile 隔离；不共享 node_modules、原生依赖或整机钥匙串。Desktop 构建散列包含 source commit，因为内置 CLI 的 distribution.json 记录提交。根 `pnpm build` 自动提供该值。
 
 Desktop 开发模式允许从不含 Git 元数据的源码目录启动，此时内置 CLI 的 distribution.json 中 sourceCommit 为 null；正式构建与发行仍要求有效 Git HEAD，不允许缺失来源提交。

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { loadDistribution, assertDesktopDistribution } from "../../../scripts/distribution.mjs";
+import { prepareDistributionBuilder } from "./distribution-builder.mjs";
 import { verifyArtifact } from "../../../scripts/build-artifact.mjs";
 
 import { lstat, readdir, rm, stat } from "node:fs/promises";
@@ -160,6 +162,14 @@ function runCommand(command, argumentsList) {
   });
 }
 
+export function assertDistributionBuilderArguments(argumentsList) {
+  if (
+    argumentsList.some((argument) => argument.startsWith("--config") || argument.startsWith("-c"))
+  ) {
+    throw new Error("Use PRAGMA_DISTRIBUTION_CONFIG to configure packaging identity.");
+  }
+}
+
 async function main() {
   const prepared = process.argv.includes("--prepared");
   const builderArguments = process.argv.slice(2).filter((argument) => argument !== "--prepared");
@@ -168,6 +178,7 @@ async function main() {
     return;
   }
 
+  assertDistributionBuilderArguments(builderArguments);
   const keepUnpackedDirectory = builderArguments.includes("--dir");
   await clearDist();
 
@@ -183,7 +194,16 @@ async function main() {
       ])
         await runCommand("pnpm", ["run", check]);
     } else await runCommand("pnpm", ["run", "build"]);
-    await runCommand("pnpm", ["exec", "electron-builder", ...builderArguments]);
+    const profile = await loadDistribution();
+    await assertDesktopDistribution(resolve(packageDirectory, "out/main"), profile);
+    const distributionConfig = await prepareDistributionBuilder(profile);
+    await runCommand("pnpm", [
+      "exec",
+      "electron-builder",
+      "--config",
+      distributionConfig,
+      ...builderArguments,
+    ]);
     packagingSucceeded = true;
   } finally {
     if (packagingSucceeded && keepUnpackedDirectory) {

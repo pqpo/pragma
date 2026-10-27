@@ -10,6 +10,7 @@ import { chmod, mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs
 import { dirname, join, resolve } from "node:path";
 
 import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
+import { getDistribution } from "@pragma/shared/distribution";
 import {
   IsoDateTimeSchema,
   SecretRefSchema,
@@ -112,7 +113,9 @@ export function createSecretStore(options: {
 }): SecretStore {
   const root = resolve(options.root);
   const dataRoot = resolve(options.dataRoot ?? dirname(dirname(root)));
-  const homeId = sha256(`${dataRoot}\u0000${options.installNamespace ?? "default"}`);
+  const homeId = sha256(
+    `${dataRoot}\u0000${options.installNamespace ?? getDistribution().credentialNamespace}`,
+  );
   const account = `home:${homeId}:master-key:v1`;
   const refsRoot = join(root, "refs");
   const objectsRoot = join(root, "objects");

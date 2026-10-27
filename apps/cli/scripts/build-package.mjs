@@ -1,3 +1,4 @@
+import { loadDistribution } from "../../../scripts/distribution.mjs";
 import { recordArtifact } from "../../../scripts/build-artifact.mjs";
 import { chmod, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -7,12 +8,13 @@ import { buildCliBundles, CLI_WORKERS } from "./build-bundles.mjs";
 
 const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryDirectory = resolve(packageDirectory, "../..");
-const sourceDirectory = join(packageDirectory, "src");
 const distDirectory = join(packageDirectory, "dist");
 const releaseDirectory = join(packageDirectory, ".release");
 const stagingDirectory = join(releaseDirectory, "package");
 const packageManifest = JSON.parse(await readFile(join(packageDirectory, "package.json"), "utf8"));
-const version = packageManifest.version;
+const profile = await loadDistribution();
+const { config: distribution, digest: distributionDigest } = profile;
+const version = distribution.cliVersion ?? packageManifest.version;
 if (packageManifest.name !== "@pqpo/pragma") {
   throw new Error(`Unexpected CLI package name: ${String(packageManifest.name)}.`);
 }
@@ -25,7 +27,11 @@ await rm(releaseDirectory, { recursive: true, force: true });
 await mkdir(distDirectory, { recursive: true });
 await mkdir(join(stagingDirectory, "dist"), { recursive: true });
 
-const bundles = await buildCliBundles({ outputDirectory: distDirectory, version });
+const bundles = await buildCliBundles({
+  outputDirectory: distDirectory,
+  version,
+  distribution: profile,
+});
 await chmod(join(distDirectory, "pragma.js"), 0o755);
 for (const [name, result] of Object.entries(bundles)) {
   await writeFile(
@@ -59,12 +65,13 @@ console.log(`Staging package: ${stagingDirectory}`);
 
 function createReleaseManifest(releaseVersion) {
   return {
-    name: "@pqpo/pragma",
+    name: distribution.cliPackageName,
+    pragmaDistribution: { id: distribution.id, digest: distributionDigest },
     version: releaseVersion,
     description: "Pragma command-line interface",
     license: "AGPL-3.0-only",
     type: "module",
-    bin: { pragma: "./dist/pragma.js" },
+    bin: { [distribution.cliCommand]: "./dist/pragma.js" },
     exports: {},
     engines: { node: ">=22" },
     os: ["darwin", "win32"],
@@ -73,10 +80,10 @@ function createReleaseManifest(releaseVersion) {
       "@napi-rs/keyring": packageManifest.dependencies["@napi-rs/keyring"],
       "@silvia-odwyer/photon-node": packageManifest.dependencies["@silvia-odwyer/photon-node"],
     },
-    publishConfig: {
-      access: "public",
-      registry: "https://registry.npmjs.org",
-    },
+    publishConfig:
+      distribution.id === "pragma"
+        ? { access: "public", registry: "https://registry.npmjs.org" }
+        : { access: "restricted" },
     repository: {
       type: "git",
       url: "git+https://github.com/pqpo/pragma.git",

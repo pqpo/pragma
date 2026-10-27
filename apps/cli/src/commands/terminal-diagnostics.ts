@@ -1,3 +1,4 @@
+import { getDistribution, getTerminalRegistrationIdentity } from "@pragma/shared/distribution";
 import { access, readFile, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
@@ -6,13 +7,20 @@ import { detectInstalledDesktopVersion } from "../desktop-version.ts";
 
 /** Human diagnostics only: never add local paths to the versioned wire envelope. */
 export async function terminalDiagnostics(cliVersion: string): Promise<string> {
+  const distribution = getDistribution();
   const entry = resolve(process.argv[1] ?? process.execPath);
   const bundled = entry.includes(
     `${process.platform === "win32" ? "\\" : "/"}desktop-cli${process.platform === "win32" ? "\\" : "/"}`,
   );
   const candidates = new Set<string>();
   const names =
-    process.platform === "win32" ? ["pragma.exe", "pragma.cmd", "pragma.bat"] : ["pragma"];
+    process.platform === "win32"
+      ? [
+          `${distribution.cliCommand}.exe`,
+          `${distribution.cliCommand}.cmd`,
+          `${distribution.cliCommand}.bat`,
+        ]
+      : [distribution.cliCommand];
   for (const directory of (process.env["PATH"] ?? "").split(delimiter).slice(0, 256)) {
     for (const name of names) {
       const path = resolve(directory || ".", name);
@@ -27,16 +35,19 @@ export async function terminalDiagnostics(cliVersion: string): Promise<string> {
   const commandDirectory =
     process.platform === "win32"
       ? join(dirname(process.execPath), "bin")
-      : join(homedir(), ".pragma", "bin");
+      : join(homedir(), distribution.homeDirectory, "bin");
   let registered = candidates.has(
-    join(commandDirectory, process.platform === "win32" ? "pragma.cmd" : "pragma"),
+    join(
+      commandDirectory,
+      process.platform === "win32" ? `${distribution.cliCommand}.cmd` : distribution.cliCommand,
+    ),
   );
   if (process.platform === "win32") {
     for (const path of candidates) {
       try {
-        registered ||= (await readFile(join(dirname(path), "pragma-desktop.cmd"), "utf8")).includes(
-          "rem Pragma Desktop CLI launcher",
-        );
+        registered ||= (
+          await readFile(join(dirname(path), `${distribution.desktopCliCommand}.cmd`), "utf8")
+        ).includes(getTerminalRegistrationIdentity().windowsLauncherMarker);
       } catch {
         /* Not a Desktop entrypoint. */
       }

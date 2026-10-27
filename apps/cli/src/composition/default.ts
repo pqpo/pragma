@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { getDistribution } from "@pragma/shared/distribution";
+import { join, resolve } from "node:path";
 
 import { createAntigravityRuntime } from "@pragma/runtime-antigravity";
 import { createClaudeCodeRuntime } from "@pragma/runtime-claude-code";
@@ -42,7 +43,11 @@ export function createCliLocalHost(
  * so Desktop Main can reuse the same application layer.
  */
 export function createProductionLocalHost(): CliLocalHost {
-  const pragmaHome = process.env["PRAGMA_HOME"]?.trim() || join(homedir(), ".pragma");
+  const distribution = getDistribution();
+  const configuredHome = process.env[distribution.homeEnvironmentVariable];
+  const pragmaHome = resolve(
+    configuredHome?.trim() ? configuredHome : join(homedir(), distribution.homeDirectory),
+  );
   const configuration = createLocalHostRuntimeConfiguration({ pragmaHome });
   const environmentSettings = createRuntimeProcessEnvironmentSettingsStore({ pragmaHome });
   const hostSettings = createLocalHostSettingsStore({

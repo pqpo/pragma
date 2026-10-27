@@ -1,3 +1,4 @@
+import { loadDistribution, assertDesktopDistribution } from "./distribution.mjs";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFile, readdir, writeFile, mkdir } from "node:fs/promises";
@@ -19,7 +20,10 @@ export async function sourceIdentity() {
     .split("\0")
     .filter(Boolean)
     .sort();
-  const hash = createHash("sha256").update(commit).update(diff);
+  const hash = createHash("sha256")
+    .update(commit)
+    .update(diff)
+    .update((await loadDistribution()).digest);
   for (const name of untracked) hash.update(name).update(await readFile(resolve(root, name)));
   return { commit, sourceHash: hash.digest("hex") };
 }
@@ -60,6 +64,20 @@ async function filesAt(path) {
 }
 export async function recordArtifact(kind) {
   if (!Object.hasOwn(roots, kind)) throw new Error("Unknown artifact kind");
+  const profile = await loadDistribution();
+  if (kind === "desktop") {
+    await assertDesktopDistribution(resolve(root, "apps/desktop/out/main"), profile);
+  } else {
+    const staged = JSON.parse(
+      await readFile(resolve(root, "apps/cli/.release/package/package.json"), "utf8"),
+    );
+    if (
+      staged.pragmaDistribution?.id !== profile.config.id ||
+      staged.pragmaDistribution?.digest !== profile.digest
+    ) {
+      throw new Error("CLI distribution mismatch; rebuild before recording artifacts.");
+    }
+  }
   const files = {};
   for (const entry of roots[kind])
     for (const path of await filesAt(resolve(root, entry)))
@@ -72,6 +90,7 @@ export async function recordArtifact(kind) {
   const manifest = {
     schemaVersion: 1,
     kind,
+    distributionDigest: profile.digest,
     ...(await sourceIdentity()),
     desktopVersion: versions[0],
     cliVersion: versions[1],
@@ -87,6 +106,7 @@ export async function verifyArtifact(kind) {
   if (
     manifest.schemaVersion !== 1 ||
     manifest.kind !== kind ||
+    manifest.distributionDigest !== (await loadDistribution()).digest ||
     manifest.commit !== current.commit ||
     manifest.sourceHash !== current.sourceHash
   )

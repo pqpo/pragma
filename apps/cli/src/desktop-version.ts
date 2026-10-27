@@ -1,3 +1,5 @@
+import { getDistribution } from "@pragma/shared/distribution";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -6,20 +8,26 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-const MACOS_BUNDLE_ID = "com.pqpo.pragma";
 const MACOS_PLIST_PATHS = (homeDirectory: string): readonly string[] => [
-  "/Applications/Pragma.app/Contents/Info.plist",
-  join(homeDirectory, "Applications/Pragma.app/Contents/Info.plist"),
+  `/Applications/${getDistribution().executableName}.app/Contents/Info.plist`,
+  join(homeDirectory, `Applications/${getDistribution().executableName}.app/Contents/Info.plist`),
 ];
 
-// electron-builder 26.15.3 derives this UUID v5 from appId=com.pqpo.pragma.
-// Keep it aligned with apps/desktop/electron-builder.yml and its NSIS uninstall entry.
-const WINDOWS_UNINSTALL_GUID = "a5a058dd-b5ec-5fb0-bd32-59ea8f559e83";
-const WINDOWS_UNINSTALL_KEY_BASE = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
-const WINDOWS_UNINSTALL_KEYS = [
-  `HKCU\\${WINDOWS_UNINSTALL_KEY_BASE}\\${WINDOWS_UNINSTALL_GUID}`,
-  `HKLM\\${WINDOWS_UNINSTALL_KEY_BASE}\\${WINDOWS_UNINSTALL_GUID}`,
-] as const;
+// electron-builder default NSIS GUID, derived from this distribution's app ID.
+function windowsUninstallKeys(): readonly string[] {
+  const bytes = createHash("sha1")
+    .update(Buffer.from("50e065bc313411e69bab38c9862bdaf3", "hex"))
+    .update(getDistribution().applicationId)
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6]! & 15) | 80;
+  bytes[8] = (bytes[8]! & 63) | 128;
+  const hex = bytes.toString("hex");
+  const guid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return ["HKCU", "HKLM"].map(
+    (hive) => `${hive}\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${guid}`,
+  );
+}
 const DEFAULT_COMMAND_TIMEOUT_MS = 2_000;
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1024;
 
@@ -100,7 +108,7 @@ async function detectMacosDesktopVersion(
         commandRunner,
         timeoutMs,
       );
-      if (bundleId !== MACOS_BUNDLE_ID) continue;
+      if (bundleId !== getDistribution().applicationId) continue;
       const version = await readPlistValue(
         plistPath,
         "CFBundleShortVersionString",
@@ -133,7 +141,7 @@ async function detectWindowsDesktopVersion(
   commandRunner: DesktopVersionCommandRunner,
   timeoutMs: number,
 ): Promise<string | undefined> {
-  for (const uninstallKey of WINDOWS_UNINSTALL_KEYS) {
+  for (const uninstallKey of windowsUninstallKeys()) {
     try {
       const result = await commandRunner(
         "reg.exe",

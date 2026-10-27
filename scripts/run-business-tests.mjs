@@ -125,6 +125,13 @@ if (lane !== "desktop") {
   ]);
 }
 if (lane !== "host") {
+  await vitest(
+    "@pragma/desktop",
+    ["src/main/features/terminal-integration/distribution-isolation.test.ts"],
+    [],
+    "distribution-isolation",
+  );
+
   await vitest("@pragma/desktop", [
     "src/main/features/built-in-agents/management-command.integration.test.ts",
     "src/main/features/built-in-agents/pragma-agent-resource-adapter.test.ts",

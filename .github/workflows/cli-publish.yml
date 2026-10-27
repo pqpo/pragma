@@ -9,6 +9,9 @@ concurrency:
   group: cli-publish-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  PRAGMA_DISTRIBUTION_CONFIG: ""
+
 permissions:
   contents: read
   actions: read
@@ -167,6 +170,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          tar -xOf ./release-artifact/pragma-cli.tgz package/package.json | node --input-type=module -e '
+            let input = "";
+            for await (const chunk of process.stdin) input += chunk;
+            const manifest = JSON.parse(input);
+            if (manifest.name !== "@pqpo/pragma" || manifest.version !== process.env.RELEASE_VERSION || manifest.pragmaDistribution?.id !== "pragma" || JSON.stringify(manifest.bin) !== JSON.stringify({pragma: "./dist/pragma.js"})) throw new Error("Refusing to publish a non-default Pragma package.");
+          '
           npm publish ./release-artifact/pragma-cli.tgz \
             --registry=https://registry.npmjs.org/ \
             --access public \

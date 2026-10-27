@@ -1,3 +1,4 @@
+import { getDistribution } from "@pragma/shared/distribution";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -29,10 +30,12 @@ export class PragmaPaths {
 
   constructor(options: PragmaPathsOptions = {}) {
     const configuredRoot =
-      options.pragmaHome ?? options.env?.["PRAGMA_HOME"] ?? process.env["PRAGMA_HOME"];
+      options.pragmaHome ??
+      options.env?.[getDistribution().homeEnvironmentVariable] ??
+      process.env[getDistribution().homeEnvironmentVariable];
     this.root = resolve(
       configuredRoot === undefined || configuredRoot.trim() === ""
-        ? join(homedir(), ".pragma")
+        ? join(homedir(), getDistribution().homeDirectory)
         : configuredRoot,
     );
   }

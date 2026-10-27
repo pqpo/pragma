@@ -13,6 +13,11 @@
       "types": "./src/integration/index.ts",
       "pragma-source": "./src/integration/index.ts",
       "default": "./dist/integration/index.js"
+    },
+    "./distribution": {
+      "types": "./src/distribution.ts",
+      "pragma-source": "./src/distribution.ts",
+      "default": "./dist/distribution.js"
     }
   },
   "scripts": {

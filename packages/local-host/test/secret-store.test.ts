@@ -1,9 +1,10 @@
+import { DEFAULT_DISTRIBUTION } from "@pragma/shared/distribution";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   canonicalAad,
@@ -15,6 +16,7 @@ import {
 const directories: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(
     directories.splice(0).map(async (path) => await rm(path, { recursive: true, force: true })),
   );
@@ -51,6 +53,30 @@ async function createStore() {
 }
 
 describe("SecretStore", () => {
+  it("keeps historical keys readable and separates a derived namespace at the same root", async () => {
+    const { directory, keychain, store } = await createStore();
+    const root = join(directory, "secret-store");
+    const ref = await store.put({
+      owner: { kind: "model-provider", providerId: "provider-1" },
+      value: Buffer.from("retained"),
+    });
+    const reopened = createSecretStore({ root, keychain });
+    const retained = await reopened.get(ref);
+    expect(retained.utf8()).toBe("retained");
+    retained.dispose();
+    vi.stubGlobal("__PRAGMA_DISTRIBUTION__", {
+      ...DEFAULT_DISTRIBUTION,
+      credentialNamespace: "acme",
+    });
+    const other = createSecretStore({ root, keychain });
+    await expect(other.get(ref)).rejects.toMatchObject({ code: "SECRET_MASTER_KEY_MISSING" });
+    expect(keychain.setCalls).toBe(1);
+    vi.unstubAllGlobals();
+    const restored = await store.get(ref);
+    expect(restored.utf8()).toBe("retained");
+    restored.dispose();
+  });
+
   it("uses AES-GCM envelopes and never persists plaintext or a master-key file", async () => {
     const { directory, store } = await createStore();
     const ref = await store.put({

@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, writeFile, readFile, cp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, cp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 test("prepared artifact rejects changed bytes, missing files, same-commit source edits and future manifests", async () => {
   const root = await mkdtemp(join(tmpdir(), "pragma-artifact-"));
@@ -14,11 +14,30 @@ test("prepared artifact rejects changed bytes, missing files, same-commit source
       new URL("./build-artifact.mjs", import.meta.url),
       join(root, "scripts/build-artifact.mjs"),
     );
-    for (const name of ["workspace-build-artifact.mjs", "archive-workspace-build.mjs"])
+    for (const name of [
+      "workspace-build-artifact.mjs",
+      "archive-workspace-build.mjs",
+      "distribution.mjs",
+    ])
       await cp(new URL(`./${name}`, import.meta.url), join(root, `scripts/${name}`));
+    await mkdir(join(root, "packages/shared/src"), { recursive: true });
+    await cp(
+      new URL("../packages/shared/src/distribution.ts", import.meta.url),
+      join(root, "packages/shared/src/distribution.ts"),
+    );
+    await symlink(
+      fileURLToPath(new URL("../node_modules", import.meta.url)),
+      join(root, "node_modules"),
+      "junction",
+    );
+    await symlink(
+      fileURLToPath(new URL("../packages/shared/node_modules", import.meta.url)),
+      join(root, "packages/shared/node_modules"),
+      "junction",
+    );
     await writeFile(
       join(root, ".gitignore"),
-      "dist/\n.release/\nout/\n.plugin-bundles/\n.packaging/\n.test-results/\n",
+      "node_modules/\ndist/\n.release/\nout/\n.plugin-bundles/\n.packaging/\n.test-results/\n",
     );
     for (const app of ["cli", "desktop"]) {
       await mkdir(join(root, `apps/${app}`), { recursive: true });
@@ -44,7 +63,15 @@ test("prepared artifact rejects changed bytes, missing files, same-commit source
     await mkdir(join(root, "apps/cli/dist"));
     await mkdir(join(root, "apps/cli/.release/package"), { recursive: true });
     await writeFile(join(root, "apps/cli/dist/cli.js"), "original");
-    await writeFile(join(root, "apps/cli/.release/package/package.json"), "{}");
+    const { loadDistribution } = await import(
+      pathToFileURL(join(root, "scripts/distribution.mjs")).href
+    );
+    const profile = await loadDistribution({});
+    const identity = { distributionId: profile.config.id, distributionDigest: profile.digest };
+    await writeFile(
+      join(root, "apps/cli/.release/package/package.json"),
+      JSON.stringify({ pragmaDistribution: { id: profile.config.id, digest: profile.digest } }),
+    );
     for (const name of [
       "cli",
       "code-service-worker",
@@ -59,6 +86,20 @@ test("prepared artifact rejects changed bytes, missing files, same-commit source
     );
     await recordArtifact("cli");
     await verifyArtifact("cli");
+    const configPath = join(root, "apps/cli/.release/profile.json");
+    const { config } = await loadDistribution({});
+    await writeFile(configPath, JSON.stringify(config));
+    const previousConfig = process.env.PRAGMA_DISTRIBUTION_CONFIG;
+    try {
+      process.env.PRAGMA_DISTRIBUTION_CONFIG = configPath;
+      await verifyArtifact("cli");
+      await writeFile(configPath, JSON.stringify({ ...config, cliVersion: "9.0.0" }));
+      await assert.rejects(verifyArtifact("cli"), /Stale/);
+      await assert.rejects(recordArtifact("cli"), /distribution mismatch/);
+    } finally {
+      if (previousConfig === undefined) delete process.env.PRAGMA_DISTRIBUTION_CONFIG;
+      else process.env.PRAGMA_DISTRIBUTION_CONFIG = previousConfig;
+    }
     // The archive covers compiled dependencies beyond the CLI/Desktop manifests.
     await mkdir(join(root, ".test-results"));
     await mkdir(join(root, "packages/core/dist"), { recursive: true });
@@ -96,7 +137,15 @@ test("prepared artifact rejects changed bytes, missing files, same-commit source
     await writeFile(archiveManifestPath, JSON.stringify(archiveManifest));
     await rm(archive);
     await assert.rejects(archiveModule.verifyWorkspaceArchive(), /ENOENT/);
-    await mkdir(join(root, "apps/desktop/out"), { recursive: true });
+    await mkdir(join(root, "apps/desktop/out/main/desktop-cli"), { recursive: true });
+    await writeFile(
+      join(root, "apps/desktop/out/main/distribution.json"),
+      JSON.stringify(identity),
+    );
+    await writeFile(
+      join(root, "apps/desktop/out/main/desktop-cli/distribution.json"),
+      JSON.stringify(identity),
+    );
     await mkdir(join(root, "apps/desktop/.packaging"), { recursive: true });
     await mkdir(join(root, "apps/desktop/.plugin-bundles/plugins"), { recursive: true });
     await writeFile(join(root, "apps/desktop/out/main.js"), "desktop");

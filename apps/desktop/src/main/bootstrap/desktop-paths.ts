@@ -1,3 +1,4 @@
+import { getDistribution } from "@pragma/shared/distribution";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -9,13 +10,17 @@ export function createDesktopPragmaPaths(input: {
   readonly homeDirectory?: string | undefined;
 }): PragmaPaths {
   const env = input.env ?? process.env;
-  const configuredRoot = env["PRAGMA_HOME"];
+  const distribution = getDistribution();
+  const configuredRoot = env[distribution.homeEnvironmentVariable];
   if (configuredRoot !== undefined && configuredRoot.trim() !== "") {
     return new PragmaPaths({ env });
   }
 
   const homeDirectory = input.homeDirectory ?? homedir();
   return new PragmaPaths({
-    pragmaHome: join(homeDirectory, input.isPackaged ? ".pragma" : ".pragma-development"),
+    pragmaHome: join(
+      homeDirectory,
+      input.isPackaged ? distribution.homeDirectory : distribution.developmentHomeDirectory,
+    ),
   });
 }

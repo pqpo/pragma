@@ -1,3 +1,4 @@
+import { getDistribution } from "@pragma/shared/distribution";
 import {
   IntegrationErrorCodeSchema,
   IntegrationErrorRetryPolicies,
@@ -55,7 +56,7 @@ async function inspectCliCredentialMigration(
 ): Promise<readonly CredentialDoctorFinding[]> {
   const keychain = testKeychainFromEnvironment();
   return await host.inspectDefaultCredentialMigration({
-    pragmaHome: process.env["PRAGMA_HOME"],
+    pragmaHome: process.env[getDistribution().homeEnvironmentVariable],
     ...(keychain === undefined ? {} : { keychain }),
   });
 }

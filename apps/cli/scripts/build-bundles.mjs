@@ -1,3 +1,4 @@
+import { loadDistribution, distributionBanner } from "../../../scripts/distribution.mjs";
 import { build } from "esbuild";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -17,7 +18,9 @@ export const CLI_WORKERS = {
 const repositoryDirectory = fileURLToPath(new URL("../../../", import.meta.url));
 
 /** One artifact graph for npm and Desktop; native dependencies are supplied by the distributor. */
-export async function buildCliBundles({ outputDirectory, version, minify = true }) {
+export async function buildCliBundles({ outputDirectory, version, minify = true, distribution }) {
+  const { config } = distribution ?? (await loadDistribution());
+  version = config.cliVersion ?? version;
   await mkdir(outputDirectory, { recursive: true });
   const common = {
     absWorkingDir: repositoryDirectory,
@@ -34,14 +37,19 @@ export async function buildCliBundles({ outputDirectory, version, minify = true 
     platform: "node",
     target: "node22",
     banner: {
-      js: 'import { createRequire as __pragmaCreateRequire } from "node:module"; const require = __pragmaCreateRequire(import.meta.url);',
+      js:
+        distributionBanner(config) +
+        '\nimport { createRequire as __pragmaCreateRequire } from "node:module"; const require = __pragmaCreateRequire(import.meta.url);',
     },
   };
   const results = {};
   for (const [name, source] of Object.entries({ cli: "apps/cli/src/index.ts", ...CLI_WORKERS })) {
     results[name] = await build({
       ...common,
-      define: { __PRAGMA_CLI_VERSION__: JSON.stringify(version) },
+      define: {
+        __PRAGMA_CLI_VERSION__: JSON.stringify(version),
+        __PRAGMA_BUILD_DISTRIBUTION__: JSON.stringify(config),
+      },
       entryPoints: [join(repositoryDirectory, source)],
       outfile: join(outputDirectory, `${name}.js`),
     });

@@ -44,3 +44,72 @@ test("development and builds retain the real source commit in a Git checkout", a
   assert.equal(resolveDesktopSourceCommit(directory), commit);
   assert.equal(resolveDesktopSourceCommit(directory, { development: true }), commit);
 });
+
+test("one supplied profile reaches every CLI bundle after the external config disappears", async (t) => {
+  const { cp, mkdir, readFile, symlink, writeFile } = await import("node:fs/promises");
+  const { fileURLToPath, pathToFileURL } = await import("node:url");
+  const { loadDistribution } = await import("../../../scripts/distribution.mjs");
+  const root = await mkdtemp(join(tmpdir(), "pragma snapshot build "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const path of ["scripts", "apps/cli/scripts", "apps/desktop/scripts"])
+    await mkdir(join(root, path), { recursive: true });
+  await writeFile(
+    join(root, "scripts/distribution.mjs"),
+    `export * from ${JSON.stringify(new URL("../../../scripts/distribution.mjs", import.meta.url).href)};`,
+  );
+  await cp(
+    new URL("../../cli/scripts/build-bundles.mjs", import.meta.url),
+    join(root, "apps/cli/scripts/build-bundles.mjs"),
+  );
+  await cp(
+    new URL("./build-desktop-cli.mjs", import.meta.url),
+    join(root, "apps/desktop/scripts/build-desktop-cli.mjs"),
+  );
+  await symlink(
+    fileURLToPath(new URL("../../cli/node_modules", import.meta.url)),
+    join(root, "apps/cli/node_modules"),
+    "junction",
+  );
+  for (const app of ["cli", "desktop"])
+    await writeFile(join(root, `apps/${app}/package.json`), JSON.stringify({ version: "0.0.1" }));
+  const { CLI_WORKERS } = await import("../../cli/scripts/build-bundles.mjs");
+  for (const path of ["apps/cli/src/index.ts", ...Object.values(CLI_WORKERS)]) {
+    await mkdir(join(root, path, ".."), { recursive: true });
+    await writeFile(
+      join(root, path),
+      "process.stdout.write(JSON.stringify({config:__PRAGMA_BUILD_DISTRIBUTION__,version:__PRAGMA_CLI_VERSION__}));",
+    );
+  }
+  await writeFile(join(root, "apps/cli/src/pragma.ts"), "#!/usr/bin/env node\nimport './cli.js';");
+  const profile = await loadDistribution({
+    PRAGMA_DISTRIBUTION_CONFIG: fileURLToPath(
+      new URL("../../../examples/distribution.acme.json", import.meta.url),
+    ),
+  });
+  const buildModule = await import(
+    pathToFileURL(join(root, "apps/desktop/scripts/build-desktop-cli.mjs")).href
+  );
+  const previous = process.env.PRAGMA_DISTRIBUTION_CONFIG;
+  process.env.PRAGMA_DISTRIBUTION_CONFIG = join(root, "removed-profile.json");
+  try {
+    const output = join(root, "out/main");
+    await buildModule.buildDesktopCli(output, { development: true, distribution: profile });
+    const metadata = JSON.parse(
+      await readFile(join(output, "desktop-cli/distribution.json"), "utf8"),
+    );
+    assert.equal(metadata.distributionDigest, profile.digest);
+    assert.equal(metadata.cliVersion, profile.config.cliVersion);
+    for (const name of ["cli", ...Object.keys(CLI_WORKERS)]) {
+      const actual = JSON.parse(
+        execFileSync(process.execPath, [join(output, `desktop-cli/${name}.js`)], {
+          encoding: "utf8",
+        }),
+      );
+      assert.equal(actual.config.id, profile.config.id);
+      assert.equal(actual.version, profile.config.cliVersion);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.PRAGMA_DISTRIBUTION_CONFIG;
+    else process.env.PRAGMA_DISTRIBUTION_CONFIG = previous;
+  }
+});

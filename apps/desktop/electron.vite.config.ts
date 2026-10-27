@@ -1,7 +1,10 @@
 // @ts-expect-error Build-only JavaScript helper shared with npm packaging.
 import { buildDesktopCli, RUNTIME_RESOURCE_EXTERNALS } from "./scripts/build-desktop-cli.mjs";
+// @ts-expect-error Build-only shared configuration loader.
+import { loadDistribution, distributionBanner } from "../../scripts/distribution.mjs";
 import { build } from "esbuild";
 import { readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,8 +12,12 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "electron-vite";
 
 interface DesktopPackageManifest {
+  readonly version: string;
   readonly dependencies?: Readonly<Record<string, string>>;
 }
+
+const distributionProfile = await loadDistribution();
+const { config: distribution } = distributionProfile;
 
 const desktopPackageManifest = JSON.parse(
   readFileSync(fileURLToPath(new URL("./package.json", import.meta.url)), "utf8"),
@@ -21,6 +28,7 @@ const workspaceDependencies = Object.entries(desktopPackageManifest.dependencies
 
 export default defineConfig(({ command }) => ({
   main: {
+    define: { __PRAGMA_BUILD_DISTRIBUTION__: JSON.stringify(distribution) },
     esbuild: { keepNames: true, legalComments: "eof" },
     plugins: [
       {
@@ -28,7 +36,16 @@ export default defineConfig(({ command }) => ({
         async writeBundle(output) {
           if (output.dir === undefined)
             throw new Error("Desktop main output directory is missing.");
+          await writeFile(
+            join(output.dir, "distribution.json"),
+            JSON.stringify({
+              distributionId: distribution.id,
+              distributionDigest: distributionProfile.digest,
+              desktopVersion: distribution.desktopVersion ?? desktopPackageManifest.version,
+            }) + "\n",
+          );
           await buildDesktopCli(output.dir, {
+            distribution: distributionProfile,
             minify: command === "build" && process.env.PRAGMA_BUILD_MINIFY !== "0",
             development: command === "serve",
           });
@@ -80,6 +97,7 @@ export default defineConfig(({ command }) => ({
         exclude: command === "serve" ? [] : workspaceDependencies,
       },
       rollupOptions: {
+        output: { banner: distributionBanner(distribution) },
         // ws treats these native accelerators as optional and catches a missing
         // require at runtime. Keep that fallback intact when Vite bundles ws.
         // Photon must keep its CommonJS entry beside photon_rs_bg.wasm.

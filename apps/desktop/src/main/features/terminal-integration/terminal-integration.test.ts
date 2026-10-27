@@ -44,6 +44,7 @@ describe("Desktop terminal integration", () => {
         const zshDirectory = join(home, "zsh");
         await mkdir(zshDirectory);
         await writeFile(join(zshDirectory, ".zshrc"), "# user's settings\n", { mode: 0o640 });
+        await chmod(join(zshDirectory, ".zshrc"), 0o640);
         await writeFile(join(home, ".profile"), "# existing login profile\n");
         const other = join(home, "other");
         await mkdir(other);

@@ -27,7 +27,7 @@ import {
 } from "@pragma/shared/integration";
 import type { AgentMessageUsage } from "@pragma/shared";
 
-import { HELP_TEXT, type OutputFormat } from "../parser/argv.ts";
+import { cliHelpText, type OutputFormat } from "../parser/argv.ts";
 import { isRecord, shellArgument, asJsonValue } from "../commands/utils.ts";
 
 export type CliIo = Readonly<{
@@ -553,7 +553,7 @@ function renderText(
   result: JsonValue,
   continuationCommand?: ((cursor: string) => string) | undefined,
 ): string {
-  if (command === "help") return String(resultValue(result, "help") ?? HELP_TEXT);
+  if (command === "help") return String(resultValue(result, "help") ?? cliHelpText());
   if (command === "completion" && isRecord(result)) {
     const script = result["script"];
     if (typeof script === "string") return script;

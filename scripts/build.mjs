@@ -1,6 +1,11 @@
+import { loadDistribution } from "./distribution.mjs";
+import { resolve } from "node:path";
 import { recordArtifact } from "./build-artifact.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import { pnpmInvocation } from "./pnpm-command.mjs";
+if (process.env.PRAGMA_DISTRIBUTION_CONFIG)
+  process.env.PRAGMA_DISTRIBUTION_CONFIG = resolve(process.env.PRAGMA_DISTRIBUTION_CONFIG);
+const { digest: distributionDigest } = await loadDistribution();
 const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const invocation = pnpmInvocation([
   "exec",
@@ -13,7 +18,12 @@ const invocation = pnpmInvocation([
 const child = spawn(invocation.command, invocation.args, {
   stdio: "inherit",
   shell: false,
-  env: { ...process.env, PRAGMA_SOURCE_COMMIT: sourceCommit, GOMAXPROCS: "2" },
+  env: {
+    ...process.env,
+    PRAGMA_SOURCE_COMMIT: sourceCommit,
+    PRAGMA_DISTRIBUTION_DIGEST: distributionDigest,
+    GOMAXPROCS: "2",
+  },
 });
 child.once("error", (error) => {
   console.error(error);

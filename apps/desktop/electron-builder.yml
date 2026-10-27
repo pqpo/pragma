@@ -55,6 +55,8 @@ files:
 extraResources:
   - from: .packaging/third-party-notices
     to: third-party-notices
+  - from: .packaging/distribution.json
+    to: distribution.json
   - from: build/terminal-integration.ps1
     to: terminal-integration.ps1
   - from: .plugin-bundles/plugins

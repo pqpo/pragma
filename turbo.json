@@ -52,14 +52,38 @@
         ".release/package/**",
         ".release/*.metafile.json"
       ],
-      "env": ["PRAGMA_BUILD_MINIFY", "PRAGMA_SOURCE_COMMIT"]
+      "env": ["PRAGMA_BUILD_MINIFY", "PRAGMA_SOURCE_COMMIT", "PRAGMA_DISTRIBUTION_DIGEST"],
+      "cache": false
+    },
+    "@pqpo/pragma#build": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        "!.next/cache/**",
+        "out/**",
+        ".plugin-bundles/**",
+        ".packaging/cli-metafiles.json",
+        ".release/package/**",
+        ".release/*.metafile.json"
+      ],
+      "env": ["PRAGMA_DISTRIBUTION_DIGEST"]
     }
   },
   "globalDependencies": [
     "scripts/build-artifact.mjs",
     "apps/cli/scripts/build-bundles.mjs",
     "packages/tsconfig/*.json",
-    "scripts/build.mjs"
+    "scripts/build.mjs",
+    "scripts/distribution.mjs",
+    "packages/shared/src/distribution.ts"
   ],
-  "globalPassThroughEnv": ["GOMAXPROCS", "PRAGMA_LOG_LEVEL", "CI"]
+  "globalPassThroughEnv": [
+    "GOMAXPROCS",
+    "PRAGMA_LOG_LEVEL",
+    "CI",
+    "PRAGMA_DISTRIBUTION_CONFIG",
+    "PRAGMA_DISTRIBUTION_DIGEST"
+  ]
 }

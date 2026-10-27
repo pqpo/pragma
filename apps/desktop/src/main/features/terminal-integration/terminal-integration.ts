@@ -1,3 +1,4 @@
+import { getDistribution, getTerminalRegistrationIdentity } from "@pragma/shared/distribution";
 import { execFile } from "node:child_process";
 import { access, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -6,8 +7,6 @@ import { promisify } from "node:util";
 import type { DesktopTerminalIntegration } from "../../../shared/contracts/terminal-integration.ts";
 import {
   atomicWrite,
-  BEGIN,
-  LAUNCHER_MARKER,
   shellPathBlock,
   shellQuote,
   updateShellConfig,
@@ -25,6 +24,14 @@ export interface TerminalIntegrationOptions {
 }
 
 export function createTerminalIntegration(options: TerminalIntegrationOptions) {
+  const distribution = getDistribution();
+  const {
+    begin: BEGIN,
+    launcherMarker: LAUNCHER_MARKER,
+    windowsLauncherMarker,
+    fishFile,
+  } = getTerminalRegistrationIdentity();
+  const commands = [distribution.cliCommand, distribution.desktopCliCommand];
   const home = options.home ?? homedir();
   const environment = options.environment ?? process.env;
   const powershell = join(
@@ -43,7 +50,7 @@ export function createTerminalIntegration(options: TerminalIntegrationOptions) {
   const directory =
     options.platform === "win32"
       ? join(dirname(options.executable), "bin")
-      : join(home, ".pragma", "bin");
+      : join(home, distribution.homeDirectory, "bin");
   const client = join(
     options.resources,
     "app.asar.unpacked",
@@ -52,7 +59,7 @@ export function createTerminalIntegration(options: TerminalIntegrationOptions) {
     "desktop-cli",
     "pragma.js",
   );
-  const disabled = join(home, ".pragma", "state", "desktop-cli", "disabled");
+  const disabled = join(home, distribution.homeDirectory, "state", "desktop-cli", "disabled");
   let lastError: string | undefined;
   let pending: Promise<unknown> = Promise.resolve();
   const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -94,12 +101,7 @@ export function createTerminalIntegration(options: TerminalIntegrationOptions) {
       [join(home, ".bashrc"), "bash"],
       [join(home, bashLogin), "bash"],
       [
-        join(
-          environment["XDG_CONFIG_HOME"] || join(home, ".config"),
-          "fish",
-          "conf.d",
-          "pragma-desktop.fish",
-        ),
+        join(environment["XDG_CONFIG_HOME"] || join(home, ".config"), "fish", "conf.d", fishFile),
         "fish",
       ],
     ];
@@ -140,7 +142,7 @@ export function createTerminalIntegration(options: TerminalIntegrationOptions) {
     }
     let ready = installed && cliVersion !== undefined && (await exists(client));
     if (ready && options.platform === "darwin") {
-      for (const name of ["pragma", "pragma-desktop"]) {
+      for (const name of commands) {
         try {
           ready &&=
             (await readFile(join(directory, name), "utf8")).includes(shellQuote(client)) &&
@@ -157,15 +159,26 @@ export function createTerminalIntegration(options: TerminalIntegrationOptions) {
         }
       }
     } else if (ready && options.platform === "win32") {
-      for (const name of ["pragma.cmd", "pragma-desktop.cmd"])
-        ready &&= await exists(join(directory, name));
+      for (const name of commands.map((command) => `${command}.cmd`)) {
+        try {
+          const source = await readFile(join(directory, name), "utf8");
+          ready &&=
+            source.includes(windowsLauncherMarker) &&
+            source.includes(`${distribution.executableName}.exe`);
+        } catch {
+          ready = false;
+        }
+      }
       try {
         const result = await execute(
           powershell,
           ["-NoProfile", "-Command", '[Environment]::GetEnvironmentVariable("Path", "Machine")'],
           { timeout: 5_000, windowsHide: true },
         );
-        ready &&= result.stdout.trim().split(";")[0]?.toLowerCase() === directory.toLowerCase();
+        ready &&= result.stdout
+          .trim()
+          .split(";")
+          .some((part) => part.toLowerCase() === directory.toLowerCase());
       } catch {
         ready = false;
       }
@@ -173,7 +186,7 @@ export function createTerminalIntegration(options: TerminalIntegrationOptions) {
     const removed = await exists(disabled);
     let removalIncomplete = false;
     if (removed && options.platform === "darwin") {
-      for (const name of ["pragma", "pragma-desktop"]) {
+      for (const name of commands) {
         try {
           removalIncomplete ||= (await readFile(join(directory, name), "utf8")).includes(
             LAUNCHER_MARKER,
@@ -191,10 +204,10 @@ export function createTerminalIntegration(options: TerminalIntegrationOptions) {
       }
     }
     if (removed && options.platform === "win32") {
-      for (const name of ["pragma.cmd", "pragma-desktop.cmd"]) {
+      for (const name of commands.map((command) => `${command}.cmd`)) {
         try {
           removalIncomplete ||= (await readFile(join(directory, name), "utf8")).includes(
-            "rem Pragma Desktop CLI launcher",
+            windowsLauncherMarker,
           );
         } catch {
           /* Already removed. */
@@ -232,7 +245,7 @@ export function createTerminalIntegration(options: TerminalIntegrationOptions) {
       if (options.platform === "win32") await windowsAction("repair");
       else {
         const source = `#!/bin/sh\n${LAUNCHER_MARKER}\nif [ ! -x ${shellQuote(options.executable)} ] || [ ! -f ${shellQuote(client)} ]; then\n  printf '%s\\n' 'Pragma Desktop has been removed or moved. Open the installed Desktop to repair terminal integration.' >&2\n  exit 127\nfi\nELECTRON_RUN_AS_NODE=1 exec ${shellQuote(options.executable)} ${shellQuote(client)} "$@"\n`;
-        for (const name of ["pragma", "pragma-desktop"]) {
+        for (const name of commands) {
           const path = join(directory, name);
           if ((await exists(path)) && !(await readFile(path, "utf8")).includes(LAUNCHER_MARKER))
             throw new Error(
@@ -262,7 +275,7 @@ export function createTerminalIntegration(options: TerminalIntegrationOptions) {
           if (options.platform === "win32") await windowsAction("remove");
           else {
             for (const [path] of await shellFiles()) await updateShellConfig(path, undefined);
-            for (const name of ["pragma", "pragma-desktop"]) {
+            for (const name of commands) {
               const path = join(directory, name);
               if ((await exists(path)) && (await readFile(path, "utf8")).includes(LAUNCHER_MARKER))
                 await rm(path);

@@ -1,3 +1,4 @@
+import { loadDistribution } from "../../../scripts/distribution.mjs";
 import { parse } from "acorn";
 import { mkdtemp, readFile, readdir, rm, writeFile, symlink, mkdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
@@ -17,12 +18,12 @@ import {
   isAllowedExternalSpecifier,
 } from "./package-audit-lib.mjs";
 
+const { config: distribution, digest: distributionDigest } = await loadDistribution();
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const packageDirectory = resolve(scriptDirectory, "..");
 const repositoryDirectory = resolve(packageDirectory, "../..");
-const sourceDependencies = JSON.parse(
-  await readFile(join(packageDirectory, "package.json"), "utf8"),
-).dependencies;
+const sourceManifest = JSON.parse(await readFile(join(packageDirectory, "package.json"), "utf8"));
+const sourceDependencies = sourceManifest.dependencies;
 const expectedRuntimeDependencies = {
   "@napi-rs/keyring": sourceDependencies["@napi-rs/keyring"],
   "@silvia-odwyer/photon-node": sourceDependencies["@silvia-odwyer/photon-node"],
@@ -265,13 +266,23 @@ function parsePackageJson(data) {
 }
 
 function assertManifest(manifest) {
-  if (manifest.name !== "@pqpo/pragma") throw new Error("Unexpected package name in tarball.");
+  if (
+    manifest.pragmaDistribution?.id !== distribution.id ||
+    manifest.pragmaDistribution?.digest !== distributionDigest ||
+    manifest.version !== (distribution.cliVersion ?? sourceManifest.version)
+  )
+    throw new Error("Tarball distribution or version differs from the selected build profile.");
+  if (manifest.name !== distribution.cliPackageName)
+    throw new Error("Unexpected package name in tarball.");
   if (typeof manifest.version !== "string" || !isReleaseVersion(manifest.version)) {
     throw new Error("Tarball package.json must contain a release semver.");
   }
   if (manifest.private !== undefined) throw new Error("Published package must not be private.");
   if (manifest.type !== "module") throw new Error("Published package must be ESM.");
-  if (JSON.stringify(manifest.bin) !== JSON.stringify({ pragma: "./dist/pragma.js" })) {
+  if (
+    JSON.stringify(manifest.bin) !==
+    JSON.stringify({ [distribution.cliCommand]: "./dist/pragma.js" })
+  ) {
     throw new Error("Tarball bin metadata is not the canonical pragma entry.");
   }
   if (manifest.exports === undefined || Object.keys(manifest.exports).length !== 0) {
@@ -579,7 +590,7 @@ async function verifyOwnerWorker(entries) {
       const child = fork(join(directory, "mission-owner-worker.js"), [], {
         stdio: ["ignore", "ignore", "pipe", "ipc"],
         execArgv: [],
-        env: { ...process.env, PRAGMA_HOME: pragmaHome },
+        env: { ...process.env, [distribution.homeEnvironmentVariable]: pragmaHome },
       });
       let stderr = "";
       let replied = false;

@@ -1,3 +1,4 @@
+import { getDistribution } from "@pragma/shared/distribution";
 import {
   BoardListResultSchema,
   BoardReadResultSchema,
@@ -16,7 +17,7 @@ import {
 } from "@pragma/local-host";
 
 import type { ParsedCommand } from "../parser/argv.ts";
-import { HELP_TEXT } from "../parser/argv.ts";
+import { cliHelpText } from "../parser/argv.ts";
 import { detectInstalledDesktopVersion } from "../desktop-version.ts";
 import { toIntegrationError } from "./errors.ts";
 import { collectHumanInteraction } from "../terminal.ts";
@@ -29,7 +30,7 @@ export async function executeReadOnlyCommand(
 ): Promise<JsonValue> {
   switch (command.kind) {
     case "help":
-      return { help: command.text ?? HELP_TEXT };
+      return { help: command.text ?? cliHelpText() };
     case "version":
       return await versionResult(context.cliVersion);
     case "completion":
@@ -508,6 +509,15 @@ function referenceText(value: unknown): string | undefined {
 }
 
 function completionScript(
+  shell: Extract<ParsedCommand, { readonly kind: "completion" }>["shell"],
+): string {
+  const command = getDistribution().cliCommand;
+  return defaultCompletionScript(shell)
+    .replaceAll("_pragma", `_${command.replaceAll("-", "_")}`)
+    .replace(/\bpragma\b/gu, command);
+}
+
+function defaultCompletionScript(
   shell: Extract<ParsedCommand, { readonly kind: "completion" }>["shell"],
 ): string {
   switch (shell) {

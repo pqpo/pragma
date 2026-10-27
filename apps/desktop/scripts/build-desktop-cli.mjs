@@ -1,3 +1,4 @@
+import { loadDistribution } from "../../../scripts/distribution.mjs";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -20,7 +21,12 @@ export function resolveDesktopSourceCommit(repositoryDirectory, { development = 
   }
 }
 
-export async function buildDesktopCli(mainDirectory, { minify = true, development = false } = {}) {
+export async function buildDesktopCli(
+  mainDirectory,
+  { minify = true, development = false, distribution } = {},
+) {
+  const profile = distribution ?? (await loadDistribution());
+  const { config, digest } = profile;
   const cliPackage = JSON.parse(
     await readFile(new URL("../../cli/package.json", import.meta.url), "utf8"),
   );
@@ -36,6 +42,7 @@ export async function buildDesktopCli(mainDirectory, { minify = true, developmen
     outputDirectory: directory,
     version: cliPackage.version,
     minify,
+    distribution: profile,
   });
   const evidenceDirectory = fileURLToPath(new URL("../.packaging/", import.meta.url));
   await mkdir(evidenceDirectory, { recursive: true });
@@ -51,8 +58,10 @@ export async function buildDesktopCli(mainDirectory, { minify = true, developmen
     join(directory, "distribution.json"),
     JSON.stringify(
       {
-        cliVersion: cliPackage.version,
-        desktopVersion: desktopPackage.version,
+        cliVersion: config.cliVersion ?? cliPackage.version,
+        desktopVersion: config.desktopVersion ?? desktopPackage.version,
+        distributionId: config.id,
+        distributionDigest: digest,
         sourceCommit,
       },
       null,

@@ -17,6 +17,9 @@ concurrency:
   group: desktop-release-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
   cancel-in-progress: false
 
+env:
+  PRAGMA_DISTRIBUTION_CONFIG: ""
+
 permissions:
   contents: read
   actions: read
@@ -152,6 +155,9 @@ jobs:
       - name: Restore neutral application and audit dependencies
         run: node scripts/archive-workspace-build.mjs restore
 
+      - name: Verify open-source distribution identity
+        run: node scripts/distribution.mjs --assert-open-source
+
       - name: Test packaging audit on native host
         run: pnpm --filter @pragma/desktop test:packaging
 
@@ -161,13 +167,15 @@ jobs:
       - name: Verify Windows CLI installation and coexistence
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./apps/desktop/scripts/verify-windows-cli-installation.ps1
+        run: |
+          ./apps/desktop/scripts/verify-windows-cli-installation.ps1
+          ./apps/desktop/scripts/verify-windows-distribution-isolation.ps1
 
       - name: Verify macOS terminal registration with native shells
         if: runner.os == 'macOS'
         run: |
           brew install fish
-          pnpm --filter @pragma/desktop exec vitest run src/main/features/terminal-integration/terminal-integration.test.ts
+          pnpm --filter @pragma/desktop exec vitest run src/main/features/terminal-integration/terminal-integration.test.ts src/main/features/terminal-integration/distribution-isolation.test.ts
 
       - name: Upload packaging audit
         if: always()

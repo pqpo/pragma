@@ -1,10 +1,11 @@
+import { loadDistribution } from "../../../scripts/distribution.mjs";
 import { execFile, execFileSync } from "node:child_process";
 import { copyFile, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { statFile } from "@electron/asar";
+import { extractFile, statFile } from "@electron/asar";
 import { CLI_WORKERS } from "../../cli/scripts/build-bundles.mjs";
 import {
   assertNoBuildPathLeaks,
@@ -15,8 +16,14 @@ const execute = promisify(execFile);
 const repositoryDirectory = fileURLToPath(new URL("../../../", import.meta.url));
 
 export async function auditDesktopCli(resources, executable) {
+  const { config, digest } = await loadDistribution();
   const archive = join(resources, "app.asar");
   const directory = join(`${archive}.unpacked`, "out/main/desktop-cli");
+  const mainIdentity = JSON.parse(
+    extractFile(archive, "out/main/distribution.json").toString("utf8"),
+  );
+  if (mainIdentity.distributionId !== config.id || mainIdentity.distributionDigest !== digest)
+    throw new Error("Packaged Desktop main distribution does not match this release.");
   for (const name of [
     "pragma.js",
     "cli.js",
@@ -48,9 +55,10 @@ export async function auditDesktopCli(resources, executable) {
     encoding: "utf8",
   }).trim();
   if (
-    distribution.cliVersion !== cliPackage.version ||
-    distribution.desktopVersion !== desktopPackage.version ||
-    distribution.sourceCommit !== commit
+    distribution.cliVersion !== (config.cliVersion ?? cliPackage.version) ||
+    distribution.desktopVersion !== (config.desktopVersion ?? desktopPackage.version) ||
+    distribution.sourceCommit !== commit ||
+    distribution.distributionDigest !== digest
   )
     throw new Error("Desktop CLI distribution identity does not match this release.");
   if (JSON.parse(await readFile(join(directory, "package.json"), "utf8")).type !== "module")
@@ -60,6 +68,7 @@ export async function auditDesktopCli(resources, executable) {
     ...process.env,
     ELECTRON_RUN_AS_NODE: "1",
     PRAGMA_HOME: temporary,
+    [config.homeEnvironmentVariable]: temporary,
     PATH: "",
     NODE_PATH: "",
     NODE_OPTIONS: "",
@@ -73,8 +82,8 @@ export async function auditDesktopCli(resources, executable) {
     });
     const versions = JSON.parse(version.stdout).result;
     if (
-      versions.cliVersion !== cliPackage.version ||
-      versions.desktopBundleVersion !== desktopPackage.version
+      versions.cliVersion !== (config.cliVersion ?? cliPackage.version) ||
+      versions.desktopBundleVersion !== (config.desktopVersion ?? desktopPackage.version)
     )
       throw new Error("Bundled CLI reported a different CLI or Desktop version.");
     await execute(executable, [client, "--help"], { env: environment, timeout: 30_000 });

@@ -1,3 +1,4 @@
+import { getDistribution, getTerminalRegistrationIdentity } from "@pragma/shared/distribution";
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -9,6 +10,7 @@ export const LAUNCHER_MARKER = "# Pragma Desktop CLI launcher";
 export const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
 export function shellPathBlock(directory: string, shell: "zsh" | "bash" | "fish"): string {
+  const { begin: BEGIN, end: END } = getTerminalRegistrationIdentity();
   const path = shellQuote(directory);
   const body =
     shell === "fish"
@@ -41,6 +43,7 @@ unset __pragma_rest __pragma_result __pragma_part __pragma_more`;
 }
 
 export function replaceShellBlock(source: string, block: string | undefined): string {
+  const { begin: BEGIN, end: END } = getTerminalRegistrationIdentity();
   const startCount = source.split(BEGIN).length - 1;
   const endCount = source.split(END).length - 1;
   if (startCount !== endCount)
@@ -96,7 +99,7 @@ export async function updateShellConfig(path: string, block: string | undefined)
     if (existed) {
       // One recoverable backup per file; never overwrite the user's original backup.
       try {
-        await writeFile(`${target}.pragma-backup`, source, { flag: "wx", mode });
+        await writeFile(`${target}.${getDistribution().id}-backup`, source, { flag: "wx", mode });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       }

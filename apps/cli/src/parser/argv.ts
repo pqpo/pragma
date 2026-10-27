@@ -1,3 +1,4 @@
+import { getDistribution } from "@pragma/shared/distribution";
 import { createIntegrationError, type IntegrationError } from "@pragma/shared/integration";
 import { Command, CommanderError, Option } from "commander";
 import { isAbsolute } from "node:path";
@@ -201,7 +202,8 @@ export type MissionView = "summary" | "result" | "chat" | "work" | "events" | "c
 const DEFAULT_LIMIT = 50;
 const DEFAULT_BOARD_MAX_BYTES = 64_000;
 
-export const HELP_TEXT = `Usage: pragma <command> [options]
+export function cliHelpText(): string {
+  return `Usage: ${getDistribution().cliCommand} <command> [options]
 
 Commands:
   version
@@ -245,10 +247,10 @@ Run semantics:
   --request-id is optional; the CLI generates one when omitted. Reusing it with a different payload is a conflict.
 
 Common examples:
-  pragma expert discover "memory"
-  pragma mission get <MISSION_ID> --view events --limit 20
-  pragma expert run expert:<16-char-id> --workspace "$PWD" --prompt "Summarize this repository"
-  pragma mission send <MISSION_ID> --prompt "Continue" --wait
+  ${getDistribution().cliCommand} expert discover "memory"
+  ${getDistribution().cliCommand} mission get <MISSION_ID> --view events --limit 20
+  ${getDistribution().cliCommand} expert run expert:<16-char-id> --workspace "$PWD" --prompt "Summarize this repository"
+  ${getDistribution().cliCommand} mission send <MISSION_ID> --prompt "Continue" --wait
 
 Output:
   --format text|json|jsonl   Output protocol (default: text)
@@ -256,6 +258,9 @@ Output:
   --stream-json              Alias for --format jsonl
   --output-view full|compact Full v2 (default) or compact v3 machine output; compact results appear once, with bounded content references.
 `;
+}
+
+export const HELP_TEXT = cliHelpText();
 
 export class CliParseError extends Error {
   readonly error: IntegrationError;
@@ -273,22 +278,22 @@ function commandHelpText(args: readonly string[]): string {
   const command = args[0];
   const subcommand = args[1];
   if (command === "version") {
-    return `Usage: pragma version
+    return `Usage: ${getDistribution().cliCommand} version
 
 Prints CLI, Desktop, wire, storage, and platform versions. Text is human-readable; JSON/JSONL are machine protocols.`;
   }
   if (command === "doctor") {
-    return `Usage: pragma doctor
+    return `Usage: ${getDistribution().cliCommand} doctor
 
 Checks credential and installation readiness. Text is human-readable; JSON/JSONL preserve the v2 result protocol.`;
   }
   if (command === "completion") {
-    return `Usage: pragma completion bash|zsh|fish|powershell
+    return `Usage: ${getDistribution().cliCommand} completion bash|zsh|fish|powershell
 
 Prints a shell completion script. Evaluate or install the returned script in the selected shell.`;
   }
   if (command === "source") {
-    return `Usage: pragma source <command> [options]
+    return `Usage: ${getDistribution().cliCommand} source <command> [options]
 
 Commands:
   init [DIR] --id SOURCE_ID --name NAME
@@ -301,135 +306,135 @@ upgrade atomically upgrades a v1 Source to v2 and keeps a local backup.`;
   }
   if (command === "team" || command === "expert" || command === "flow") {
     if (subcommand === undefined) {
-      return `Usage: pragma ${command} discover|describe|run [options]
+      return `Usage: ${getDistribution().cliCommand} ${command} discover|describe|run [options]
 
 Use ${command} discover --help, ${command} describe --help, or ${command} run --help for command-specific options.
 Output: text by default; use --format=json or --format=jsonl for machine protocols.`;
     }
     if (subcommand === "discover") {
-      return `Usage: pragma ${command} discover [SELECTOR] [options]
+      return `Usage: ${getDistribution().cliCommand} ${command} discover [SELECTOR] [options]
 
 SELECTOR is an exact canonical ${command}:<ID> ref, or a case-insensitive name/description substring.
 Use --query for a keyword search; do not combine it with SELECTOR.
 Options: --project ID --status ready|needs_attention|unavailable --limit N --cursor CURSOR
 Output: text table by default; use --format=json or --format=jsonl for machine protocols.
 
-Example: pragma ${command} discover "memory"`;
+Example: ${getDistribution().cliCommand} ${command} discover "memory"`;
     }
     if (subcommand === "describe") {
-      return `Usage: pragma ${command} describe ${command}:<ID> [--revision N]
+      return `Usage: ${getDistribution().cliCommand} ${command} describe ${command}:<ID> [--revision N]
 
 Prints the resolved executor descriptor, required input fields and an authoring template. Use --json --output-view full for the complete Schema.
 The canonical ref is stable input for run; JSON is unchanged for scripts.
 
-Example: pragma ${command} describe ${command}:abcdefghjkmnpqrs`;
+Example: ${getDistribution().cliCommand} ${command} describe ${command}:abcdefghjkmnpqrs`;
     }
     if (subcommand === "run") {
-      return `Usage: pragma ${command} run ${command}:<ID> --workspace ABSOLUTE_PATH (--prompt TEXT | --input FILE|-)
+      return `Usage: ${getDistribution().cliCommand} ${command} run ${command}:<ID> --workspace ABSOLUTE_PATH (--prompt TEXT | --input FILE|-)
 
 Runs to a terminal result by default. --wait-timeout SECONDS bounds waiting after a durable owner receipt; --detach returns after that receipt. Both use a per-invocation owner process so caller exit does not cancel work. Questions return for explicit response; --wait-timeout conflicts with --interactive always and --detach.
 --request-id is optional and is generated when omitted. Reusing it with a different payload is a conflict.
 Output: text keeps the agent result readable; --format=json or --format=jsonl preserves the v2 machine protocol.
 
-Example: pragma ${command} run ${command}:abcdefghjkmnpqrs --workspace "$PWD" --prompt "Summarize this repository"`;
+Example: ${getDistribution().cliCommand} ${command} run ${command}:abcdefghjkmnpqrs --workspace "$PWD" --prompt "Summarize this repository"`;
     }
   }
   if (command === "mission") {
     if (subcommand === "list") {
-      return `Usage: pragma mission list [--query TEXT] [--workspace PATH] [--status STATUS] [--executor REF] [--limit N] [--cursor CURSOR]
+      return `Usage: ${getDistribution().cliCommand} mission list [--query TEXT] [--workspace PATH] [--status STATUS] [--executor REF] [--limit N] [--cursor CURSOR]
 
 Lists Mission summaries with title, status and workspace. --query searches titles; --workspace matches a canonical path. Host filtering and stable ordering own pagination; a changed list returns CURSOR_EXPIRED.
 Use the printed continuation command to fetch the next page; JSON/JSONL output is protocol-only.
 
-Example: pragma mission list --status active`;
+Example: ${getDistribution().cliCommand} mission list --status active`;
     }
     if (subcommand === "get") {
-      return `Usage: pragma mission get MISSION_ID [--view summary|result|events|content] [--query-version 1|2] [--recent-input] [--limit N] [--cursor CURSOR]
+      return `Usage: ${getDistribution().cliCommand} mission get MISSION_ID [--view summary|result|events|content] [--query-version 1|2] [--recent-input] [--limit N] [--cursor CURSOR]
 
 summary is the default semantic v2 view (title unavailable is explicit); --query-version 1 retains strict v1. --recent-input adds the latest durable input preview. result is the latest execution, events is an ascending durable event page.
 Large text/compact bodies carry content references. Read one with --view content --source result|event|queue --content-id ID --fingerprint sha256:HASH --start BYTE --max-bytes BYTES (4..64000). UTF-8 byte ranges are [start,end).
 chat and work are not available yet; use --view events or mission watch instead.
 Output: text uses a view-specific renderer; JSON/JSONL preserve the v2 envelope.
 
-Example: pragma mission get MISSION_ID --view events --limit 20`;
+Example: ${getDistribution().cliCommand} mission get MISSION_ID --view events --limit 20`;
     }
     if (subcommand === "watch") {
-      return `Usage: pragma mission watch MISSION_ID [--after CURSOR | --replay COUNT] [--until terminal|input-required] [--wait-timeout SECONDS]
+      return `Usage: ${getDistribution().cliCommand} mission watch MISSION_ID [--after CURSOR | --replay COUNT] [--until terminal|input-required] [--wait-timeout SECONDS]
 
 Follows Mission events until the requested condition or the wait deadline; timeout and Ctrl-C stop observation without cancelling. Text and jsonl are supported.
 
-Example: pragma mission watch MISSION_ID --until terminal`;
+Example: ${getDistribution().cliCommand} mission watch MISSION_ID --until terminal`;
     }
     if (subcommand === "board") {
       const boardCommand = args[2];
       if (boardCommand === "list") {
-        return `Usage: pragma mission board list MISSION_ID [--limit N] [--cursor CURSOR]
+        return `Usage: ${getDistribution().cliCommand} mission board list MISSION_ID [--limit N] [--cursor CURSOR]
 
 Lists the shared Mission Board. Text output prints a continuation command when another page exists.`;
       }
       if (boardCommand === "read") {
-        return `Usage: pragma mission board read MISSION_ID CONTEXT_ID [--start BYTE] [--max-bytes BYTES]
+        return `Usage: ${getDistribution().cliCommand} mission board read MISSION_ID CONTEXT_ID [--start BYTE] [--max-bytes BYTES]
 
 Reads a UTF-8 byte range [start,end). --max-bytes bounds the read; --offset is its legacy alias. Partial text includes the next read command.`;
       }
       if (boardCommand === "search") {
-        return `Usage: pragma mission board search MISSION_ID QUERY [--case-sensitive] [--context-lines N] [--max-results N]
+        return `Usage: ${getDistribution().cliCommand} mission board search MISSION_ID QUERY [--case-sensitive] [--context-lines N] [--max-results N]
 
 Searches the shared Mission Board without changing Mission state.`;
       }
-      return `Usage: pragma mission board list|read|search MISSION_ID [options]
+      return `Usage: ${getDistribution().cliCommand} mission board list|read|search MISSION_ID [options]
 
 Use pragma mission board <command> --help for the exact options.`;
     }
     if (subcommand === "queue") {
       const queueCommand = args[2];
       if (queueCommand === "list") {
-        return `Usage: pragma mission queue list MISSION_ID [--limit N] [--cursor CURSOR]
+        return `Usage: ${getDistribution().cliCommand} mission queue list MISSION_ID [--limit N] [--cursor CURSOR]
 
 Shows the Core prompt queue with state, pending count, steer support, and full request IDs.
 Use the printed continuation command for the next page.`;
       }
       if (queueCommand === "remove") {
-        return `Usage: pragma mission queue remove MISSION_ID --request QUEUE_REQUEST_ID [--request-id REQUEST_ID] [--ack-timeout SECONDS]
+        return `Usage: ${getDistribution().cliCommand} mission queue remove MISSION_ID --request QUEUE_REQUEST_ID [--request-id REQUEST_ID] [--ack-timeout SECONDS]
 
 Removes one queue item. --request is the queue item ID; --request-id is this command's idempotency ID.
-Example: pragma mission queue remove MISSION_ID --request QUEUE_REQUEST_ID`;
+Example: ${getDistribution().cliCommand} mission queue remove MISSION_ID --request QUEUE_REQUEST_ID`;
       }
       if (queueCommand === "resume") {
-        return `Usage: pragma mission queue resume MISSION_ID [--abandon-uncertain] [--request-id REQUEST_ID] [--ack-timeout SECONDS]
+        return `Usage: ${getDistribution().cliCommand} mission queue resume MISSION_ID [--abandon-uncertain] [--request-id REQUEST_ID] [--ack-timeout SECONDS]
 
 Resumes a paused queue by checking steer delivery. --abandon-uncertain discards uncertain messages without replay and starts a new native conversation; prior operations may already have executed. The command is durable and idempotent by request ID plus payload hash.
-Example: pragma mission queue resume MISSION_ID`;
+Example: ${getDistribution().cliCommand} mission queue resume MISSION_ID`;
       }
       if (queueCommand === "steer") {
-        return `Usage: pragma mission queue steer MISSION_ID --request QUEUE_REQUEST_ID [--expected-execution EXECUTION_ID] [--request-id REQUEST_ID] [--wait | --detach] [--ack-timeout SECONDS]
+        return `Usage: ${getDistribution().cliCommand} mission queue steer MISSION_ID --request QUEUE_REQUEST_ID [--expected-execution EXECUTION_ID] [--request-id REQUEST_ID] [--wait | --detach] [--ack-timeout SECONDS]
 
 Steers one queued item without fallback. --request is the queue item ID; --request-id is this command's idempotency ID.
-Example: pragma mission queue steer MISSION_ID --request QUEUE_REQUEST_ID --detach`;
+Example: ${getDistribution().cliCommand} mission queue steer MISSION_ID --request QUEUE_REQUEST_ID --detach`;
       }
-      return `Usage: pragma mission queue list|remove|resume|steer MISSION_ID [options]
+      return `Usage: ${getDistribution().cliCommand} mission queue list|remove|resume|steer MISSION_ID [options]
 
 Queue mutations are durable and idempotent by request ID plus payload hash. --wait waits for execution; --detach returns after persistence.`;
     }
     if (subcommand === "resume") {
-      return `Usage: pragma mission resume MISSION_ID [options]
+      return `Usage: ${getDistribution().cliCommand} mission resume MISSION_ID [options]
 
 Resumes a historical Mission after its executor binding is proven. Use --project PROJECT_ID and --revision N together for the one-time historical pin backfill; --expected-fingerprint optionally verifies that revision.
 --detach returns after the resume command is durably persisted. The command is idempotent by request ID plus payload hash. Use --format=json for scripts and inspect the exit code.
 Options: --project PROJECT_ID --revision N --expected-fingerprint SHA256 --request-id REQUEST_ID --detach
 
-Example: pragma mission resume MISSION_ID --project PROJECT_ID --revision N --detach`;
+Example: ${getDistribution().cliCommand} mission resume MISSION_ID --project PROJECT_ID --revision N --detach`;
     }
     if (["send", "steer", "respond", "interrupt"].includes(subcommand ?? "")) {
       const example =
         subcommand === "send"
-          ? `pragma mission send MISSION_ID --prompt "Continue" --wait`
+          ? `${getDistribution().cliCommand} mission send MISSION_ID --prompt "Continue" --wait`
           : subcommand === "steer"
-            ? `pragma mission steer MISSION_ID --prompt "Change direction" --wait`
+            ? `${getDistribution().cliCommand} mission steer MISSION_ID --prompt "Change direction" --wait`
             : subcommand === "respond"
-              ? `pragma mission respond MISSION_ID --interaction INTERACTION_ID --answer "yes" --wait`
-              : `pragma mission interrupt MISSION_ID --wait`;
-      return `Usage: pragma mission ${subcommand} MISSION_ID [options]
+              ? `${getDistribution().cliCommand} mission respond MISSION_ID --interaction INTERACTION_ID --answer "yes" --wait`
+              : `${getDistribution().cliCommand} mission interrupt MISSION_ID --wait`;
+      return `Usage: ${getDistribution().cliCommand} mission ${subcommand} MISSION_ID [options]
 
 The command is durable and idempotent by request ID plus payload hash. --wait waits for execution;
 --detach returns after the command is durably persisted. Use --format=json for scripts and inspect the exit code.
@@ -437,7 +442,7 @@ The command is durable and idempotent by request ID plus payload hash. --wait wa
 Example: ${example}`;
     }
   }
-  return HELP_TEXT;
+  return cliHelpText();
 }
 
 export function parseCliArgv(argv: readonly string[]): ParsedCli {
@@ -501,7 +506,7 @@ interface CliOptionDefinition {
 }
 
 function createCliProgram(setCommand: ParsedCommandSink): Command {
-  const program = configureCommand(new Command("pragma"));
+  const program = configureCommand(new Command(getDistribution().cliCommand));
   program
     .addOption(
       new Option("--format <format>").argParser(parseFormat).conflicts(["json", "streamJson"]),

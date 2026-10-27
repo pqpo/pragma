@@ -1,0 +1,18 @@
+{
+  "id": "acme-pragma",
+  "productName": "Acme Pragma",
+  "applicationId": "com.acme.pragma",
+  "applicationName": "Acme Pragma Desktop",
+  "executableName": "AcmePragma",
+  "homeDirectory": ".acme-pragma",
+  "developmentHomeDirectory": ".acme-pragma-development",
+  "userDataDirectory": "Acme Pragma Desktop",
+  "userDataDevelopmentDirectory": "Acme Pragma Desktop Development",
+  "homeEnvironmentVariable": "ACME_PRAGMA_HOME",
+  "credentialNamespace": "acme-pragma",
+  "cliPackageName": "@acme/pragma",
+  "cliCommand": "acme-pragma",
+  "desktopCliCommand": "acme-pragma-desktop",
+  "desktopVersion": "1.0.0",
+  "cliVersion": "1.0.0"
+}

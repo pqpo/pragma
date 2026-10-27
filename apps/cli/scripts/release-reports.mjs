@@ -1,3 +1,4 @@
+import { loadDistribution } from "../../../scripts/distribution.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -15,6 +16,12 @@ const reportDirectory = join(releaseDirectory, "reports");
 const artifactDirectory = join(releaseDirectory, "ci-artifact");
 
 const packageManifest = JSON.parse(await readFile(join(stagingDirectory, "package.json"), "utf8"));
+const { config: distribution, digest: distributionDigest } = await loadDistribution();
+if (
+  packageManifest.pragmaDistribution?.digest !== distributionDigest ||
+  packageManifest.name !== distribution.cliPackageName
+)
+  throw new Error("Release report distribution does not match the staged CLI.");
 const packReport = await readJson(join(releaseDirectory, "pack.json"));
 const packRecord = packReport[0];
 if (packRecord === undefined || typeof packRecord.filename !== "string") {
@@ -49,12 +56,15 @@ const packFiles = (packRecord.files ?? []).map((file) => ({
   mode: file.mode,
 }));
 const artifactManifest = {
+  distribution,
   package: packageManifest.name,
   version: packageManifest.version,
   buildIdentity: {
     version: packageManifest.version,
     commit,
     cliSha256,
+    distributionId: distribution.id,
+    distributionDigest,
   },
   tarball: "pragma-cli.tgz",
   sha256,
@@ -89,6 +99,7 @@ process.stdout.write(
   JSON.stringify(
     {
       ok: true,
+      distribution,
       package: packageManifest.name,
       version: packageManifest.version,
       tarball: tarballPath,

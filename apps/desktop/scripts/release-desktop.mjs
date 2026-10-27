@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { assertOpenSourceDistribution } from "../../../scripts/distribution.mjs";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
@@ -472,6 +473,7 @@ async function main() {
     return;
   }
 
+  await assertOpenSourceDistribution();
   const desktopVersion = await readDesktopVersion();
   if (desktopVersion !== options.version) {
     throw new Error(

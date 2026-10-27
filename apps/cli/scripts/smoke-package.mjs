@@ -10,15 +10,33 @@ const artifactDirectory = resolve(options.artifactDirectory);
 const artifactManifest = JSON.parse(
   await readFile(join(artifactDirectory, "artifact-manifest.json"), "utf8"),
 );
+// Platform jobs intentionally run in a clean checkout without workspace dependencies,
+// including on Node 20. Consume the producer's descriptor using Node built-ins only.
+const distribution = artifactManifest.distribution;
+if (
+  !distribution ||
+  typeof distribution.id !== "string" ||
+  typeof distribution.cliCommand !== "string" ||
+  typeof distribution.cliPackageName !== "string" ||
+  typeof distribution.homeEnvironmentVariable !== "string" ||
+  !/^[a-z][a-z0-9-]*$/u.test(distribution.cliCommand) ||
+  !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/u.test(distribution.cliPackageName) ||
+  !/^[A-Z][A-Z0-9_]*_HOME$/u.test(distribution.homeEnvironmentVariable)
+) {
+  throw new Error("Invalid artifact distribution descriptor.");
+}
+const distributionDigest = createHash("sha256").update(JSON.stringify(distribution)).digest("hex");
 const buildIdentity = artifactManifest.buildIdentity;
 if (
-  artifactManifest.package !== "@pqpo/pragma" ||
+  artifactManifest.package !== distribution.cliPackageName ||
   artifactManifest.tarball !== "pragma-cli.tgz" ||
   typeof artifactManifest.version !== "string" ||
   !/^[a-f0-9]{64}$/u.test(artifactManifest.sha256) ||
   buildIdentity === null ||
   typeof buildIdentity !== "object" ||
   buildIdentity.version !== artifactManifest.version ||
+  buildIdentity.distributionDigest !== distributionDigest ||
+  buildIdentity.distributionId !== distribution.id ||
   !/^[a-f0-9]{40}$/u.test(buildIdentity.commit) ||
   !/^[a-f0-9]{64}$/u.test(buildIdentity.cliSha256)
 ) {
@@ -141,7 +159,7 @@ function createIsolatedEnvironment(smokeRoot, npmCacheOverride, mode) {
     USERPROFILE: home,
     APPDATA: join(home, "AppData", "Roaming"),
     LOCALAPPDATA: join(home, "AppData", "Local"),
-    PRAGMA_HOME: pragmaHome,
+    [distribution.homeEnvironmentVariable]: pragmaHome,
     NPM_CONFIG_CACHE: npmCache,
     npm_config_cache: npmCache,
     NPM_CONFIG_USERCONFIG: userConfig,
@@ -166,14 +184,19 @@ async function runPositiveSmoke({ smokeRoot, environment, tarballPath, version, 
 
   const packageRoot = await getNpmRoot(prefix, environment);
   const installedManifest = JSON.parse(
-    await readFile(join(packageRoot, "@pqpo", "pragma", "package.json"), "utf8"),
+    await readFile(
+      join(packageRoot, ...distribution.cliPackageName.split("/"), "package.json"),
+      "utf8",
+    ),
   );
   if (installedManifest.version !== version) {
     throw new Error(
       `Installed version mismatch: expected ${version}, got ${installedManifest.version}.`,
     );
   }
-  const installedCli = await readFile(join(packageRoot, "@pqpo", "pragma", "dist", "cli.js"));
+  const installedCli = await readFile(
+    join(packageRoot, ...distribution.cliPackageName.split("/"), "dist", "cli.js"),
+  );
   const installedCliSha256 = createHash("sha256").update(installedCli).digest("hex");
   if (installedCliSha256 !== buildIdentity.cliSha256) {
     throw new Error(
@@ -229,7 +252,7 @@ async function runPositiveSmoke({ smokeRoot, environment, tarballPath, version, 
 
   const directResult = await runCommand(
     process.execPath,
-    [join(packageRoot, "@pqpo", "pragma", "dist", "pragma.js"), "version"],
+    [join(packageRoot, ...distribution.cliPackageName.split("/"), "dist", "pragma.js"), "version"],
     {
       cwd: smokeRoot,
       env: environment,
@@ -246,14 +269,14 @@ async function runPositiveSmoke({ smokeRoot, environment, tarballPath, version, 
   await assertPathPrecedence({ smokeRoot, environment, binDirectory, version });
 
   const uninstallResult = await runNpm(
-    ["uninstall", "--global", "--prefix", prefix, "@pqpo/pragma"],
+    ["uninstall", "--global", "--prefix", prefix, distribution.cliPackageName],
     environment,
   );
   assertExit(uninstallResult, 0, "npm uninstall @pqpo/pragma");
   if (await pathExists(join(binDirectory, getBinName()))) {
     throw new Error("npm uninstall left the pragma command shim behind.");
   }
-  if (await pathExists(join(packageRoot, "@pqpo", "pragma"))) {
+  if (await pathExists(join(packageRoot, ...distribution.cliPackageName.split("/")))) {
     throw new Error("npm uninstall left @pqpo/pragma in the isolated npm root.");
   }
 }
@@ -452,7 +475,7 @@ function getNpmCommand() {
 }
 
 function getPragmaCommand() {
-  return process.platform === "win32" ? "pragma.cmd" : "pragma";
+  return process.platform === "win32" ? `${distribution.cliCommand}.cmd` : distribution.cliCommand;
 }
 
 function getBinDirectory(prefix) {
@@ -467,7 +490,7 @@ function withPathPrefix(environment, directory) {
 }
 
 function getBinName() {
-  return process.platform === "win32" ? "pragma.cmd" : "pragma";
+  return process.platform === "win32" ? `${distribution.cliCommand}.cmd` : distribution.cliCommand;
 }
 
 async function pathExists(path) {
