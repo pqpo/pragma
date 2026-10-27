@@ -1732,6 +1732,7 @@ export const studio = {
   instructionsPrompt: "Define how this expert should work, reason, and communicate.",
   instructionsHint: "Instructions become part of the expert's system context.",
   addCapabilities: "Add capabilities",
+  configureModel: "Configure model",
   modelSelectionHint:
     "Choose the execution runtime first, then select one of the models available to that runtime.",
   runtime: "Runtime",

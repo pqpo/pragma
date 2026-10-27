@@ -1641,6 +1641,7 @@ export const studio = {
   instructionsPrompt: "定义此专家的工作、推理和沟通方式。",
   instructionsHint: "指令将成为专家系统上下文的一部分。",
   addCapabilities: "添加能力",
+  configureModel: "模型配置",
   modelSelectionHint: "先选择执行运行时，再选择该运行时提供的模型。",
   runtime: "运行时",
   unavailable: "不可用",

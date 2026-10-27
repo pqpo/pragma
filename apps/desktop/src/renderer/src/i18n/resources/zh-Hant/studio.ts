@@ -1642,6 +1642,7 @@ export const studio = {
   instructionsPrompt: "定義此專家的工作、推理和溝通方式。",
   instructionsHint: "指示將成為專家系統上下文的一部分。",
   addCapabilities: "新增能力",
+  configureModel: "模型設定",
   modelSelectionHint: "先選擇執行階段，再選擇該執行階段提供的模型。",
   runtime: "執行階段",
   unavailable: "無法使用",

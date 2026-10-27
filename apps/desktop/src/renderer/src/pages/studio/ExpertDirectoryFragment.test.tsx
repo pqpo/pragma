@@ -529,7 +529,7 @@ describe("ExpertEditorFragment", () => {
       const html = renderToStaticMarkup(
         <ExpertEditorFragment
           mode="edit"
-          initialStep="capabilities"
+          initialStep="model"
           initialValue={{
             ...draft,
             model: {
@@ -573,7 +573,11 @@ describe("ExpertEditorFragment", () => {
           onCreated={async () => undefined}
         />,
       );
+      expect(html).toContain("Configure model");
       expect(html).toContain('aria-label="Permission mode"');
+      expect(html).toContain('aria-label="Thinking level"');
+      expect(html).not.toContain("Experts, teams &amp; flows");
+      expect(html).not.toContain("Memory policy");
       expect(html).toContain(label);
       expect(html).toContain("Managed tools, including MCP tools, use separate approval policies");
       expect(html).not.toContain("Plan mode");
@@ -651,7 +655,7 @@ describe("ExpertEditorFragment", () => {
       const html = renderToStaticMarkup(
         <ExpertEditorFragment
           mode="edit"
-          initialStep="capabilities"
+          initialStep="model"
           initialValue={{ ...draft, model: { ...draft.model!, permissionModeId } }}
           runtimes={[
             {
@@ -790,7 +794,7 @@ describe("ExpertEditorFragment", () => {
         const html = renderToStaticMarkup(
           <ExpertEditorFragment
             mode="edit"
-            initialStep="capabilities"
+            initialStep="model"
             initialValue={{ ...draft, model: { ...draft.model!, permissionModeId } }}
             runtimes={[
               {
@@ -930,8 +934,13 @@ describe("ExpertEditorFragment", () => {
       />,
     );
 
-    expect(html.match(/<button[^>]*disabled=""/g)).toHaveLength(4);
+    expect(html.match(/<button[^>]*disabled=""/g)).toHaveLength(5);
     expect(html).toContain("Build a reusable expert to power missions.");
+    const navigation = html.match(/<ol class="creator-steps"[\s\S]*?<\/ol>/)?.[0] ?? "";
+    const labels = [...navigation.matchAll(/<span>\d<\/span>([^<]+)<\/button>/g)].map(
+      (match) => match[1],
+    );
+    expect(labels).toEqual(["Identity", "Instructions", "Model", "Capabilities", "Review"]);
   });
 
   it("opens an edit directly on the capabilities step when requested", () => {
@@ -952,6 +961,10 @@ describe("ExpertEditorFragment", () => {
     );
 
     expect(html).toContain("Add capabilities");
+    expect(html).not.toContain('aria-label="Runtime"');
+    expect(html).not.toContain('aria-label="Model"');
+    expect(html).not.toContain('aria-label="Thinking level"');
+    expect(html).not.toContain('aria-label="Permission mode"');
     expect(html).toMatch(/<button[^>]*aria-current="step"[^>]*>[\s\S]*Capabilities<\/button>/);
   });
 

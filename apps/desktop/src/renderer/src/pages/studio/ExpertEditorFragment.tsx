@@ -32,7 +32,7 @@ import { ExpertAvatarPicker } from "./ExpertAvatarPicker.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
 
-export type ExpertEditorStep = "identity" | "instructions" | "capabilities" | "review";
+export type ExpertEditorStep = "identity" | "instructions" | "model" | "capabilities" | "review";
 export type ExpertEditorMode = "create" | "edit";
 
 export function ExpertEditorFragment(props: {
@@ -102,6 +102,7 @@ export function ExpertEditorFragment(props: {
       id: "instructions",
       label: t(isBuiltIn ? "behaviorPreferences" : "instructions", { ns: "studio" }),
     },
+    { id: "model", label: t("model", { ns: "studio" }) },
     { id: "capabilities", label: t("capabilities", { ns: "studio" }) },
     { id: "review", label: t("review", { ns: "studio" }) },
   ];
@@ -141,7 +142,7 @@ export function ExpertEditorFragment(props: {
       }
     }
     if (
-      step === "capabilities" &&
+      step === "model" &&
       !isBuiltIn &&
       (draft.model === null ||
         selectedRuntimeInfo?.status !== "available" ||
@@ -506,9 +507,9 @@ export function ExpertEditorFragment(props: {
                 </div>
               </div>
             ) : null}
-            {step === "capabilities" ? (
+            {step === "model" ? (
               <div className="capability-editor">
-                <h2>{t("addCapabilities", { ns: "studio" })}</h2>
+                <h2>{t("configureModel", { ns: "studio" })}</h2>
                 <p>{t("modelSelectionHint", { ns: "studio" })}</p>
                 <div className="capability-editor-field">
                   <span>{t("runtime", { ns: "studio" })}</span>
@@ -650,6 +651,11 @@ export function ExpertEditorFragment(props: {
                     </small>
                   </div>
                 ) : null}
+              </div>
+            ) : null}
+            {step === "capabilities" ? (
+              <div className="capability-editor">
+                <h2>{t("addCapabilities", { ns: "studio" })}</h2>
                 <ExpertCapabilityPicker
                   currentExpertId={draft.id}
                   experts={props.experts}
