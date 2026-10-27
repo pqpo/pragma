@@ -1,3 +1,7 @@
+.studio-text-input-dialog.is-compact > .ui-dialog-header {
+  padding-bottom: 8px;
+}
+
 .studio-text-input-dialog form,
 .studio-text-input-dialog form > label {
   display: grid;

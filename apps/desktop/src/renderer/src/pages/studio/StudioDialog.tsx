@@ -41,6 +41,7 @@ export function StudioTextInputDialog(props: {
   readonly title: string;
   readonly description: string;
   readonly label: string;
+  readonly hideLabel?: boolean | undefined;
   readonly value: string;
   readonly cancelLabel: string;
   readonly confirmLabel: string;
@@ -61,7 +62,7 @@ export function StudioTextInputDialog(props: {
       description={props.description}
       busy={props.busy}
       onCancel={props.onCancel}
-      className="studio-text-input-dialog"
+      className={`studio-text-input-dialog${props.hideLabel ? " is-compact" : ""}`}
       footer={
         <>
           <button
@@ -91,9 +92,10 @@ export function StudioTextInputDialog(props: {
         }}
       >
         <label>
-          <span>{props.label}</span>
+          {props.hideLabel ? null : <span>{props.label}</span>}
           <input
             data-dialog-initial-focus
+            aria-label={props.hideLabel ? props.label : undefined}
             value={props.value}
             disabled={props.busy}
             aria-invalid={props.invalid || undefined}

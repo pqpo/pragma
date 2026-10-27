@@ -438,6 +438,7 @@ export function AssetFileWorkspace(props: {
                   : t("saveCopyPrompt")
           }
           label={t("entryName")}
+          hideLabel={operation.kind === "create-file" || operation.kind === "create-folder"}
           value={operation.value}
           hint={t("entryNameRules")}
           countValue={validationName(operation)}
