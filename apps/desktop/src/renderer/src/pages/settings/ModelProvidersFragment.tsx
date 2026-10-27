@@ -895,7 +895,7 @@ function GenerationModelCapabilityEditor(props: {
       <div className="model-capability-group" role="group" aria-label={t("models.capabilities")}>
         <span className="model-field-label">{t("models.capabilities")}</span>
         <div className="capability-toggle-list">
-          <label className="capability-toggle">
+          <label className="capability-toggle" title={t("models.imageInputDescription")}>
             <input
               type="checkbox"
               checked={props.model.input.includes("image")}
@@ -904,10 +904,9 @@ function GenerationModelCapabilityEditor(props: {
             <span className="capability-toggle-indicator" aria-hidden="true" />
             <span className="capability-toggle-copy">
               <strong>{t("models.imageInput")}</strong>
-              <small>{t("models.imageInputDescription")}</small>
             </span>
           </label>
-          <label className="capability-toggle">
+          <label className="capability-toggle" title={t("models.reasoningDescription")}>
             <input
               type="checkbox"
               checked={props.model.reasoning}
@@ -916,7 +915,27 @@ function GenerationModelCapabilityEditor(props: {
             <span className="capability-toggle-indicator" aria-hidden="true" />
             <span className="capability-toggle-copy">
               <strong>{t("models.reasoning")}</strong>
-              <small>{t("models.reasoningDescription")}</small>
+            </span>
+          </label>
+          <label
+            className={
+              props.model.reasoning ? "capability-toggle" : "capability-toggle is-disabled"
+            }
+            title={
+              props.model.reasoning
+                ? t("models.thinkingLevelsDescription")
+                : t("models.adjustableThinkingRequiresReasoning")
+            }
+          >
+            <input
+              type="checkbox"
+              checked={props.model.reasoning && props.model.thinking !== undefined}
+              disabled={!props.model.reasoning}
+              onChange={(event) => setAdjustableThinking(event.target.checked)}
+            />
+            <span className="capability-toggle-indicator" aria-hidden="true" />
+            <span className="capability-toggle-copy">
+              <strong>{t("models.adjustableThinking")}</strong>
             </span>
           </label>
         </div>
@@ -930,17 +949,6 @@ function GenerationModelCapabilityEditor(props: {
                 {t("models.thinkingLevels")}
               </strong>
             </div>
-            <label className="capability-toggle capability-toggle-compact">
-              <input
-                type="checkbox"
-                checked={props.model.thinking !== undefined}
-                onChange={(event) => setAdjustableThinking(event.target.checked)}
-              />
-              <span className="capability-toggle-indicator" aria-hidden="true" />
-              <span className="capability-toggle-copy">
-                <strong>{t("models.adjustableThinking")}</strong>
-              </span>
-            </label>
           </div>
           {props.model.thinking === undefined ? (
             <p className="fixed-thinking-note">{t("models.fixedThinking")}</p>

@@ -1047,9 +1047,10 @@
   gap: 8px;
 }
 .capability-toggle-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
-  gap: 12px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
 }
 .capability-toggle {
   position: relative;
@@ -1062,6 +1063,12 @@
 }
 .capability-toggle:hover {
   color: var(--ui-text);
+}
+.capability-toggle.is-disabled {
+  cursor: not-allowed;
+}
+.capability-toggle.is-disabled .capability-toggle-copy strong {
+  color: var(--ui-text-disabled);
 }
 .capability-toggle > input {
   position: absolute;

@@ -444,6 +444,7 @@ export const settings = {
     reasoningDescription: "Allow the model to use deeper reasoning during a run.",
     capabilities: "Model capabilities",
     adjustableThinking: "Adjustable depth",
+    adjustableThinkingRequiresReasoning: "Enable reasoning first.",
     thinkingLevelsDescription: "Choose the available levels and set the default.",
     fixedThinking: "The model controls its own reasoning depth.",
     chooseAtLeastOne: "Choose at least one model before saving.",
