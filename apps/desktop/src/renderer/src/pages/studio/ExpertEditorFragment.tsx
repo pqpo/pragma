@@ -713,12 +713,17 @@ export function ExpertEditorFragment(props: {
                     <dd>{draft.scope}</dd>
                   </div>
                   <div>
-                    <dt>{t("capabilities", { ns: "studio" })}</dt>
+                    <dt>{t("model", { ns: "studio" })}</dt>
                     <dd>
                       {draft.model === null
                         ? t(isBuiltIn ? "systemDefault" : "notConfigured", { ns: "studio" })
-                        : `${draft.model.runtimeId} / ${draft.model.modelId}`}{" "}
-                      · {draft.contextStoreMounts.length} knowledge bases · {draft.skills} skills ·{" "}
+                        : `${draft.model.runtimeId} / ${draft.model.modelId}`}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>{t("capabilities", { ns: "studio" })}</dt>
+                    <dd>
+                      {draft.contextStoreMounts.length} knowledge bases · {draft.skills} skills ·{" "}
                       {draft.tools} tools · {draft.mcpServers} MCP server
                       {isBuiltIn
                         ? ` · ${t("requiredSystemCapabilitiesLocked", { ns: "studio" })}`
