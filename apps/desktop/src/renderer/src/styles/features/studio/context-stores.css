@@ -501,7 +501,8 @@
   white-space: nowrap;
 }
 
-.knowledge-file-rename {
+.knowledge-file-rename,
+.knowledge-file-rename:disabled {
   display: grid;
   width: 28px;
   height: 28px;
