@@ -189,3 +189,104 @@ it.each(["flow-human", "session-human", "flow-terminal"] as const)(
   },
   15_000,
 );
+
+it.each([
+  { frozen: false, failure: "native" },
+  { frozen: true, failure: "native" },
+  { frozen: false, failure: "cleanup" },
+  { frozen: true, failure: "cleanup" },
+] as const)(
+  "retains an active Session after $failure failure (frozen=$frozen) and retries shutdown",
+  async ({ frozen, failure }) => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-shutdown-active-session-"));
+    const executions = createSqliteExecutionStore({ pragmaHome: home });
+    const owners = new MissionExecutionOwner();
+    const lifecycle = createLocalHostMissionController({ missionsPath: join(home, "missions") });
+    let failing = true;
+    let started = () => undefined as void;
+    const starting = new Promise<void>((resolve) => (started = resolve));
+    let finish = () => undefined as void;
+    const pending = new Promise<{ outputText: string }>((resolve) => {
+      finish = () => resolve({ outputText: "cancelled" });
+    });
+    const nativeClose = vi.fn(async () => {
+      if (failing && failure === "native") throw new Error("Native stop unconfirmed");
+    });
+    const runtime = defineRuntimeTestDriver({
+      descriptor: { id: "active", kind: "test", displayName: "Active" },
+      createSession: () => ({}),
+      startTurn: async () => {
+        started();
+        return await pending;
+      },
+      mapEvent: () => ({ events: [] }),
+      cancelTurn: async () => finish(),
+      closeSession: nativeClose,
+    });
+    const runtimes = createStaticRuntimeResolver({
+      runtimes: [runtime],
+      defaultRuntimeId: "active",
+    });
+    const core = createPragma({ pragmaHome: home, runtimes, executionStore: executions });
+    const expert = await defineExpert({
+      id: "aaaaaaaaaaaaaaaa",
+      name: "Shutdown test",
+      description: "",
+      scope: "test",
+      tags: [],
+      workspace: home,
+      pragmaHome: home,
+      hooks: {
+        afterSessionDestroy: async () => {
+          if (failing && failure === "cleanup") throw new Error("Cleanup unconfirmed");
+        },
+      },
+    });
+    const session = await core.experts.createSession(expert);
+    const closeResources = vi.fn(async () => undefined);
+    const host = createLocalHostMissionApplication({
+      lifecycle,
+      closeResources,
+      client: { surface: "desktop", version: "test", instanceId: randomUUID() },
+      resolveExecutor: async () => undefined,
+      execution: {
+        pragmaHome: home,
+        executionOwner: owners,
+        runtimes,
+        executionStore: executions,
+        missions: createMissionStore({ missionsPath: join(home, "missions") }),
+        resourcePorts: {
+          createCompileService: () => ({}),
+        } as LocalHostMissionExecutionResourcePorts,
+      },
+    });
+    const missionId = randomUUID();
+    try {
+      const turn = await session.prompt("active turn");
+      void turn.result.catch(() => undefined);
+      await starting;
+      const guard = await lifecycle.ownerScope.acquire(missionId);
+      owners.setControlOwner(missionId, { kind: "session", session }, "live");
+      if (frozen) session.freezeForDeletion();
+      await expect(host.dispose()).rejects.toThrow("Mission application shutdown failed.");
+      expect(nativeClose).toHaveBeenCalledOnce();
+      expect(owners.session(missionId)).toBe(session);
+      expect(lifecycle.ownerScope.currentGuard(missionId)).toEqual(guard);
+      expect(closeResources).not.toHaveBeenCalled();
+      failing = false;
+      await host.dispose();
+      expect(nativeClose).toHaveBeenCalledTimes(failure === "native" ? 2 : 1);
+      expect(owners.session(missionId)).toBeUndefined();
+      expect(lifecycle.ownerScope.currentGuard(missionId)).toBeUndefined();
+      expect(closeResources).toHaveBeenCalledOnce();
+    } finally {
+      failing = false;
+      finish();
+      await host.dispose();
+      await session.close();
+      await executions.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+  15_000,
+);

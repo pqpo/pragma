@@ -30,7 +30,6 @@ import {
   ExecutionController,
   ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
-  ExpertSessionReleaseBlockedError,
   fingerprintExpertExecutionDefinition,
   hasUncertainSteerDelivery,
   isExpertTeam,
@@ -6330,23 +6329,12 @@ export function createLocalHostMissionExecutionService(
             waitForIdle: true,
             settlement: Promise.allSettled(pendingSettlement),
           })
-          .then(
-            async () => {
-              const releasedCurrentOwner = forgetReleasedOwner();
-              // The standalone controller remains live while Core teardown is
-              // pending, so concurrent sends receive the sealed Session error.
-              // Its Mission lease can be released after that exact owner ends.
-              if (releasedCurrentOwner) await releaseStandaloneOwner();
-            },
-            async (error: unknown) => {
-              // Validation can reject while a turn is still settling. Teardown
-              // has not started in that case, so this Session still owns its lease.
-              if (!(error instanceof ExpertSessionReleaseBlockedError)) {
-                if (forgetReleasedOwner()) await releaseStandaloneOwner();
-              }
-              throw error;
-            },
-          );
+          .then(async () => {
+            // Rejected validation or cleanup still owns resources. Only a
+            // successful release may forget the handle and relinquish custody.
+            const releasedCurrentOwner = forgetReleasedOwner();
+            if (releasedCurrentOwner) await releaseStandaloneOwner();
+          });
         const release = await settlementOutcomeWithin(releasing, 10_000);
         if (release.status === "rejected") {
           logger.warn(

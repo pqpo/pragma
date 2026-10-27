@@ -1634,7 +1634,14 @@ describe("default Node compilation reaches persisted Execution", { timeout: wait
             runtime: { ...record.runtime, displayName: "Fixture" },
             workspace: record.currentWorkspace,
           });
-          await updateRuntimeSessionRecord(coldPaths, record, {});
+          await updateRuntimeSessionRecord(coldPaths, record, {
+            runtimeSessionRef: record.runtimeSessionRef,
+            processState: record.processState,
+            retentionState: record.retentionState,
+            ...(record.contextWindowUsage === undefined
+              ? {}
+              : { contextWindowUsage: record.contextWindowUsage }),
+          });
         }
         f.canUse.mockReturnValue({ usable: false, reason: "Host readiness API unavailable" });
         f.canUse.mockClear();

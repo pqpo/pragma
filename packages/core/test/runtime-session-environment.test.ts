@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createRuntimeContextWindowUsage,
+  createRuntimeSessionRecord,
+  updateRuntimeSessionRecord,
   defineExpert,
   definePluginEntry,
   defineRuntimeDriver,
@@ -14,6 +16,11 @@ import {
   type ExpertAgentPluginManifest,
   type RuntimeNativeSessionContext,
 } from "../src/index.ts";
+import {
+  rebindRuntimeSessionExpertId,
+  restoreRuntimeSessionRecord,
+} from "../src/runtime/session-record.ts";
+import { fenceOwnerDeletion } from "../src/storage/owner-deletion.ts";
 import { ensureLoopbackNoProxy } from "../src/runtime/process-environment.ts";
 import { openRuntimeSession } from "../src/runtime/session-factory.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
@@ -226,6 +233,184 @@ describe("Runtime Session process environment", () => {
 });
 
 describe("Runtime Session context window", () => {
+  it.each(["stop first", "usage first", "concurrent"] as const)(
+    "merges stale Runtime patches without losing confirmed stop or usage: %s",
+    async (order) => {
+      const root = await temporaryRoot();
+      const paths = new PragmaPaths({ pragmaHome: root });
+      const created = await createRuntimeSessionRecord({
+        paths,
+        owner: { contextId: "race-context", ownerId: "race-owner", type: "expert-session" },
+        systemSessionId: "race-session",
+        agentId: "race-expert",
+        runtime: { id: "race-runtime", kind: "test", displayName: "Race test" },
+        workspace: root,
+      });
+      const running = await updateRuntimeSessionRecord(paths, created, { processState: "running" });
+      const runtimeSession = { type: "test", id: "native-id" };
+      await updateRuntimeSessionRecord(paths, running, { runtimeSessionRef: runtimeSession });
+      await rebindRuntimeSessionExpertId({
+        paths,
+        ownerId: running.owner.ownerId,
+        systemSessionId: running.systemSessionId,
+        fromExpertId: "race-expert",
+        toExpertId: "replacement-expert",
+      });
+      await restoreRuntimeSessionRecord({
+        paths,
+        owner: { contextId: "race-context", ownerId: "race-owner", type: "expert-session" },
+        systemSessionId: running.systemSessionId,
+        agentId: "replacement-expert",
+        runtime: { id: "race-runtime", kind: "test", displayName: "Race test" },
+        runtimeSession,
+        workspace: join(root, "moved"),
+      });
+      const usage = createRuntimeContextWindowUsage({
+        usedTokens: 12_000,
+        contextWindowTokens: 200_000,
+        measurement: "reported",
+      });
+      const stop = () => updateRuntimeSessionRecord(paths, running, { processState: "stopped" });
+      const persistUsage = () =>
+        updateRuntimeSessionRecord(paths, running, { contextWindowUsage: usage });
+      if (order === "concurrent") await Promise.all([stop(), persistUsage()]);
+      else if (order === "stop first") {
+        await stop();
+        await persistUsage();
+      } else {
+        await persistUsage();
+        await stop();
+      }
+      expect(await readRuntimeSessionRecord(paths, "race-owner", "race-session")).toMatchObject({
+        processState: "stopped",
+        contextWindowUsage: usage,
+        expertId: "replacement-expert",
+        runtimeSessionRef: runtimeSession,
+        currentWorkspace: join(root, "moved"),
+        workspaceHistory: [root, join(root, "moved")],
+      });
+      await expect(
+        updateRuntimeSessionRecord(
+          paths,
+          { ...running, owner: { ...running.owner, contextId: "wrong-context" } },
+          { processState: "failed" },
+        ),
+      ).rejects.toThrow("Owner mismatch");
+      const beforeDeletion = await readRuntimeSessionRecord(paths, "race-owner", "race-session");
+      await fenceOwnerDeletion(paths, [running.owner.ownerId]);
+      await updateRuntimeSessionRecord(paths, running, { processState: "running" });
+      expect(await readRuntimeSessionRecord(paths, "race-owner", "race-session")).toEqual(
+        beforeDeletion,
+      );
+    },
+  );
+
+  it("rejects Native restoration after owner deletion without opening the Native session", async () => {
+    const root = await temporaryRoot();
+    const paths = new PragmaPaths({ pragmaHome: root });
+    const captured: Readonly<NodeJS.ProcessEnv>[] = [];
+    const runtime = fakeRuntime(captured);
+    const agent = await expert(root, "deleted-owner-expert", "token");
+    const owner = {
+      type: "expert-session" as const,
+      ownerId: "deleted-owner",
+      contextId: "context",
+    };
+    const created = await createRuntimeSessionRecord({
+      paths,
+      owner,
+      systemSessionId: "deleted-session",
+      agentId: agent.id,
+      runtime: runtime.descriptor,
+      workspace: root,
+    });
+    const stopped = await updateRuntimeSessionRecord(paths, created, {
+      processState: "stopped",
+      runtimeSessionRef: { type: runtime.descriptor.kind, id: "native-session" },
+    });
+    await fenceOwnerDeletion(paths, [owner.ownerId]);
+    await expect(
+      openRuntimeSession(runtime, {
+        agent,
+        owner,
+        pragmaHome: root,
+        systemSessionId: created.systemSessionId,
+        runtimeSession: stopped.runtimeSessionRef!,
+      }),
+    ).rejects.toThrow("RUNTIME_OWNER_DELETED");
+    expect(captured).toEqual([]);
+    await expect(
+      rebindRuntimeSessionExpertId({
+        paths,
+        ownerId: owner.ownerId,
+        systemSessionId: created.systemSessionId,
+        fromExpertId: agent.id,
+        toExpertId: "successor-expert",
+      }),
+    ).rejects.toThrow("RUNTIME_OWNER_DELETED");
+    expect(await readRuntimeSessionRecord(paths, owner.ownerId, created.systemSessionId)).toEqual(
+      stopped,
+    );
+  });
+
+  it.each(["succeeds", "fails"] as const)(
+    "keeps Native stop confirmed when the cancelled turn later %s with a session ID",
+    async (outcome) => {
+      const root = await temporaryRoot();
+      let finish = () => undefined as void;
+      const gate = new Promise<void>((resolve) => (finish = resolve));
+      let started = () => undefined as void;
+      const starting = new Promise<void>((resolve) => (started = resolve));
+      const nativeClose = vi.fn(async () => undefined);
+      const runtime = defineRuntimeDriver<{ sessionId: string }, Record<string, never>>({
+        features: createRuntimeTestFeatures({ enabled: ["close", "contextWindow"] }),
+        descriptor: { id: "late-result", kind: "test", displayName: "Late result" },
+        createSession: () => ({}),
+        startTurn: async (_native, turn) => {
+          started();
+          await gate;
+          turn.stream.writeNative({ sessionId: "late-native-id" });
+          if (outcome === "fails") throw new Error("cancelled turn failed");
+          return { outputText: "done", runtimeSessionId: "late-native-id" };
+        },
+        mapEvent: (event) => ({ events: [], runtimeSessionId: event.sessionId }),
+        closeSession: nativeClose,
+        readContextWindow: () =>
+          createRuntimeContextWindowUsage({
+            usedTokens: 12_000,
+            contextWindowTokens: 200_000,
+            measurement: "reported",
+          }),
+      });
+      const agent = await expert(root, "late-result-expert", "token");
+      const session = await open(agent, runtime, "late-result-session");
+      try {
+        const turn = session.submit({ query: "stop during this turn", execution: {} });
+        void turn.result.catch(() => undefined);
+        await starting;
+        await session.stopForDeletion?.();
+        finish();
+        if (outcome === "fails") await expect(turn.result).rejects.toThrow("cancelled turn failed");
+        else await expect(turn.result).rejects.toThrow("Agent run was cancelled.");
+        expect(
+          await readRuntimeSessionRecord(
+            new PragmaPaths({ pragmaHome: root }),
+            "late-result-session",
+            "late-result-session",
+          ),
+        ).toMatchObject({
+          processState: "stopped",
+          runtimeSessionRef: { type: "test", id: "late-native-id" },
+          contextWindowUsage: { usedTokens: 12_000 },
+        });
+        expect(nativeClose).toHaveBeenCalledOnce();
+      } finally {
+        finish();
+        await session.close();
+      }
+    },
+  );
+
   it("keeps required capacity inspection but publishes only the settled Runtime baseline", async () => {
     const root = await temporaryRoot();
     const inspect = vi.fn(() =>

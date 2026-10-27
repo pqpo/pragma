@@ -22,6 +22,12 @@ import { createInMemoryExecutionStore, createRuntimeTestFeatures } from "../src/
 
 describe("ExpertSession ordinary closure", () => {
   it.each([
+    "terminal-only-frozen native failure",
+    "checkpoint-only-frozen native failure",
+    "terminal-only-frozen cleanup failure",
+    "checkpoint-only-frozen cleanup failure",
+    "terminal-only-frozen lease lost",
+    "checkpoint-only-frozen lease lost",
     "terminal-only-native failure",
     "checkpoint-only-native failure",
     "terminal-only-cleanup failure",
@@ -147,6 +153,7 @@ describe("ExpertSession ordinary closure", () => {
       expect((await fetch(registrations[1]!.url)).status).not.toBe(404);
       failing = true;
       if (outcome.includes("-only-")) {
+        if (outcome.includes("frozen")) session.freezeForDeletion();
         const release = () =>
           outcome.startsWith("terminal")
             ? session.releaseAfterTerminal()

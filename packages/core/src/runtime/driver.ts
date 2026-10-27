@@ -834,9 +834,10 @@ async function createManagedRuntimeSession<
           return;
         }
         currentRuntimeSessionId = runtimeSessionId;
+        // A cancelled turn can report its Native ID after stop confirmed.
+        // Identity observations do not imply that the Native process is alive.
         sessionRecord = await updateRuntimeSessionRecord(pragmaPaths, sessionRecord, {
           runtimeSessionRef: { type: descriptor.kind, id: runtimeSessionId },
-          processState: "running",
         });
         await checkpoint(trigger);
         await request.onSessionInfo?.(readSessionInfo());

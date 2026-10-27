@@ -1308,7 +1308,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async releaseAfterHumanCheckpointInternal(): Promise<void> {
-    if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
+    if (this.closePromise !== undefined) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
     const previouslyReleasing = this.resourcesReleasing;
@@ -1395,7 +1395,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async releaseAfterTerminalInternal(): Promise<void> {
-    if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
+    if (this.closePromise !== undefined) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
     const previouslyReleasing = this.resourcesReleasing;
@@ -1457,7 +1457,10 @@ class ExpertSessionImpl implements ExpertSession {
     this.startLeaseRenewal();
     // Confirm Native stop before destroying transports, hooks and registrations.
     // Release ends this handle's lifetime even though its durable Session stays open.
-    await this.runtimeSessions.closeForDeletion();
+    // A failed Mission deletion leaves this handle frozen. Join its in-flight
+    // stop (or retry a rejected stop) before releasing the retained resources.
+    if (this.deletionFrozen) await this.stopNativeWork();
+    else await this.runtimeSessions.closeForDeletion();
     await this.runtimeSessions.finishDeletion();
     // A queued close retains custody for its durable closure. Failed cleanup
     // also retains the heartbeat, sealed admission and Host owner for retry.

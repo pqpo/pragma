@@ -137,9 +137,16 @@ it("the Electron adapter retains real shared Host lease and resources until Nati
   }
 });
 
-// Keep a real Core Session registered in the Host while an ordinary close and
-// Electron shutdown overlap, as can happen when bindings change before quitting.
+// Keep a real Core Session registered while shutdown overlaps ordinary close,
+// resource release or an interrupted Mission deletion.
 it.each([
+  "deletion frozen",
+  "deletion stopped",
+  "deletion checkpoint",
+  "deletion pending native success",
+  "deletion pending native rejection",
+  "deletion native failure",
+  "deletion cleanup failure",
   "closing",
   "closed",
   "native stop failure",
@@ -173,6 +180,7 @@ it.each([
     const owners = new MissionExecutionOwner();
     let completeStop = () => undefined as void;
     const stopGate = new Promise<void>((resolve) => (completeStop = resolve));
+    const deletionFrozen = outcome.startsWith("deletion");
     const releaseOnly = outcome.includes("-only-");
     const pendingRelease = outcome.includes("pending");
     const pendingHook = outcome.includes("pending hook");
@@ -180,7 +188,7 @@ it.each([
     const lateRejection = outcome.endsWith("rejection");
     const deadlines: (() => void)[] = [];
     let restoreDeadline = () => undefined as void;
-    const leaseTiming = releaseOnly || outcome === "persistence and read failure";
+    const leaseTiming = releaseOnly || deletionFrozen || outcome === "persistence and read failure";
     const releaseBoundary = outcome.startsWith("terminal-release")
       ? "terminal"
       : outcome.startsWith("checkpoint-release")
@@ -304,7 +312,20 @@ it.each([
       const ordinaryClose = vi.spyOn(session, "close");
       const terminalRelease = vi.spyOn(session, "releaseAfterTerminal");
       const checkpointRelease = vi.spyOn(session, "releaseAfterHumanCheckpoint");
-      if (releaseOnly) {
+      const originalState = await session.getState();
+      if (deletionFrozen) {
+        if (outcome === "deletion checkpoint")
+          await sessions.transact(session.sessionId, ({ session: state, prompts }) => ({
+            result: undefined,
+            session: { ...state, lastStatus: "waiting" },
+            prompts,
+          }));
+        session.freezeForDeletion();
+        if (pendingRelease) void session.stopForDeletion().catch(() => undefined);
+        if (outcome === "deletion stopped") await session.stopForDeletion();
+        else if (nativeFailure && !pendingRelease)
+          await expect(session.stopForDeletion()).rejects.toThrow("Native stop failed");
+      } else if (releaseOnly) {
         if (outcome.startsWith("checkpoint")) {
           await sessions.transact(session.sessionId, ({ session: state, prompts }) => ({
             result: undefined,
@@ -429,6 +450,7 @@ it.each([
         expect(nativeClose).toHaveBeenCalledTimes(2 + (lateRejection && !pendingHook ? 1 : 0));
         expect(afterDestroy).toHaveBeenCalledTimes(lateRejection && pendingHook ? 2 : 1);
         expect(maximumActiveStops).toBe(1);
+        if (deletionFrozen) expect(await session.getState()).toEqual(originalState);
         await expect(
           access(new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId)),
         ).rejects.toMatchObject({ code: "ENOENT" });
@@ -485,7 +507,17 @@ it.each([
       expect(closeResources).toHaveBeenCalledOnce();
       expect(maximumActiveStops).toBe(1);
       expect(owners.controlOwner(missionId)).toBeUndefined();
-      expect((await session.getState()).status).toBe(releaseOnly ? "open" : "closed");
+      expect((await session.getState()).status).toBe(
+        releaseOnly || deletionFrozen ? "open" : "closed",
+      );
+      if (deletionFrozen) {
+        expect(ordinaryClose).not.toHaveBeenCalled();
+        expect(await session.getState()).toEqual(
+          outcome === "deletion checkpoint"
+            ? { ...originalState, lastStatus: "waiting" }
+            : originalState,
+        );
+      }
       if (releaseOnly) {
         expect(ordinaryClose).not.toHaveBeenCalled();
         expect(terminalRelease).toHaveBeenCalledTimes(outcome.startsWith("terminal") ? 2 : 0);
@@ -515,4 +547,5 @@ it.each([
       await rm(home, { recursive: true, force: true });
     }
   },
+  15_000,
 );

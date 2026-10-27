@@ -93,23 +93,22 @@ export async function restoreRuntimeSessionRecord(options: {
     options.owner.ownerId,
     options.systemSessionId,
   );
-  assertEqual(JSON.stringify(record.owner), JSON.stringify(options.owner), "Owner");
-  assertEqual(record.expertId, options.agentId, "Expert");
-  assertEqual(record.runtime.id, options.runtime.id, "Runtime descriptor");
-  assertEqual(record.runtime.kind, options.runtime.kind, "Runtime type");
-  assertEqual(record.runtimeSessionRef?.type, options.runtimeSession.type, "Session type");
-  assertEqual(record.runtimeSessionRef?.id, options.runtimeSession.id, "Session id");
-  const updated: RuntimeSessionRecord = {
-    ...record,
-    currentWorkspace: options.workspace,
-    workspaceHistory: record.workspaceHistory.includes(options.workspace)
-      ? record.workspaceHistory
-      : [...record.workspaceHistory, options.workspace],
-    processState: "running",
-    updatedAt: new Date().toISOString(),
-  };
-  await writeRuntimeSessionRecord(options.paths, updated);
-  return updated;
+  return await writeRuntimeSessionRecord(options.paths, record, (current) => {
+    assertOwner(current.owner, options.owner);
+    assertEqual(current.expertId, options.agentId, "Expert");
+    assertEqual(current.runtime.id, options.runtime.id, "Runtime descriptor");
+    assertEqual(current.runtime.kind, options.runtime.kind, "Runtime type");
+    assertEqual(current.runtimeSessionRef?.type, options.runtimeSession.type, "Session type");
+    assertEqual(current.runtimeSessionRef?.id, options.runtimeSession.id, "Session id");
+    return {
+      ...current,
+      currentWorkspace: options.workspace,
+      workspaceHistory: current.workspaceHistory.includes(options.workspace)
+        ? current.workspaceHistory
+        : [...current.workspaceHistory, options.workspace],
+      processState: "running",
+    };
+  });
 }
 
 export async function rebindRuntimeSessionExpertId(options: {
@@ -125,11 +124,9 @@ export async function rebindRuntimeSessionExpertId(options: {
     options.ownerId,
     options.systemSessionId,
   );
-  assertEqual(record.expertId, options.fromExpertId, "Expert");
-  await writeRuntimeSessionRecord(options.paths, {
-    ...record,
-    expertId: options.toExpertId,
-    updatedAt: new Date().toISOString(),
+  await writeRuntimeSessionRecord(options.paths, record, (current) => {
+    assertEqual(current.expertId, options.fromExpertId, "Expert");
+    return { ...current, expertId: options.toExpertId };
   });
 }
 
@@ -143,9 +140,12 @@ export async function updateRuntimeSessionRecord(
     >
   >,
 ): Promise<RuntimeSessionRecord> {
-  const updated = { ...record, ...patch, updatedAt: new Date().toISOString() };
-  await writeRuntimeSessionRecord(paths, updated);
-  return updated;
+  return await writeRuntimeSessionRecord(
+    paths,
+    record,
+    (current) => ({ ...current, ...patch }),
+    "skip",
+  );
 }
 
 export function readRuntimeSessionContextWindowUsage(
@@ -193,18 +193,39 @@ export async function readRuntimeSessionRecord(
 async function writeRuntimeSessionRecord(
   paths: PragmaPaths,
   record: RuntimeSessionRecord,
-): Promise<void> {
+  update: (current: RuntimeSessionRecord) => RuntimeSessionRecord,
+  onDeletedOwner: "skip" | "reject" = "reject",
+): Promise<RuntimeSessionRecord> {
   const database = await openRuntimeSessionCatalog(paths);
   try {
-    if (isOwnerDeletionFenced(paths, record.owner.ownerId)) return;
+    database.exec("BEGIN IMMEDIATE");
+    if (isOwnerDeletionFenced(paths, record.owner.ownerId)) {
+      if (onDeletedOwner === "reject") throw new Error("RUNTIME_OWNER_DELETED");
+      database.exec("COMMIT");
+      return record;
+    }
+    // Callers can hold an old snapshot while stop, usage and identity writes
+    // overlap. Merge only under the catalog write lock, against its latest row.
+    const row = database
+      .prepare(
+        `SELECT record_json AS recordJson FROM runtime_sessions
+         WHERE system_session_id = ? AND owner_id = ? AND owner_type = ?`,
+      )
+      .get(record.systemSessionId, record.owner.ownerId, record.owner.type) as
+      { readonly recordJson: string } | undefined;
+    if (row === undefined) throw new Error(`Runtime Session not found: ${record.systemSessionId}`);
+    const current = runtimeSessionRecordMigrationChain.upgrade(JSON.parse(row.recordJson)).value;
+    assertEqual(current.systemSessionId, record.systemSessionId, "Catalog system Session id");
+    assertOwner(current.owner, record.owner);
+    const updated = { ...update(current), updatedAt: new Date().toISOString() };
     const result = database
       .prepare(
         `UPDATE runtime_sessions SET record_json = ?, updated_at = ?
          WHERE system_session_id = ? AND owner_id = ? AND owner_type = ?`,
       )
       .run(
-        JSON.stringify(record),
-        record.updatedAt,
+        JSON.stringify(updated),
+        updated.updatedAt,
         record.systemSessionId,
         record.owner.ownerId,
         record.owner.type,
@@ -212,9 +233,18 @@ async function writeRuntimeSessionRecord(
     if (Number(result.changes) !== 1) {
       throw new Error(`Runtime Session not found: ${record.systemSessionId}`);
     }
+    database.exec("COMMIT");
+    return updated;
   } finally {
     database.close();
   }
+}
+
+function assertOwner(actual: RuntimeSessionOwner, expected: RuntimeSessionOwner): void {
+  assertEqual(actual.type, expected.type, "Owner");
+  assertEqual(actual.ownerId, expected.ownerId, "Owner");
+  assertEqual(actual.contextId, expected.contextId, "Owner");
+  assertEqual(actual.invocationId, expected.invocationId, "Owner");
 }
 
 function assertEqual(actual: unknown, expected: unknown, label: string): void {
