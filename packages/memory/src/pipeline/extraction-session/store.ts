@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -139,7 +139,7 @@ function hasConversationExecutionProof(
     const version = (db.prepare("PRAGMA user_version").get() as { user_version: number })
       .user_version;
     if (version < 2) return false;
-    if (version > 3) fail("memory_curator_session_version_unsupported");
+    if (version > 4) fail("memory_curator_session_version_unsupported");
     const row = db
       .prepare(
         `SELECT state_json FROM sessions WHERE module = 'conversation' AND json_extract(state_json, '$.input.jobs.${module}.jobId') = ? AND json_extract(state_json, '$.input.jobs.${module}.watermark') = ? ORDER BY json_extract(state_json, '$.retryGeneration') DESC, rowid DESC LIMIT 1`,
@@ -173,7 +173,7 @@ export function hasMemoryExtractionReceipt(
       db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table'").get() === undefined
     )
       return false;
-    if (version !== 1 && version !== 2 && version !== 3)
+    if (version !== 1 && version !== 2 && version !== 3 && version !== 4)
       fail("memory_curator_session_version_unsupported");
     const row = db
       .prepare("SELECT state_json FROM sessions WHERE key = ?")
@@ -207,15 +207,15 @@ export function createMemoryExtractionSessionStore(
           if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table'").get())
             fail("memory_curator_session_version_invalid");
           db.exec(
-            "BEGIN IMMEDIATE; CREATE TABLE sessions (key TEXT PRIMARY KEY, module TEXT NOT NULL, job_id TEXT NOT NULL, updated_at TEXT NOT NULL, state_json TEXT NOT NULL); CREATE TABLE missions (mission_id TEXT PRIMARY KEY, session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE); PRAGMA user_version = 3; COMMIT;",
+            "BEGIN IMMEDIATE; CREATE TABLE sessions (key TEXT PRIMARY KEY, module TEXT NOT NULL, job_id TEXT NOT NULL, updated_at TEXT NOT NULL, state_json TEXT NOT NULL); CREATE TABLE missions (mission_id TEXT PRIMARY KEY, session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE); PRAGMA user_version = 4; COMMIT;",
           );
         } else {
-          if (version > 3) fail("memory_curator_session_version_unsupported");
+          if (version > 4) fail("memory_curator_session_version_unsupported");
           await runAdjacentSqliteMigrations({
             database: db,
             databasePath: path,
             family: "memory-curator-sessions",
-            targetVersion: 3,
+            targetVersion: 4,
             migrations: CURATOR_SESSION_MIGRATIONS,
           });
         }
@@ -378,12 +378,9 @@ export function createMemoryExtractionSessionStore(
           if (state.calls >= budget.calls || state.deliveredTokens >= state.tokenLimit)
             fail("memory_curator_budget_exhausted");
           state.continuations++;
-          const digest = createHash("sha256")
-            .update(`${state.key}:continue:${state.retryGeneration}:${state.continuations}`)
-            .digest("hex");
           state.pendingContinuation = {
             ...input,
-            requestId: `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`,
+            requestId: randomUUID(),
             retryAt: new Date(now().getTime() + 5000).toISOString(),
           };
           save(db, state);
@@ -785,7 +782,7 @@ export function createMemoryExtractionSessionStore(
           fail("memory_curator_session_capacity");
         const timestamp = now().toISOString();
         const state = State.parse({
-          schemaVersion: "pragma.memory-curator-session/v3",
+          schemaVersion: "pragma.memory-curator-session/v4",
           toolContractVersion: 2,
           key,
           module: input.module,

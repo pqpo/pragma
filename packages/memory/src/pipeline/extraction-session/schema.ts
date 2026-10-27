@@ -238,7 +238,7 @@ export const ConversationExtractionOutputSchema = z
 export const Provenance = SemanticFactExtractorProvenanceSchema;
 export const State = z
   .object({
-    schemaVersion: z.literal("pragma.memory-curator-session/v3"),
+    schemaVersion: z.literal("pragma.memory-curator-session/v4"),
     toolContractVersion: z.union([z.literal(1), z.literal(2)]),
     key: z.string(),
     module: z.enum(["episodic", "semantic", "conversation"]),
@@ -272,7 +272,9 @@ export const State = z
     restartPending: z.boolean(),
     pendingContinuation: z
       .object({
-        requestId: z.string().min(1),
+        requestId: z
+          .string()
+          .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
         previousExecutionId: z.string().min(1),
         retryAt: z.string().datetime(),
         prompt: z.string().min(1).max(8000),

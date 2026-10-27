@@ -320,7 +320,7 @@ Semantic finish takes `{}`, Episodic finish takes `language` and `valueScore`. `
 uses type-independent reasons: `no-supported-memory`, `insufficient-evidence`, or `sensitive`.
 The adapter maps those to existing per-module authority outputs.
 
-The snapshot and receipts live in `state/memory/curator-sessions-v1.sqlite` (database version 3).
+The snapshot and receipts live in `state/memory/curator-sessions-v1.sqlite` (database version 4).
 Module recovery reads receipts before admitting a model. Retained outputs still go through existing
 Module transactions and applied-job markers. Transcript failure cannot invalidate a durable receipt
 or authorize another model call. Historical contract 1 keeps its original vocabulary and budget
@@ -466,3 +466,11 @@ Large Revision prompts are staged temporarily and copied into Mission-owned file
 atomic Mission creation. The durable manifest references the owned copy, which survives temporary
 storage maintenance and Runtime retries and is reclaimed by Mission deletion. Branches own independent
 copies. This opt-in snapshot behavior leaves ordinary external file attachment references unchanged.
+
+Curator Session storage upgrades 3 → 4 on first access with a retained SQLite backup and
+transactional rollback/replay. New continuation reservations use UUID v4 and persist the ID before
+delivery. The migration changes only the version nibble of pending IDs emitted by the historical
+v8 writer: Mission rejected these before operation persistence, so no accepted command identity
+exists to remap. It preserves the Mission link, previous execution, retry deadline, continuation
+count, budgets, staged work and completed receipts. Read-only admission proofs support historical
+versions without mutating storage; unknown or corrupt IDs fail closed.

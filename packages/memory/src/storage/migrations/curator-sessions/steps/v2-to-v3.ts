@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { CuratorSessionV2Schema } from "../schemas/v2.ts";
-import { State } from "../../../../pipeline/extraction-session/schema.ts";
+import { CuratorSessionV3Schema } from "../schemas/v3.ts";
 
 export function migrateCuratorSessionsV2ToV3(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE");
@@ -11,7 +11,7 @@ export function migrateCuratorSessionsV2ToV3(db: DatabaseSync): void {
     }[];
     for (const row of rows) {
       const old = CuratorSessionV2Schema.parse(JSON.parse(row.state_json));
-      const next = State.parse({
+      const next = CuratorSessionV3Schema.parse({
         ...old,
         schemaVersion: "pragma.memory-curator-session/v3",
         toolContractVersion: 1,

@@ -98,6 +98,8 @@ if (lane !== "desktop") {
     "test/conversation-retry.test.ts",
     "test/conversation-extraction-coordinator.test.ts",
     "test/extraction-contract-v2.test.ts",
+    "test/curator-continuation-migration.test.ts",
+    "test/curator-session-historical-schema.test.ts",
     "test/memory-plane.test.ts",
     "test/deferred-execution-capture.test.ts",
     "test/memory-activity.test.ts",

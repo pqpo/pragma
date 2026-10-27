@@ -1,3 +1,4 @@
+import { CuratorSessionV3Schema } from "./schemas/v3.ts";
 import { State } from "../../../pipeline/extraction-session/schema.ts";
 import { CuratorSessionV1Schema } from "./schemas/v1.ts";
 import { CuratorSessionV2Schema } from "./schemas/v2.ts";
@@ -7,6 +8,7 @@ export function parseCuratorSessionProof(json: string, version: number) {
   const value: unknown = JSON.parse(json);
   if (version === 1) return CuratorSessionV1Schema.parse(value);
   if (version === 2) return CuratorSessionV2Schema.parse(value);
-  if (version === 3) return State.parse(value);
+  if (version === 3) return CuratorSessionV3Schema.parse(value);
+  if (version === 4) return State.parse(value);
   throw new Error("memory_curator_session_version_unsupported");
 }

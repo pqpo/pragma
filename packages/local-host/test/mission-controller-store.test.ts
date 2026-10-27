@@ -1,8 +1,11 @@
+import { createMemoryExtractionSessionStore } from "@pragma/memory";
+import { PragmaPaths } from "@pragma/core";
 import { createTextToolResult } from "@pragma/core";
 import { getToolResultText } from "@pragma/core";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { dirname, join } from "node:path";
 import { createTestExecutionStore } from "./execution-test-host.ts";
 
 import {
@@ -38,6 +41,67 @@ afterEach(async () => {
 });
 
 describe("MissionControllerStore", () => {
+  it("persists recovered and fresh Curator continuation IDs and replays each command once", async () => {
+    const pragmaHome = await temporaryRoot();
+    const path = new PragmaPaths({ pragmaHome }).memoryExtractionSessions();
+    await mkdir(dirname(path), { recursive: true });
+    await copyFile(
+      new URL("../../memory/test/fixtures/curator-sessions/v3.sqlite", import.meta.url),
+      path,
+    );
+    const controller = await createStore();
+    const historical = new DatabaseSync(path, { readOnly: true });
+    let oldRequestId: string;
+    try {
+      const row = historical.prepare("SELECT state_json FROM sessions").get() as {
+        state_json: string;
+      };
+      oldRequestId = JSON.parse(row.state_json).pendingContinuation.requestId;
+    } finally {
+      historical.close();
+    }
+    await expect(controller.appendCommand(commandInput("send", oldRequestId))).rejects.toThrow(
+      "Invalid Mission operation persistence schema",
+    );
+    expect((await controller.readSnapshot({ missionId })).events).toEqual([]);
+    await expect(
+      controller.getOperation({ missionId, requestId: oldRequestId }),
+    ).resolves.toBeUndefined();
+    const sessions = createMemoryExtractionSessionStore({ pragmaHome });
+    const session = (await sessions.forMission("11111111-1111-4111-a111-111111111111"))!;
+    const guard = await controller.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000099",
+      leaseMs: 10_000,
+    });
+    const apply = vi.fn(async () => ({ result: { delivered: true } }));
+    const ids = new Set<string>();
+    for (let turn = 0; turn < 2; turn++) {
+      const pending =
+        turn === 0
+          ? (await session.executionState()).pendingContinuation!
+          : await session.reserveContinuation({
+              previousExecutionId: "22222222-2222-4222-a222-222222222222",
+              prompt: "Continue",
+            });
+      expect(ids.has(pending.requestId)).toBe(false);
+      ids.add(pending.requestId);
+      const command = commandInput("send", pending.requestId);
+      const first = await controller.appendCommand(command);
+      expect(await controller.appendCommand(command)).toEqual(first);
+      await controller.processNext({ missionId, guard, consumer: { apply } });
+      await expect(
+        controller.getOperation({ missionId, requestId: pending.requestId }),
+      ).resolves.toMatchObject({ state: "applied" });
+      // A crash after command application but before Session acknowledgement
+      // must replay the existing receipt without another model turn.
+      expect((await controller.appendCommand(command)).operation.state).toBe("applied");
+      await controller.processNext({ missionId, guard, consumer: { apply } });
+      await session.acknowledgeContinuation(pending.requestId);
+    }
+    expect(apply).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps the owner and Inbox healthy after idle release or its diagnostics fail", async () => {
     const controller = await createStore();
     const failure = new Error("native close failed");

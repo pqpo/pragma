@@ -15,3 +15,10 @@ triggers are added only to the test copy to verify transaction rollback and repe
 conversation with a saved Semantic receipt, a staged Episodic goal, an original Mission
 link and an unacknowledged continuation reservation. It was generated before the v3
 implementation; no current state was relabelled.
+
+`v3.sqlite` was captured from the unmodified source Session writer at commit
+`24eb76daac417af5db5cf0ef724ccccdca5019ac`, before the v4 changes. It uses synthetic
+`test/support/extraction.ts` input with tool contract 2, a completed Semantic skip receipt,
+a staged Episodic goal, a Mission link and a pending UUID v8 continuation. Generation used
+`create`, `bindMission`, `setProvenance`, `read_evidence`, `skip_extraction`,
+`submit_episode_part` and `reserveContinuation`; no version labels were rewritten.
