@@ -24,7 +24,7 @@ import {
   runtimeSessionCatalogPath,
   withRuntimeSessionCatalogDeletionLock,
 } from "../src/storage/migrations/runtime-session-catalog/index.ts";
-import { RUNTIME_SESSION_CATALOG_V1_SCHEMA_SQL } from "../src/storage/migrations/runtime-session-catalog/schemas/v1.ts";
+import { RUNTIME_SESSION_CATALOG_V2_SCHEMA_SQL } from "../src/storage/migrations/runtime-session-catalog/schemas/v2.ts";
 
 const temporaryRoots: string[] = [];
 
@@ -245,8 +245,8 @@ describe("versioned state migrations", () => {
     const catalog = runtimeSessionCatalogPath(paths);
     await mkdir(dirname(catalog), { recursive: true });
     const database = new DatabaseSync(catalog);
-    database.exec(RUNTIME_SESSION_CATALOG_V1_SCHEMA_SQL);
-    database.prepare("INSERT INTO metadata(key, value) VALUES ('schema_version', '1')").run();
+    database.exec(RUNTIME_SESSION_CATALOG_V2_SCHEMA_SQL);
+    database.prepare("INSERT INTO metadata(key, value) VALUES ('schema_version', '2')").run();
     database.prepare("INSERT INTO metadata(key, value) VALUES ('legacy_imported', 'true')").run();
     database.close();
 
@@ -256,7 +256,7 @@ describe("versioned state migrations", () => {
     const reopened = new DatabaseSync(catalog, { readOnly: true });
     expect(
       reopened.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get(),
-    ).toEqual({ value: "1" });
+    ).toEqual({ value: "2" });
     reopened.close();
   });
 
@@ -391,7 +391,7 @@ describe("versioned state migrations", () => {
     const file = paths.ownedSystemSessionManifest("owner", "runtime-session");
     await mkdir(dirname(file), { recursive: true });
     await writeJson(file, {
-      schemaVersion: "pragma.runtime-session/v4",
+      schemaVersion: "pragma.runtime-session/v5",
       owner: { type: "expert-session", ownerId: "owner", contextId: "context" },
       systemSessionId: "runtime-session",
     });
@@ -430,7 +430,7 @@ describe("versioned state migrations", () => {
 
     const upgraded = await readRuntimeSessionRecord(paths, "owner", "runtime-session");
     expect(upgraded).toEqual(
-      expect.objectContaining({ schemaVersion: "pragma.runtime-session/v3" }),
+      expect.objectContaining({ schemaVersion: "pragma.runtime-session/v4", processOwner: null }),
     );
     expect(upgraded).not.toHaveProperty("contextWindowUsage");
     await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });

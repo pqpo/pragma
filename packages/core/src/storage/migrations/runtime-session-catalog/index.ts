@@ -15,9 +15,10 @@ import {
   runtimeSessionRecordMigrationChain,
   type RuntimeSessionRecord,
 } from "../runtime-session/index.ts";
-import { RUNTIME_SESSION_CATALOG_V1_SCHEMA_SQL } from "./schemas/v1.ts";
+import { RUNTIME_SESSION_CATALOG_V2_SCHEMA_SQL } from "./schemas/v2.ts";
+import { migrateRuntimeSessionCatalogV1ToV2 } from "./steps/v1-to-v2.ts";
 
-const CATALOG_SCHEMA_VERSION = 1;
+const CATALOG_SCHEMA_VERSION = 2;
 const initializedCatalogs = new Set<string>();
 
 const LegacyMigrationJournalSchema = z
@@ -163,12 +164,54 @@ async function initializeCatalog(paths: PragmaPaths, path: string): Promise<void
     throw error;
   });
   if (metadata !== undefined && metadata.size > 0) {
+    const inspect = new DatabaseSync(path, { readOnly: true });
+    let received: string | undefined;
+    try {
+      received = (
+        inspect.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get() as
+          { value: string } | undefined
+      )?.value;
+    } finally {
+      inspect.close();
+    }
+    if (received !== "1" && received !== String(CATALOG_SCHEMA_VERSION))
+      throw unsupported(
+        path,
+        new Error(`unsupported runtime-session catalog version: ${received}`),
+      );
+    const database = openWritableCatalog(path);
+    try {
+      const version = database
+        .prepare("SELECT value FROM metadata WHERE key = 'schema_version'")
+        .get() as { value: string } | undefined;
+      if (version?.value === "1") {
+        const archive = join(
+          paths.archivesRoot(),
+          "storage-migrations",
+          "runtime-session-catalog-v2",
+          "catalog.sqlite",
+        );
+        await mkdir(dirname(archive), { recursive: true, mode: 0o700 });
+        if (!(await pathExists(archive))) {
+          const temporary = `${archive}.${randomUUID()}.tmp`;
+          try {
+            database.prepare("VACUUM main INTO ?").run(temporary);
+            await rename(temporary, archive);
+          } finally {
+            await rm(temporary, { force: true });
+          }
+        }
+        migrateRuntimeSessionCatalogV1ToV2(database);
+      }
+    } finally {
+      database.close();
+    }
     await assertCatalogVersion(path);
   } else {
     const database = new DatabaseSync(path);
     try {
       database.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE;");
-      database.exec(RUNTIME_SESSION_CATALOG_V1_SCHEMA_SQL);
+      database.exec(RUNTIME_SESSION_CATALOG_V2_SCHEMA_SQL);
       database
         .prepare("INSERT INTO metadata(key, value) VALUES ('schema_version', ?)")
         .run(String(CATALOG_SCHEMA_VERSION));
@@ -425,7 +468,13 @@ function commitPreparedDeletion(database: DatabaseSync, deletionId: string): num
   try {
     const remove = database.prepare("DELETE FROM runtime_sessions WHERE owner_id = ?");
     let deleted = 0;
-    for (const ownerId of ownerIds) deleted += Number(remove.run(ownerId).changes);
+    const removeBackups = database.prepare(
+      "DELETE FROM runtime_session_record_backups WHERE owner_id = ?",
+    );
+    for (const ownerId of ownerIds) {
+      deleted += Number(remove.run(ownerId).changes);
+      removeBackups.run(ownerId);
+    }
     database
       .prepare("UPDATE runtime_session_deletions SET status = 'committed' WHERE deletion_id = ?")
       .run(deletionId);
@@ -631,4 +680,26 @@ export async function recoverRuntimeSessionDeletion(
   } finally {
     database.close();
   }
+}
+
+/** Upgrade only the selected row, preserving its original writer bytes in the same WAL transaction. */
+export function upgradeRuntimeSessionCatalogRecord(
+  database: DatabaseSync,
+  recordJson: string,
+): RuntimeSessionRecord {
+  const result = runtimeSessionRecordMigrationChain.upgrade(JSON.parse(recordJson));
+  if (result.migrated) {
+    const record = result.value;
+    database
+      .prepare(
+        `INSERT OR IGNORE INTO runtime_session_record_backups(system_session_id, owner_id, from_version, record_json) VALUES (?, ?, ?, ?)`,
+      )
+      .run(record.systemSessionId, record.owner.ownerId, result.fromVersion, recordJson);
+    database
+      .prepare(
+        "UPDATE runtime_sessions SET record_json = ? WHERE system_session_id = ? AND owner_id = ? AND record_json = ?",
+      )
+      .run(JSON.stringify(record), record.systemSessionId, record.owner.ownerId, recordJson);
+  }
+  return result.value;
 }

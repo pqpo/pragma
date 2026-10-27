@@ -1,3 +1,4 @@
+import { ExpertSessionLeaseSchema } from "./expert-session-lease.ts";
 import { ExpertPromptRejectedError } from "./expert-prompt-rejected-error.ts";
 import { isOwnerDeletionFenced } from "../storage/owner-deletion.ts";
 import { randomUUID } from "node:crypto";
@@ -15,7 +16,6 @@ import {
   type Invocation,
   type PromptRequest,
 } from "@pragma/shared";
-import { z } from "zod";
 
 import {
   readStorageFile as readFile,
@@ -600,12 +600,6 @@ export function createFileExpertSessionStore(options: {
     },
   };
 }
-
-const ExpertSessionLeaseSchema = z.object({
-  claimId: z.string().min(1),
-  processId: z.number().int().positive().optional(),
-  expiresAt: z.string().datetime(),
-});
 
 function isProcessAlive(processId: number): boolean {
   if (processId === process.pid) return true;

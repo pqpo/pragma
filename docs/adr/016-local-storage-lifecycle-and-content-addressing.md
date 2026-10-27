@@ -42,10 +42,21 @@ session isolation rules.
 Terminal Executions materialize their bounded Mission-visible projection before Canonical Event data moves to bounded
 diagnostic archives. Mission deletion is an owner-graph transaction: it writes a stable journal and moves uniquely
 owned ExpertSession, Execution, Runtime Session, ownership claim and archive data to managed trash.
-Desktop persists a versioned, owner-validated deletion intent inside the Mission owner directory before waiting for
-Runtime and observer quiescence. If the process exits before the owner-graph move journal is created, the Mission is
-reported as `deletion_pending` and the same explicit delete action resumes the bounded cleanup without losing the
-operator's intent.
+Desktop persists a versioned, owner-validated deletion intent inside the Mission owner directory, seals new
+admission, initiates Native stop, and commits the owner-graph move without waiting for Runtime stop acknowledgement.
+A stale Runtime state, failed close or unresponsive child must not prevent an explicitly requested deletion.
+Owner fences reject late writes. Native teardown, observers and Unix orphan processes identified by private Runtime
+owner directories are cleaned up after commit with bounded retries; Unix orphan cleanup escalates from SIGTERM to
+SIGKILL after a short grace period or on retry. The deletion payload retains the owner IDs so orphan cleanup also resumes after Host restart.
+If the process exits before the owner-graph move journal is created, the Mission is reported as `deletion_pending`
+and the same explicit delete action resumes the transaction without losing the operator's intent.
+
+Background deletion retries share one durable budget of ten retries per Mission, across all cleanup steps and
+storage-transaction recovery. Each cleanup step gets its initial attempt; later attempts reserve the shared budget
+under the deletion-record lock before invoking side effects. Host restart does not replenish the budget. Exhausted
+records retain their failure evidence and report degraded status, while the deleted conversation remains removed.
+Mission deletion v2 persists step run counts and the shared retry count; its adjacent v1 migration reconstructs
+already observed retries from the original writer's failure/success counters, with a backup and replayable journal.
 
 Completed trash entries are retained until the first configured age, total-size or entry-count bound is reached.
 Incomplete or invalid deletion journals are retained for recovery. Desktop performs targeted maintenance after the

@@ -85,6 +85,9 @@ Interpreter `compilerVersion`、manifest、lock、IPC、Bridge 和 Runtime capab
   宿主 settings、全局 customization 与 native Session 存储，必须在架构文档和诊断中明确披露；恢复只能按
   已拥有的 conversation ID 定向读取，不得扫描宿主 Session 树。PreToolUse relay 凭据只能写入 Session
   私有 hook 文件，不得暴露给 agy 进程环境及其子 shell。
+- 进程内 Runtime 必须记录宿主 PID 与启动身份，定向读取时只凭原宿主已退出的证据修复残留状态。
+  不凭记录年龄、任务完成、租约过期或内存中无实例推断停止；历史缺失身份的数据通过相邻迁移保留不确定性，
+  可使用同 owner 的历史租约 PID 在租约锁内核实退出，不得伪造宿主信息或覆盖后继宿主状态。
 - Runtime 进程停止不等于持久数据删除。Mission 删除必须按 owner 图级联移动 ExpertSession、
   Execution 与 Runtime Session 文件到带 journal 的回收站，并用同一删除事务的 catalog pending
   记录移除 SQLite ownership row；文件移动与 catalog 提交必须受跨进程锁保护且可在崩溃后重放。

@@ -72,6 +72,8 @@ if (lane !== "desktop") {
     "test/expert-orchestrator-pagination.test.ts",
     "test/context-tools.test.ts",
     "test/file-lock.test.ts",
+    "test/runtime-host-recovery.test.ts",
+    "test/state-migration.test.ts",
     "test/runtime-stream-controller.test.ts",
     "test/bundle-installation-state-migration.test.ts",
   ]);

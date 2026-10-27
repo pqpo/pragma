@@ -92,6 +92,7 @@ import {
   type RuntimeSessionPersistenceSpec,
   type RuntimeSessionWatcher,
 } from "./session-persistence.ts";
+import { currentRuntimeHostProcess } from "./host-process.ts";
 import {
   createRuntimeSessionRecord,
   restoreRuntimeSessionRecord,
@@ -159,6 +160,8 @@ export class RuntimeTurnNotDispatchedError extends Error {
 }
 
 export interface DefineRuntimeDriverOptions {
+  /** Native sessions hosted inside this Node process, with no independent service. */
+  readonly sessionProcess?: "host" | "external" | undefined;
   readonly outputRetryLimit?: number | undefined;
   readonly persistenceProvider?: RuntimeSessionPersistenceProvider | undefined;
   readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;
@@ -490,6 +493,7 @@ export function defineRuntimeDriver<
         request,
         createPersistenceProvider(),
         options.createProcessEnvironment,
+        options.sessionProcess,
       ),
   );
   return runtime;
@@ -505,6 +509,7 @@ async function createManagedRuntimeSession<
   request: RuntimeDriverSessionRequest,
   persistenceProvider: RuntimeSessionPersistenceProvider,
   createProcessEnvironment: (() => NodeJS.ProcessEnv) | undefined,
+  sessionProcess: "host" | "external" | undefined,
 ): Promise<ManagedRuntimeSession<TNativeEvent, TNativeSession>> {
   const executionBindings = new RuntimeExecutionBindings({
     humanInteractionHandler: request.humanInteractionHandler,
@@ -563,6 +568,7 @@ async function createManagedRuntimeSession<
 
   phaseStartedAt = performance.now();
   let sessionRecord: RuntimeSessionRecord;
+  const processOwner = sessionProcess === "host" ? await currentRuntimeHostProcess() : null;
   if (request.runtimeSession === undefined) {
     sessionRecord = await createRuntimeSessionRecord({
       paths: pragmaPaths,
@@ -571,6 +577,7 @@ async function createManagedRuntimeSession<
       agentId: agent.id,
       runtime: descriptor,
       workspace: agent.workspace,
+      processOwner,
     });
   } else {
     sessionRecord = await restoreRuntimeSessionRecord({
@@ -581,6 +588,7 @@ async function createManagedRuntimeSession<
       runtime: descriptor,
       runtimeSession: request.runtimeSession,
       workspace: agent.workspace,
+      processOwner,
     });
   }
   logRuntimePhase(logger, "runtime.session_record", phaseStartedAt, sessionStartedAt);
