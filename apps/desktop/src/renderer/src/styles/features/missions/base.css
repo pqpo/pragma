@@ -1362,7 +1362,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
+  width: 24px;
   height: 32px;
   margin-block: -8px;
   padding: 0;
@@ -1380,10 +1380,6 @@
 
 .mission-row-preview-edit.is-danger {
   color: var(--ui-danger);
-}
-
-.mission-row-preview-edit.is-danger:hover {
-  background: var(--ui-danger-subtle);
 }
 
 .mission-row-preview-heading > strong {
