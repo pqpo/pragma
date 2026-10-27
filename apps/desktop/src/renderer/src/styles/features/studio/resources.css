@@ -501,6 +501,10 @@
   border-bottom: 1px solid var(--border);
 }
 
+.pragma-resource-detail-header.is-flow {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .expert-avatar {
   display: grid;
   width: 87px;
@@ -2534,6 +2538,10 @@ body > .ui-select-menu[data-ui-overlay-owner="expert-capability-picker"] {
   .expert-detail .expert-detail-header,
   .pragma-resource-detail .expert-detail-header {
     grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pragma-resource-detail .pragma-resource-detail-header.is-flow {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .expert-detail .detail-actions,

@@ -1,4 +1,4 @@
-import { ArrowLeft, Clock, PencilSimple, Play, Trash } from "@phosphor-icons/react";
+import { ArrowLeft, PencilSimple, Play, Trash } from "@phosphor-icons/react";
 import { PragmaScheduleAutomationConfigSchema } from "@pragma/interpreter/ast";
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -82,9 +82,6 @@ export function AutomationDetailFragment(props: {
         }
       >
         <header className="automation-detail-header">
-          <span className="automation-detail-icon" aria-hidden="true">
-            <Clock size={38} />
-          </span>
           <div className="automation-detail-title">
             <div>
               <h1 id="automation-detail-name">{automation.resource.metadata.name}</h1>

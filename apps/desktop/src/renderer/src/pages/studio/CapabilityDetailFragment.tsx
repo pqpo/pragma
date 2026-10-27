@@ -2,16 +2,13 @@ import {
   ArrowLeft,
   ArrowsClockwise,
   Archive,
-  Code,
   DownloadSimple,
   FloppyDisk,
   SpinnerGap,
   GitBranch,
   GearSix,
-  Globe,
   PaperPlaneTilt,
   Play,
-  Plug,
   Trash,
   X,
 } from "@phosphor-icons/react";
@@ -223,7 +220,6 @@ export function CapabilityDetailFragment(props: {
   };
 
   const selectedTool = tools.find((tool) => tool.name === selectedToolName);
-  const Icon = capabilityIcon(capability);
 
   const overview = (
     <div className="capability-detail-overview">
@@ -232,11 +228,6 @@ export function CapabilityDetailFragment(props: {
           definition.kind === "skill" ? "studio-file-detail-header" : "capability-detail-header"
         }
       >
-        {definition.kind === "skill" ? null : (
-          <span className="expert-avatar" aria-hidden="true">
-            <Icon size={40} />
-          </span>
-        )}
         <div
           className={
             definition.kind === "skill" ? "studio-file-detail-title" : "capability-detail-title"
@@ -682,18 +673,5 @@ function capabilityTypeLabel(capability: Capability): string {
       return "HTTP service";
     case "code_service":
       return "Code service";
-  }
-}
-
-function capabilityIcon(capability: Capability) {
-  switch (capability.definition.kind) {
-    case "skill":
-      return Archive;
-    case "mcp_server":
-      return Plug;
-    case "http_service":
-      return Globe;
-    case "code_service":
-      return Code;
   }
 }

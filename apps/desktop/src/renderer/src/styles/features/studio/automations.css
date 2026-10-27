@@ -440,20 +440,10 @@
 
 .automation-detail-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: 18px;
   padding: 4px 0 24px;
-}
-
-.automation-detail-icon {
-  display: grid;
-  width: 64px;
-  height: 64px;
-  place-items: center;
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-selection);
-  color: var(--ui-text-secondary);
 }
 
 .automation-detail-title {
@@ -667,7 +657,7 @@
 
 @media (max-width: 1000px) {
   .automation-detail-header {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .automation-detail .detail-actions {

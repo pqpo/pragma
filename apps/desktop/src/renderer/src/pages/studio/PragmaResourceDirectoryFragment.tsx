@@ -356,7 +356,6 @@ export function PragmaResourceDetailFragment(props: {
   const [memoryStoreHasContent, setMemoryStoreHasContent] = useState(false);
   const isTeam = props.resource.kind === "ExpertTeam";
   const headingId = isTeam ? "team-detail-name" : "flow-detail-name";
-  const Icon = isTeam ? UsersThree : GitBranch;
   const teamMemorySource = useMemo<ContextStoreBrowserSource | undefined>(() => {
     if (!isTeam) return undefined;
     const target = { teamRef: canonicalPragmaResourceRef(props.resource) as `team:${string}` };
@@ -438,18 +437,16 @@ export function PragmaResourceDetailFragment(props: {
         </button>
       }
     >
-      <header className="expert-detail-header pragma-resource-detail-header">
+      <header
+        className={`expert-detail-header pragma-resource-detail-header${isTeam ? "" : " is-flow"}`}
+      >
         {isTeam ? (
           <ProfiledExpertAvatar
             avatarId={expertTeamCoordinatorAvatarId(props.resource, props.project.resources)}
             team
             size="lg"
           />
-        ) : (
-          <span className="expert-avatar" aria-hidden="true">
-            <Icon size={42} />
-          </span>
-        )}
+        ) : null}
         <div className="expert-detail-title">
           <div>
             <h1 id={headingId}>{props.resource.metadata.name}</h1>
