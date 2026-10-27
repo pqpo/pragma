@@ -292,7 +292,7 @@ export async function createDesktopMemoryPlane(options: {
   let stopped = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running: Promise<void> | undefined;
-  let lastError: { readonly code: string; readonly occurredAt: string } | undefined;
+  let pipelineError: { readonly code: string; readonly occurredAt: string } | undefined;
   let reportedExtractionIssues = new Set<string>();
   let maintenanceRunning: Promise<void> | undefined;
   let stopping: Promise<void> | undefined;
@@ -375,8 +375,8 @@ export async function createDesktopMemoryPlane(options: {
   };
 
   const markDegraded = (code: string, error?: unknown): void => {
-    if (lastError?.code === code) return;
-    lastError = { code, occurredAt: new Date().toISOString() };
+    if (pipelineError?.code === code) return;
+    pipelineError = { code, occurredAt: new Date().toISOString() };
     options.logger.error(
       "desktop.memory_pipeline_degraded",
       "The Memory pipeline is degraded and will keep retrying.",
@@ -458,17 +458,8 @@ export async function createDesktopMemoryPlane(options: {
         markDegraded("canonical_event_delivery_failed");
       } else if ((adapted.deferred ?? 0) > 0) {
         markDegraded("memory_execution_origin_unavailable");
-      } else if (extractionIssues[0] !== undefined) {
-        const extractionIssue = extractionIssues[0];
-        const code = extractionIssue.work.lastErrorCode ?? "memory_extraction_needs_attention";
-        markDegraded(
-          code,
-          new Error(
-            `${extractionIssue.moduleId} has ${extractionIssue.work.needsAttention} extraction job(s) that need attention.`,
-          ),
-        );
       } else {
-        lastError = undefined;
+        pipelineError = undefined;
       }
       if (recovery.recovered > 0 || adapted.published > 0) {
         options.logger.info("desktop.memory_pipeline_progress", "Memory pipeline advanced.", {
@@ -972,7 +963,17 @@ export async function createDesktopMemoryPlane(options: {
       const extractionNeedsAttention =
         conversationAttention.total + knowledgeAttention.total + skillAttention.total;
       const hostDelivery = options.hostDeliveryDiagnostics?.() ?? [];
-      const currentError = lastError ?? attentionError ?? retrievalError;
+      // Extraction health follows durable task state, including transitions made
+      // while a background iteration is still awaiting extraction completion.
+      const extractionIssue = modules.find((module) => (module.work?.needsAttention ?? 0) > 0);
+      const extractionError =
+        extractionIssue === undefined
+          ? undefined
+          : {
+              code: extractionIssue.lastErrorCode ?? "memory_extraction_needs_attention",
+              occurredAt: extractionIssue.updatedAt,
+            };
+      const currentError = pipelineError ?? extractionError ?? attentionError ?? retrievalError;
       return {
         hostDelivery,
         extractionNeedsAttention,

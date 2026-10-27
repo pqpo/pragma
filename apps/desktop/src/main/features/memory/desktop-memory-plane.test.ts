@@ -372,6 +372,7 @@ describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
 
   it("reports extraction jobs that need attention as a degraded user-visible status", async () => {
     const pragmaHome = await temporaryRoot("pragma-desktop-memory-extraction-failed-");
+    let onTick = async (): Promise<void> => {};
     const logs: PragmaLogRecord[] = [];
     const loggerProvider = createLoggerProvider({
       handler: { write: (record) => logs.push(record) },
@@ -381,6 +382,7 @@ describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
       pragmaHome,
       logger: createPragmaLogger(loggerProvider, { component: "desktop.memory-test" }),
       pollIntervalMs: 10,
+      onTick: async () => await onTick(),
     });
     await plane.policies.updateGlobal({
       expectedRevision: 0,
@@ -465,47 +467,133 @@ describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
       },
       { timeout: backgroundSettlementTimeoutMs },
     );
-    expect(logs).toContainEqual(
-      expect.objectContaining({
-        level: "error",
-        event: "desktop.memory_pipeline_degraded",
-        attributes: expect.objectContaining({ code: "memory_curator_failed" }),
-      }),
-    );
-    expect(logs).toContainEqual(
-      expect.objectContaining({
-        level: "error",
-        event: "desktop.memory_extraction_needs_attention",
-        attributes: expect.objectContaining({
-          moduleId: "pragma.memory.episodic",
-          code: "memory_curator_failed",
-          needsAttention: 1,
+    await vi.waitFor(() => {
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          event: "desktop.memory_extraction_needs_attention",
+          attributes: expect.objectContaining({
+            moduleId: "pragma.memory.episodic",
+            code: "memory_curator_failed",
+            needsAttention: 1,
+          }),
         }),
-      }),
-    );
-
-    await plane.manageMemoryJob({
-      module: "episodic",
-      action: "retry",
-      id: job.id,
-      expectedRevision: job.revision + 1,
+      );
     });
-    await vi.waitFor(
-      async () => {
-        await expect(plane.getStatus()).resolves.toMatchObject({
-          state: "running",
-          modules: expect.arrayContaining([
-            expect.objectContaining({
-              moduleId: "pragma.memory.episodic",
-              status: "healthy",
-              work: expect.objectContaining({ pending: 1, needsAttention: 0 }),
-            }),
-          ]),
-        });
-      },
-      { timeout: backgroundSettlementTimeoutMs },
-    );
-    await plane.stop();
+
+    // Keep the next background iteration open: health must follow the store,
+    // without waiting for the retry or the iteration to finish.
+    let releaseTick!: () => void;
+    let enteredTick!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseTick = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      enteredTick = resolve;
+    });
+    onTick = async () => {
+      enteredTick();
+      await blocked;
+    };
+    plane.wakePipeline();
+    await entered;
+    try {
+      await plane.manageMemoryJob({
+        module: "episodic",
+        action: "retry",
+        id: job.id,
+        expectedRevision: job.revision + 1,
+      });
+      const pending = await plane.getStatus();
+      expect(pending.state).toBe("running");
+      expect(pending.lastError).toBeUndefined();
+      expect(pending.modules).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            moduleId: "pragma.memory.episodic",
+            status: "healthy",
+            work: expect.objectContaining({ pending: 1, needsAttention: 0 }),
+          }),
+        ]),
+      );
+      const retried = await plane.episodicStore.claimDueJob(due);
+      expect(retried).toBeDefined();
+      const running = await plane.getStatus();
+      expect(running.state).toBe("running");
+      expect(running.lastError).toBeUndefined();
+      expect(running.modules).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            moduleId: "pragma.memory.episodic",
+            work: expect.objectContaining({ running: 1, needsAttention: 0 }),
+          }),
+        ]),
+      );
+      await plane.episodicStore.fail({
+        job: retried!,
+        diagnostic: {
+          schemaVersion: "pragma.memory-extraction-failure/v1",
+          code: "memory_curator_timeout",
+          message: "Retry failed.",
+          phase: "curator_run",
+          failedAt: due.toISOString(),
+        },
+        now: due,
+        retry: "configuration",
+      });
+      await expect(plane.getStatus()).resolves.toMatchObject({
+        state: "degraded",
+        lastError: { code: "memory_curator_timeout" },
+      });
+    } finally {
+      releaseTick();
+      await plane.stop();
+    }
+  });
+
+  it("retains an independent pipeline failure until a successful background iteration", async () => {
+    let releaseTick!: () => void;
+    let enteredTick!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseTick = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      enteredTick = resolve;
+    });
+    const onTick = vi.fn(async () => {
+      enteredTick();
+      await blocked;
+    });
+    onTick.mockRejectedValueOnce(new Error("Pipeline unavailable"));
+    const plane = await createDesktopMemoryPlane({
+      pragmaHome: await temporaryRoot("pragma-memory-pipeline-failure-"),
+      logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
+      pollIntervalMs: 10,
+      onTick,
+    });
+    try {
+      plane.start();
+      await vi.waitFor(async () => {
+        expect((await plane.getStatus()).lastError?.code).toBe("memory_pipeline_iteration_failed");
+      });
+      plane.wakePipeline();
+      await entered;
+      const status = await plane.getStatus();
+      expect(status.modules.every((module) => module.status === "healthy")).toBe(true);
+      expect(status).toMatchObject({
+        state: "degraded",
+        lastError: { code: "memory_pipeline_iteration_failed" },
+      });
+      releaseTick();
+      await vi.waitFor(async () => {
+        const recovered = await plane.getStatus();
+        expect(recovered.state).toBe("running");
+        expect(recovered.lastError).toBeUndefined();
+      });
+    } finally {
+      releaseTick();
+      await plane.stop();
+    }
   });
 
   it.each(["both", "episodic", "semantic"] as const)(
