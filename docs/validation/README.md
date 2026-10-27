@@ -9,3 +9,7 @@
 
 - [Issue #434：直接 Revision 提炼验收](issue-434-memory-revision.md)
 - [Issue #434 CR 与复审](issue-434-code-review.md)
+
+- [Issue #438：质量优先的记忆沉淀](issue-438-memory-revision.md)
+
+- [Issue #438 CR 与复审](issue-438-code-review.md)

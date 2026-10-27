@@ -160,6 +160,12 @@ async function fixture(kind: "knowledge" | "skill" = "knowledge") {
       runtimes,
       rootExecutionOverride: { runtimeId: "fake" },
     });
+    const professional = kind === "knowledge" ? "Metadata rules:" : "root-level SKILL.md";
+    expect(compiled.value.instructions).toContain(professional);
+    expect(compiled.value.instructions).toContain("select_learning_sources");
+    expect(compiled.value.instructions).toContain("finish_memory_learning");
+    expect(compiled.value.instructions).not.toContain("Interactive revision:");
+    expect(compiled.value.instructions).not.toContain("confirm each resolution with the user");
     tools = [...(compiled.value.tools ?? [])];
     expect(tools.map((tool) => tool.name)).toContain("read_learning_source");
     expect(tools.map((tool) => tool.name)).not.toContain("askUserQuestion");

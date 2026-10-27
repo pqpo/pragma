@@ -28,6 +28,7 @@ import {
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 
+import { revisionInstructions } from "./revision-instructions.ts";
 import { BUILT_IN_SKILLS } from "./builtin-skills.ts";
 import { BUILT_IN_AGENT_FILES } from "./builtin.generated.ts";
 
@@ -124,9 +125,12 @@ const BUILT_IN_AGENT_DEPENDENCY_PATHS: Readonly<Record<BuiltInAgentRef, readonly
 const builtInProjectCache = new Map<string, Promise<PragmaProject>>();
 
 export function builtInAgentResource(ref: BuiltInAgentRef): PragmaExpertResource {
-  return PragmaExpertResourceSchema.parse(
+  const resource = PragmaExpertResourceSchema.parse(
     parsePragmaYaml(BUILT_IN_AGENT_FILES[BUILT_IN_AGENT_PATHS[ref]]!),
   );
+  resource.spec.instructions =
+    revisionInstructions(resource.metadata.id, "interactive") ?? resource.spec.instructions;
+  return resource;
 }
 
 /** Static descriptors used by Host target preparation without materializing a bundle. */
@@ -392,6 +396,10 @@ function customizedBuiltInSource(
       resources: [...bundle.resources, ...additionalResources],
     });
   }
+  const revisionRef = [STORE_REVISION_EXPERT_REF, SKILL_REVISION_EXPERT_REF].find(
+    (ref) => BUILT_IN_AGENT_PATHS[ref] === path,
+  );
+  if (revisionRef) return formatPragmaYaml(builtInAgentResource(revisionRef));
   return source;
 }
 

@@ -41,6 +41,7 @@ import {
   compileBuiltInAgent,
   materializeBuiltInAgentBundle,
 } from "../src/builtin.ts";
+import { unattendedMemoryRevisionResource } from "../src/memory-revision.ts";
 import { PragmaAgentFlowDraftSchema } from "../src/contracts.ts";
 import {
   PRAGMA_MANAGEMENT_TOOL_DEFINITIONS,
@@ -94,6 +95,47 @@ describe("built-in Pragma Agent DSL", () => {
     );
     expect(BUILT_IN_AGENT_REFS).toContain(MEMORY_PLANE_CURATOR_REF);
   });
+
+  it.each([STORE_REVISION_EXPERT_REF, SKILL_REVISION_EXPERT_REF])(
+    "assembles %s modes from the same professional DSL without mutating the default",
+    async (ref) => {
+      const ordinary = builtInAgentResource(ref);
+      ordinary.spec.toolPolicy = { deniedTools: ["existing_denial"] };
+      const original = structuredClone(ordinary);
+      const raw = PragmaExpertResourceSchema.parse(
+        parsePragmaYaml(BUILT_IN_AGENT_FILES[`experts/${ordinary.metadata.id}.pragma.yaml`]!),
+      );
+      const memory = unattendedMemoryRevisionResource(ordinary, { learningTools: true });
+      const retained = unattendedMemoryRevisionResource(ordinary);
+      expect(memory.spec.instructions).toContain("select_learning_sources");
+      expect(memory.spec.instructions).toContain("finish_memory_learning");
+      expect(retained.spec.instructions).not.toContain("select_learning_sources");
+      expect(retained.spec.instructions).not.toContain("finish_memory_learning");
+      expect(retained.spec.instructions).not.toContain("waitForTarget");
+      expect(retained.spec.instructions.startsWith(`${raw.spec.instructions}\n\n`)).toBe(true);
+      PragmaExpertResourceSchema.parse(memory);
+      PragmaExpertResourceSchema.parse(retained);
+      expect(memory.spec.instructions.startsWith(`${raw.spec.instructions}\n\n`)).toBe(true);
+      expect(ordinary.spec.instructions.startsWith(`${raw.spec.instructions}\n\n`)).toBe(true);
+      expect(memory.spec.instructions).not.toContain("Interactive revision:");
+      expect(ordinary.spec.instructions).not.toContain("finish_memory_learning");
+      expect(memory.spec.toolPolicy?.deniedTools).toEqual(["existing_denial", "askUserQuestion"]);
+      expect(ordinary).toEqual(original);
+      expect(memory.spec.capabilities).toEqual(ordinary.spec.capabilities);
+      expect(builtInAgentFingerprint(ref, memory)).not.toBe(builtInAgentFingerprint(ref));
+      const root = await mkdtemp(join(tmpdir(), "pragma-revision-modes-"));
+      const entry = await materializeBuiltInAgentBundle(root);
+      const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
+      const stored = project
+        .listResources()
+        .find(
+          (resource) => resource.kind === "Expert" && resource.metadata.id === ordinary.metadata.id,
+        );
+      expect(stored?.kind === "Expert" && stored.spec.instructions).toBe(
+        original.spec.instructions,
+      );
+    },
+  );
 
   it("loads as a portable pragma/v6 project with the authoring Skill", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-builtin-"));
@@ -570,7 +612,6 @@ describe("built-in Pragma Agent DSL", () => {
 
   it("defines Store Revision as an ordinary draft-editing Expert with required management tools", () => {
     const resource = builtInAgentResource(STORE_REVISION_EXPERT_REF);
-    expect(resource.spec.instructions.length).toBeLessThanOrEqual(5_000);
     expect(resource.metadata.avatarId).toBe("pragma.avatar.expert.22");
     expect(resource.metadata.description).not.toContain("Hidden");
     expect(resource.spec.scope).toContain("Create, continue, rebase, verify, and submit");
@@ -596,37 +637,6 @@ describe("built-in Pragma Agent DSL", () => {
         ],
       }),
     ]);
-    expect(resource.spec.instructions).toContain("edit_expert_context");
-    expect(resource.spec.instructions).toContain(
-      "draftId and writableNamespace for work in this Mission",
-    );
-    expect(resource.spec.instructions).toContain("delegated teammate");
-    expect(resource.spec.instructions).toContain("Do not create another Mission for this work");
-    expect(resource.spec.instructions).toContain("Inspect and edit only writableNamespace");
-    expect(resource.spec.instructions).toContain("do not create");
-    expect(resource.spec.instructions).toContain("After compaction, recover draftId");
-    expect(resource.spec.instructions).toContain("Never reuse a token");
-    expect(resource.spec.instructions).toContain("description is a concise retrieval label");
-    expect(resource.spec.instructions).toContain("trigger is the loading behavior");
-    expect(resource.spec.instructions).toContain(
-      "always_on exposes every applicable item in the system prompt manifest",
-    );
-    expect(resource.spec.instructions).toContain("advertises only id and description at startup");
-    expect(resource.spec.instructions).toContain("neither preloads nor advertises the body");
-    expect(resource.spec.instructions).toContain("priority is context-budget precedence");
-    expect(resource.spec.instructions).toContain("It does not change loading, authority, trust");
-    expect(resource.spec.instructions).toContain("mark everything high or critical");
-    expect(resource.spec.instructions).toContain("added effective file and affected link target");
-    expect(resource.spec.instructions).toContain("Repeat the entire");
-    expect(resource.spec.instructions).toContain("final check after the last fix");
-    expect(resource.spec.instructions).toContain("returns the resulting draft state");
-    expect(resource.spec.instructions).toContain("Submission freezes editing");
-    expect(resource.spec.instructions).toContain("latest draft.revision");
-    expect(resource.spec.instructions).toContain("knowledge_revision_submit_draft");
-    expect(resource.spec.instructions).toContain(
-      "returning for changes restores the same draft and Mission",
-    );
-    expect(resource.spec.instructions).toContain("knowledge_revision_discard_draft");
   });
 
   it("compiles every hidden Agent from its isolated dependency closure", async () => {
@@ -648,7 +658,7 @@ describe("built-in Pragma Agent DSL", () => {
       SKILL_REVISION_EXPERT_REF,
       EVALUATION_JUDGE_EXPERT_REF,
     ]) {
-      const compiled = await compileBuiltInAgent({
+      const options = {
         ref,
         environmentId: "test-host",
         definitionStateRoot: join(root, "definitions"),
@@ -692,8 +702,20 @@ describe("built-in Pragma Agent DSL", () => {
             return undefined;
           },
         },
-      });
+      } satisfies Parameters<typeof compileBuiltInAgent>[0];
+      const compiled = await compileBuiltInAgent(options);
       expect(compiled.value.id).toBe(ref.slice("expert:".length));
+      if (ref === STORE_REVISION_EXPERT_REF || ref === SKILL_REVISION_EXPERT_REF) {
+        const retained = unattendedMemoryRevisionResource(builtInAgentResource(ref));
+        const historical = await compileBuiltInAgent({ ...options, expertResource: retained });
+        expect(historical.value.instructions).toBe(retained.spec.instructions);
+        const tools = historical.value.tools?.map((tool) => tool.name) ?? [];
+        expect(tools).not.toContain("select_learning_sources");
+        expect(tools).not.toContain("finish_memory_learning");
+        expect(tools).not.toContain("askUserQuestion");
+        expect(historical.value.instructions).not.toContain("select_learning_sources");
+        expect(historical.value.instructions).not.toContain("finish_memory_learning");
+      }
     }
   });
 

@@ -7,6 +7,7 @@ import {
   SKILL_REVISION_EXPERT_REF,
   STORE_REVISION_EXPERT_REF,
   builtInAgentResource,
+  unattendedMemoryRevisionResource,
 } from "@pragma/built-in-agents";
 import {
   createNoopLoggerProvider,
@@ -139,9 +140,9 @@ it.each([
       getSystemExecutorResource: () => resource,
       systemExecutorSource: async ({ mission: current }) => ({
         ref,
-        expertResource:
-          isMemoryDirectRevision(current) ||
-          isMemoryRevisionPlanningRun(current.origin, current.executor.ref)
+        expertResource: isMemoryDirectRevision(current)
+          ? unattendedMemoryRevisionResource(resource, { learningTools: true })
+          : isMemoryRevisionPlanningRun(current.origin, current.executor.ref)
             ? planning
             : resource,
         adapterHost: interactiveAdapterHost,

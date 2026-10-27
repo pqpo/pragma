@@ -1,6 +1,6 @@
 export const memory = {
   learningDecisions: {
-    accumulate: "Continue accumulating",
+    accumulate: "Defer extraction, retain memory",
     duplicate: "No new information",
     unsupported: "Insufficient support",
     create: "Propose creation",
