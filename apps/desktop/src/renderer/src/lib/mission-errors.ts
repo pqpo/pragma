@@ -15,6 +15,7 @@ const MISSION_ERROR_TRANSLATION_KEYS: Readonly<Record<string, string>> = {
   invalid_request: "errorInvalidRequest",
   COMMAND_ACCEPTANCE_TIMEOUT: "errorOperationInProgress",
   COMMAND_RESULT_TIMEOUT: "errorOperationInProgress",
+  MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED: "errorDeleteRuntimeUnconfirmed",
 };
 
 export function localizedMissionError(
@@ -30,6 +31,9 @@ export function localizedMissionError(
     if (translationKey !== undefined) return translate(translationKey);
   }
   const message = parsed.success ? parsed.data.message : errorMessage(error);
+  if (message.includes("MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED")) {
+    return translate("errorDeleteRuntimeUnconfirmed");
+  }
   if (/(?:^|\s)idempotency conflict(?::|\s)/iu.test(message)) {
     return translate("errorInternalStateConflict");
   }

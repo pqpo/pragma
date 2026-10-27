@@ -176,6 +176,8 @@ export const missions = {
   selectAnother: "Select another mission or create a new one.",
   deleteTitle: "Delete this mission?",
   deleteMission: "Delete mission",
+  errorDeleteRuntimeUnconfirmed:
+    "The task's runtime processes could not be confirmed stopped. Task data has been retained. Stop the related processes and retry deletion. If it still fails, check process access permissions.",
   deleteDescription:
     "“{{title}}” and its conversation will be removed from Missions. This cannot be undone.",
   deleteNamed: "Delete {{title}}",

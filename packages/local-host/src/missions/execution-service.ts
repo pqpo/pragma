@@ -4,6 +4,7 @@ import { defineLocalHostMissionMessageFormat } from "../mission-command-admissio
 import { SKILL_REVISION_EXPERT_REF, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import { type LocalHostMissionPromptAdmissionHook } from "../mission-command-admission.ts";
+import { confirmHistoricalRuntimeStops } from "./historical-runtime-stop.ts";
 import {
   createMissionExecutionKernel,
   type MissionExecutionResources,
@@ -3227,12 +3228,13 @@ export function createLocalHostMissionExecutionService(
     );
     const unconfirmedOwners =
       stopped.status === "fulfilled"
-        ? (
+        ? await confirmHistoricalRuntimeStops(
+            new PragmaPaths({ pragmaHome: options.pragmaHome }),
             await readRuntimeSessionsForOwners(
               new PragmaPaths({ pragmaHome: options.pragmaHome }),
               [...sessionIds, ...executionIds],
-            )
-          ).filter((record) => record.processState !== "stopped")
+            ),
+          )
         : [];
     if (stopped.status !== "fulfilled" || unconfirmedOwners.length > 0) {
       const error = Object.assign(new Error("MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED"), {
@@ -3270,12 +3272,13 @@ export function createLocalHostMissionExecutionService(
           mission,
           sessionIds: [...sessionIds],
         });
-        const outstanding = (
+        const outstanding = await confirmHistoricalRuntimeStops(
+          new PragmaPaths({ pragmaHome: options.pragmaHome }),
           await readRuntimeSessionsForOwners(new PragmaPaths({ pragmaHome: options.pragmaHome }), [
             ...sessionIds,
             ...executionIds,
-          ])
-        ).filter((record) => record.processState !== "stopped");
+          ]),
+        );
         if (outstanding.length > 0)
           throw Object.assign(new Error("MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED"), {
             code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",

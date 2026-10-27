@@ -160,6 +160,8 @@ export const missions = {
   selectAnother: "请选择其他任务或创建新任务。",
   deleteTitle: "删除此任务？",
   deleteMission: "删除任务",
+  errorDeleteRuntimeUnconfirmed:
+    "尚未确认任务关联的运行进程已停止，任务数据已保留。请停止相关进程后重试删除；若仍失败，请检查运行进程的访问权限。",
   deleteDescription: "“{{title}}”及其对话将从任务中移除，且无法撤销。",
   deleteNamed: "删除 {{title}}",
   deleting: "删除中…",

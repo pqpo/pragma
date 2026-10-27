@@ -160,6 +160,8 @@ export const missions = {
   selectAnother: "請選擇其他任務或建立新任務。",
   deleteTitle: "刪除此任務？",
   deleteMission: "刪除任務",
+  errorDeleteRuntimeUnconfirmed:
+    "尚未確認任務關聯的執行程序已停止，任務資料已保留。請停止相關程序後重試刪除；若仍失敗，請檢查執行程序的存取權限。",
   deleteDescription: "「{{title}}」及其對話將從任務中移除，且無法復原。",
   deleteNamed: "刪除 {{title}}",
   deleting: "刪除中…",

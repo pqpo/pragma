@@ -118,6 +118,60 @@ async function fixture(
   return { root, paths, missions, mission, runner, executions, deletion, usage };
 }
 describe("Mission deletion integration", () => {
+  it.runIf(process.platform === "linux" || process.platform === "darwin")(
+    "deletes a completed historical Mission with a stale running Runtime outside Host memory",
+    async () => {
+      const target = await fixture();
+      await target.runner.startRun(target.mission.id);
+      await vi.waitFor(async () =>
+        expect((await target.missions.get(target.mission.id)).execution?.status).toBe("succeeded"),
+      );
+      const mission = await target.missions.get(target.mission.id);
+      const record = await createRuntimeSessionRecord({
+        paths: target.paths,
+        owner: { type: "expert-session", ownerId: mission.execution!.sessionId! },
+        systemSessionId: "old-codex-session",
+        agentId: "expert",
+        runtime: { id: "codex-local", kind: "codex-local", displayName: "Codex" },
+        workspace: target.root,
+      });
+      await updateRuntimeSessionRecord(target.paths, record, { processState: "running" });
+      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+        env: {
+          ...process.env,
+          CODEX_HOME: target.paths.ownedRuntimeRoot(
+            record.owner.ownerId,
+            record.systemSessionId,
+            "codex",
+          ),
+        },
+        stdio: "ignore",
+      });
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      try {
+        await new Promise<void>((resolve, reject) => {
+          child.once("spawn", resolve);
+          child.once("error", reject);
+        });
+        await expect(target.runner.delete(target.mission.id)).rejects.toMatchObject({
+          code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
+        });
+        await access(target.missions.storagePath!(target.mission.id));
+        child.kill();
+        await exited;
+        await target.runner.delete(target.mission.id);
+        await expect(access(target.missions.storagePath!(target.mission.id))).rejects.toMatchObject(
+          {
+            code: "ENOENT",
+          },
+        );
+        expect((await target.deletion.read(target.mission.id))?.phase).toBe("committed");
+      } finally {
+        child.kill();
+        await exited;
+      }
+    },
+  );
   it("retains owners with an additional unconfirmed Runtime and retries after confirmation", async () => {
     const target = await fixture();
     await target.runner.startRun(target.mission.id);

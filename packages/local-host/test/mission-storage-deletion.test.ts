@@ -8,8 +8,10 @@ import {
   moveOwnedStorageToTrash,
   PragmaPaths,
   readRuntimeSessionsForOwners,
+  createRuntimeSessionRecord,
+  readRuntimeSessionRecord,
 } from "@pragma/core";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createMissionControllerStore } from "../src/missions/controller/mission-controller-store.ts";
 import { withMissionControllerDeletionBarrier } from "../src/missions/controller/storage-locks.ts";
 import {
@@ -17,6 +19,67 @@ import {
   isMissionDeletionCommitted,
 } from "../src/missions/deletion.ts";
 import { createMissionStore } from "../src/missions/repository/mission-store.ts";
+import { confirmHistoricalRuntimeStops } from "../src/missions/historical-runtime-stop.ts";
+
+it.runIf(process.platform === "linux" || process.platform === "darwin")(
+  "confirms a historical Runtime only after its private process exits, preserving unknown runtimes",
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-old-runtime-"));
+    roots.push(home);
+    const paths = new PragmaPaths({ pragmaHome: home });
+    const record = await createRuntimeSessionRecord({
+      paths,
+      owner: { type: "expert-session", ownerId: "historical-owner" },
+      systemSessionId: "historical-runtime",
+      agentId: "expert",
+      runtime: { id: "codex-local", kind: "codex-local", displayName: "Codex" },
+      workspace: home,
+    });
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      env: {
+        ...process.env,
+        CODEX_HOME: paths.ownedRuntimeRoot(record.owner.ownerId, record.systemSessionId, "codex"),
+      },
+      stdio: "ignore",
+    });
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", reject);
+      });
+      expect(await confirmHistoricalRuntimeStops(paths, [record])).toEqual([record]);
+      expect(
+        (await readRuntimeSessionRecord(paths, record.owner.ownerId, record.systemSessionId))
+          .processState,
+      ).toBe("starting");
+      child.kill();
+      await exited;
+      // Missing process-inspection tools must preserve the owner for a later retry.
+      vi.stubEnv("PATH", "");
+      try {
+        expect(await confirmHistoricalRuntimeStops(paths, [record])).toEqual([record]);
+        expect(
+          (await readRuntimeSessionRecord(paths, record.owner.ownerId, record.systemSessionId))
+            .processState,
+        ).toBe("starting");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+      expect(await confirmHistoricalRuntimeStops(paths, [record])).toEqual([]);
+      expect(
+        (await readRuntimeSessionRecord(paths, record.owner.ownerId, record.systemSessionId))
+          .processState,
+      ).toBe("stopped");
+      expect(await confirmHistoricalRuntimeStops(paths, [record])).toEqual([]);
+      const unknown = { ...record, runtime: { id: "remote", kind: "remote" } };
+      expect(await confirmHistoricalRuntimeStops(paths, [unknown])).toEqual([unknown]);
+    } finally {
+      child.kill();
+      await exited;
+    }
+  },
+);
 
 const roots: string[] = [];
 const missionId = "4b4f2993-4f39-4915-adc4-a052163d4e28";

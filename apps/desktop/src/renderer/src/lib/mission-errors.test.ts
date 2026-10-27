@@ -5,6 +5,22 @@ import { localizedMissionError } from "./mission-errors.ts";
 const translate = (key: string): string => `translated:${key}`;
 
 describe("localizedMissionError", () => {
+  it("explains unconfirmed Runtime stops from structured and Electron-wrapped errors", () => {
+    for (const error of [
+      {
+        code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
+        message: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
+        diagnostics: [],
+      },
+      new Error(
+        "Error invoking remote method 'missions:delete': MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
+      ),
+    ]) {
+      expect(localizedMissionError(error, translate)).toBe(
+        "translated:errorDeleteRuntimeUnconfirmed",
+      );
+    }
+  });
   it("hides Mission timeline implementation details and record ids", () => {
     const message = localizedMissionError(
       {
