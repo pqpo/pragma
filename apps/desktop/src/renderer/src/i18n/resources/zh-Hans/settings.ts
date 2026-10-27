@@ -331,6 +331,9 @@ export const settings = {
     maxInputTokens: "最大输入 Token",
     maxBatchTokens: "每批 Token 上限（可选）",
     maxBatchInputs: "每批输入数量",
+    embeddingSingleInput: "单条输入",
+    embeddingBatchRequest: "批量请求",
+    embeddingLimitUnset: "未设置",
     embeddingLimitDescription: "使用此模型进行记忆检索前，请确认供应商的输入限制。",
 
     navigation: "模型",
@@ -412,6 +415,7 @@ export const settings = {
     availableModels: "个可用模型",
     selectedCountLabel: " 个已选",
     manualModelPlaceholder: "手动输入模型 ID",
+    moreModels: "还有 {{count}} 个模型，编辑可查看全部。",
     selectedModels: "已选模型（{{count}}）",
     selectedModelsDescription: "为每个模型确认上下文限制与能力，保存后即可在任务中使用。",
     contextWindow: "上下文窗口",

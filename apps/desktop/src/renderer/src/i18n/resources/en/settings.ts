@@ -350,6 +350,9 @@ export const settings = {
     maxInputTokens: "Maximum input tokens",
     maxBatchTokens: "Tokens per batch (optional)",
     maxBatchInputs: "Inputs per batch",
+    embeddingSingleInput: "Single input",
+    embeddingBatchRequest: "Batch request",
+    embeddingLimitUnset: "Not set",
     embeddingLimitDescription:
       "Confirm the provider input limit before using this model for Memory retrieval.",
 
@@ -432,6 +435,7 @@ export const settings = {
     availableModels: "models available",
     selectedCountLabel: " selected",
     manualModelPlaceholder: "Enter a model ID manually",
+    moreModels: "More models: {{count}}. Edit to view all.",
     selectedModels: "Selected models ({{count}})",
     selectedModelsDescription:
       "Confirm limits and capabilities for each model before saving it for missions.",

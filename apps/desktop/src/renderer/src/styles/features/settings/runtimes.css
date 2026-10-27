@@ -53,7 +53,18 @@
 }
 
 .runtime-card {
+  border-color: var(--ui-line);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: 0 1px 2px rgb(var(--ui-shadow-rgb) / 3%);
   padding: 20px 24px;
+}
+
+.runtime-card:hover {
+  border-color: var(--ui-line-strong);
+  background: var(--ui-surface-subtle);
+  box-shadow: none;
 }
 
 .runtime-icon {

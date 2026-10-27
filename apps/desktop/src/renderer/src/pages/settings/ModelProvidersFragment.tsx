@@ -308,10 +308,7 @@ export function ProviderEditor(props: {
                         <span className="provider-preset-mark">
                           <ModelProviderLogo presetId={preset.id} />
                         </span>
-                        <span>
-                          <strong>{preset.name}</strong>
-                        </span>
-                        <ArrowRight size={16} aria-hidden="true" />
+                        <strong>{preset.name}</strong>
                       </button>
                     ),
                   )}
@@ -757,60 +754,77 @@ function ModelCapabilityEditor(props: {
         <GenerationModelCapabilityEditor {...props} model={props.model} />
       ) : (
         <div className="model-card-body">
-          <div className="model-token-grid">
-            <label className="model-token-limit-field">
-              <span>{t("models.maxInputTokens")}</span>
-              <input
-                type="number"
-                min={1}
-                value={props.model.maxInputTokens ?? ""}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  if (value > 0 && Number.isInteger(value) && props.model.kind === "embedding")
-                    props.onChange({
-                      ...props.model,
-                      maxInputTokens: value,
-                      maxInputTokensSource: "manual" as const,
-                    });
-                }}
-              />
-            </label>
-
-            <label className="model-token-limit-field">
-              <span>{t("models.maxBatchInputs")}</span>
-              <input
-                type="number"
-                min={1}
-                max={2048}
-                value={props.model.maxBatchInputs}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  if (
-                    value > 0 &&
-                    value <= 2048 &&
-                    Number.isInteger(value) &&
-                    props.model.kind === "embedding"
-                  )
-                    props.onChange({ ...props.model, maxBatchInputs: value });
-                }}
-              />
-            </label>
-            <label className="model-token-limit-field">
-              <span>{t("models.maxBatchTokens")}</span>
-              <input
-                type="number"
-                min={1}
-                value={props.model.maxBatchTokens ?? ""}
-                onChange={(event) => {
-                  if (props.model.kind !== "embedding") return;
-                  const value = Number(event.target.value);
-                  if (event.target.value === "")
-                    props.onChange({ ...props.model, maxBatchTokens: undefined });
-                  else if (value > 0 && Number.isInteger(value))
-                    props.onChange({ ...props.model, maxBatchTokens: value });
-                }}
-              />
-            </label>
+          <div className="embedding-limits-layout">
+            <div
+              className="embedding-limit-group"
+              role="group"
+              aria-label={t("models.embeddingSingleInput")}
+            >
+              <span className="model-field-label">{t("models.embeddingSingleInput")}</span>
+              <label className="model-token-limit-field">
+                <span>{t("models.maxInputTokens")}</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={props.model.maxInputTokens ?? ""}
+                  placeholder={t("models.embeddingLimitUnset")}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (value > 0 && Number.isInteger(value) && props.model.kind === "embedding")
+                      props.onChange({
+                        ...props.model,
+                        maxInputTokens: value,
+                        maxInputTokensSource: "manual" as const,
+                      });
+                  }}
+                />
+              </label>
+            </div>
+            <div
+              className="embedding-limit-group embedding-batch-group"
+              role="group"
+              aria-label={t("models.embeddingBatchRequest")}
+            >
+              <span className="model-field-label">{t("models.embeddingBatchRequest")}</span>
+              <div className="embedding-batch-fields">
+                <label className="model-token-limit-field">
+                  <span>{t("models.maxBatchInputs")}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={2048}
+                    value={props.model.maxBatchInputs}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (
+                        value > 0 &&
+                        value <= 2048 &&
+                        Number.isInteger(value) &&
+                        props.model.kind === "embedding"
+                      )
+                        props.onChange({ ...props.model, maxBatchInputs: value });
+                    }}
+                  />
+                </label>
+                <label className="model-token-limit-field">
+                  <span>{t("models.maxBatchTokens")}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={props.model.maxBatchTokens ?? ""}
+                    placeholder={t("models.embeddingLimitUnset")}
+                    onChange={(event) => {
+                      if (props.model.kind !== "embedding") return;
+                      const value = Number(event.target.value);
+                      if (event.target.value === "")
+                        props.onChange({ ...props.model, maxBatchTokens: undefined });
+                      else if (value > 0 && Number.isInteger(value))
+                        props.onChange({ ...props.model, maxBatchTokens: value });
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
           </div>
           <small className="embedding-limit-description">
             {t("models.embeddingLimitDescription")}
@@ -1046,13 +1060,109 @@ function GenerationModelCapabilityEditor(props: {
   );
 }
 
+function ProviderModelSummary({ models }: { readonly models: readonly ModelProviderModel[] }) {
+  const { t } = useTranslation("settings");
+  const [visibleCount, setVisibleCount] = useState(0);
+  const [probeLimit, setProbeLimit] = useState(() => Math.min(models.length, 24));
+  const measureRef = useRef<HTMLDivElement>(null);
+  const overflowRef = useRef<HTMLSpanElement>(null);
+
+  useLayoutEffect(() => {
+    const probe = measureRef.current;
+    const overflow = overflowRef.current;
+    if (!probe || !overflow) return;
+    const measure = () => {
+      const bounds = probe.getBoundingClientRect();
+      if (bounds.width === 0) return;
+      const gap = Number.parseFloat(getComputedStyle(probe).columnGap) || 0;
+      const chips = Array.from(probe.children).slice(0, -1);
+      const positions: { readonly right: number; readonly row: number }[] = [];
+      let row = 0;
+      let top = Number.NEGATIVE_INFINITY;
+      for (const chip of chips) {
+        const rect = chip.getBoundingClientRect();
+        if (Math.abs(rect.top - top) > 1) {
+          row += 1;
+          top = rect.top;
+        }
+        if (row > 3) break;
+        positions.push({ right: rect.right, row });
+      }
+      let count = positions.length;
+      if (count === chips.length && count < models.length) {
+        // Only measure more candidates when this prefix still fits in three rows.
+        setProbeLimit(Math.min(models.length, Math.max(24, chips.length * 2)));
+        return;
+      }
+      if (count < models.length) {
+        // Reserve room for the actual +N badge, including changes in digit width.
+        while (count > 0) {
+          overflow.textContent = `+${models.length - count}`;
+          const last = positions[count - 1]!;
+          if (
+            last.row < 3 ||
+            last.right + gap + overflow.getBoundingClientRect().width <= bounds.right + 0.5
+          )
+            break;
+          count -= 1;
+        }
+      }
+      setVisibleCount(count);
+    };
+    measure();
+    const observer =
+      typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
+    observer?.observe(probe.parentElement ?? probe);
+    let active = true;
+    void document.fonts.ready.then(() => {
+      if (active) measure();
+    });
+    return () => {
+      active = false;
+      observer?.disconnect();
+    };
+  }, [models, probeLimit]);
+
+  const count = Math.min(visibleCount, models.length);
+  const hiddenCount = models.length - count;
+  const renderChip = (model: ModelProviderModel) => (
+    <span key={model.id} title={model.name}>
+      {model.name}
+      {model.kind === "generation" && model.reasoning ? " · R" : ""}
+    </span>
+  );
+  return (
+    <div className="provider-model-summary">
+      <div className="provider-model-chips">
+        {models.slice(0, count).map(renderChip)}
+        {hiddenCount > 0 ? (
+          <span
+            className="provider-model-overflow"
+            title={t("models.moreModels", { count: hiddenCount })}
+          >
+            +{hiddenCount}
+          </span>
+        ) : null}
+      </div>
+      <div
+        className="provider-model-chips provider-model-chips-measure"
+        ref={measureRef}
+        aria-hidden="true"
+      >
+        {models.slice(0, probeLimit).map(renderChip)}
+        <span ref={overflowRef}>+{models.length}</span>
+      </div>
+    </div>
+  );
+}
+
 function ProviderCard(props: {
   readonly provider: ModelProvider;
   readonly onDelete: () => void;
   readonly onEdit: () => void;
   readonly onRefresh: (provider: ModelProvider) => void;
 }) {
-  const { t } = useTranslation("settings");
+  const { t } = useTranslation(["settings", "common"]);
   const [testing, setTesting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -1101,45 +1211,39 @@ function ProviderCard(props: {
           <ModelProviderLogo presetId={props.provider.presetId} />
         </span>
         <div className="card-title-group">
-          <h3>{props.provider.name}</h3>
+          <h3 title={props.provider.name}>{props.provider.name}</h3>
           <p>
-            {props.provider.models.length} {t("models.models")} · {props.provider.presetId}
+            {props.provider.models.length} {t("models.models")}
           </p>
         </div>
         <VerificationBadge verification={verification} />
       </header>
       <div className="provider-summary-meta">
-        <code>{props.provider.baseUrl}</code>
+        <code title={props.provider.baseUrl}>{props.provider.baseUrl}</code>
         <span>
           <Key size={15} />
           {props.provider.hasApiKey ? t("models.savedSecurely") : t("models.noKeyRequired")}
         </span>
       </div>
-      <div className="provider-model-chips">
-        {props.provider.models.slice(0, 8).map((model) => (
-          <span key={model.id}>
-            {model.name}
-            {model.kind === "generation" && model.reasoning ? " · R" : ""}
-          </span>
-        ))}
-        {props.provider.models.length > 8 ? <span>+{props.provider.models.length - 8}</span> : null}
+      <ProviderModelSummary models={props.provider.models} />
+      <div className="provider-card-feedback">
+        {verification.message ? (
+          <p
+            className={
+              verification.status === "failed"
+                ? "connection-result is-error"
+                : "connection-result is-success"
+            }
+          >
+            {verification.message}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
       </div>
-      {verification.message ? (
-        <p
-          className={
-            verification.status === "failed"
-              ? "connection-result is-error"
-              : "connection-result is-success"
-          }
-        >
-          {verification.message}
-        </p>
-      ) : null}
-      {error ? (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      ) : null}
       <div className="provider-card-actions">
         <button
           className="secondary-button"
@@ -1156,11 +1260,13 @@ function ProviderCard(props: {
         <button
           className="danger-button"
           type="button"
+          aria-label={t("models.deleteProvider")}
+          title={t("models.deleteProvider")}
           onClick={() => setConfirmOpen(true)}
           disabled={deleting}
         >
           <Trash size={16} />
-          {deleting ? t("models.deleting") : t("models.deleteProvider")}
+          {deleting ? t("models.deleting") : t("actions.delete", { ns: "common" })}
         </button>
       </div>
       {confirmOpen ? (
@@ -1252,6 +1358,7 @@ export function ModelProvidersFragment() {
     <SettingsScreenFrame
       id="models-panel"
       labelledBy="models-panel-heading"
+      className="model-providers-screen"
       header={
         <header className="panel-heading panel-heading-with-action">
           <div>
