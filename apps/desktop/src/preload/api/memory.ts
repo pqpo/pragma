@@ -22,6 +22,7 @@ import {
   ReviseDesktopSemanticFactSchema,
   ReviewDesktopSemanticFactSchema,
   DesktopMemoryItemListSchema,
+  DesktopMemoryItemPageSchema,
   DesktopMemoryItemSchema,
   ListDesktopMemoryItemsSchema,
   DesktopMemoryItemRefSchema,
@@ -205,6 +206,10 @@ export const memoryApi = {
     DesktopMemoryItemListSchema.parse(
       await ipcRenderer.invoke("memory-items:list", ListDesktopMemoryItemsSchema.parse(input)),
     ),
+  listMemoryItemsPage: async (input = {}) =>
+    DesktopMemoryItemPageSchema.parse(
+      await ipcRenderer.invoke("memory-items:list-page", ListDesktopMemoryItemsSchema.parse(input)),
+    ),
   getMemoryItem: async (input) =>
     DesktopMemoryItemSchema.parse(
       await ipcRenderer.invoke("memory-items:get", DesktopMemoryItemRefSchema.parse(input)),
@@ -338,6 +343,7 @@ export const memoryApi = {
   | "reviseSemanticFact"
   | "verifySemanticFact"
   | "listMemoryItems"
+  | "listMemoryItemsPage"
   | "getMemoryItem"
   | "getMemoryItemHistory"
   | "getMemoryEvidence"

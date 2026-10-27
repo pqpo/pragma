@@ -455,6 +455,11 @@ export const DesktopMemoryItemSchema = z.discriminatedUnion("module", [
 
 export const DesktopMemoryItemListSchema = z.array(DesktopMemoryItemSchema);
 
+export const DesktopMemoryItemPageSchema = z.object({
+  items: DesktopMemoryItemListSchema,
+  total: z.number().int().nonnegative(),
+});
+
 export const ListDesktopMemoryItemsSchema = z
   .object({
     module: z.enum(["all", "episodic", "semantic"]).default("all"),

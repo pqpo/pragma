@@ -110,7 +110,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
   const [query, setQuery] = useState("");
   const fetchMemoryPage = useCallback(
     (offset: number, limit: number) =>
-      window.pragmaDesktop.listMemoryItems({
+      window.pragmaDesktop.listMemoryItemsPage({
         module: memoryType,
         status: "all",
         query,
@@ -430,6 +430,11 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
                     { value: "semantic", label: t("extractionTaskTypes.semantic") },
                   ]}
                 />
+                {memoryPages.total !== undefined ? (
+                  <span className="memory-list-count" role="status">
+                    {t("recordCount", { count: memoryPages.total })}
+                  </span>
+                ) : null}
               </div>
               <div className="memory-list-scroll">
                 {!memoryPages.loading && items.length === 0 ? <p>{t("empty")}</p> : null}

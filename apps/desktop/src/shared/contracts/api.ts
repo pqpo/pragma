@@ -370,6 +370,9 @@ export interface PragmaDesktopAPI {
   reviseSemanticFact: (input: ReviseDesktopSemanticFact) => Promise<DesktopSemanticFact>;
   verifySemanticFact: (input: ReviewDesktopSemanticFact) => Promise<DesktopSemanticFact>;
   listMemoryItems: (input?: ListDesktopMemoryItems) => Promise<DesktopMemoryItem[]>;
+  listMemoryItemsPage: (
+    input?: ListDesktopMemoryItems,
+  ) => Promise<{ items: DesktopMemoryItem[]; total: number }>;
   getMemoryItem: (input: DesktopMemoryItemRef) => Promise<DesktopMemoryItem>;
   getMemoryItemHistory: (input: DesktopMemoryItemRef) => Promise<DesktopMemoryItem[]>;
   getMemoryEvidence: (input: GetDesktopMemoryEvidence) => Promise<DesktopMemoryEvidence>;

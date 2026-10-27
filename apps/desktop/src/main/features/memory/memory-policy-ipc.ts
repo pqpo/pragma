@@ -22,6 +22,7 @@ import {
   ReviewDesktopSemanticFactSchema,
   DesktopMemoryItemSchema,
   DesktopMemoryItemListSchema,
+  DesktopMemoryItemPageSchema,
   ListDesktopMemoryItemsSchema,
   DesktopMemoryItemRefSchema,
   GetDesktopMemoryEvidenceSchema,
@@ -224,7 +225,7 @@ export function installMemoryPolicyHandlers(
     const parsed = ReviewDesktopSemanticFactSchema.parse(input);
     return DesktopSemanticFactSchema.parse(await plane.verifySemanticFact(parsed));
   });
-  ipcMain.handle("memory-items:list", async (_event, input: unknown) => {
+  const listMemoryItemsPage = async (input: unknown) => {
     const parsed = ListDesktopMemoryItemsSchema.parse(input ?? {});
     const query = parsed.query.trim();
     const modules = parsed.module === "all" ? (["episodic", "semantic"] as const) : [parsed.module];
@@ -251,9 +252,10 @@ export function installMemoryPolicyHandlers(
           right.updatedAt.localeCompare(left.updatedAt) || key(left).localeCompare(key(right)),
       );
     if (query === "")
-      return DesktopMemoryItemListSchema.parse(
-        items.slice(parsed.offset, parsed.offset + parsed.limit),
-      );
+      return DesktopMemoryItemPageSchema.parse({
+        items: items.slice(parsed.offset, parsed.offset + parsed.limit),
+        total: items.length,
+      });
     const current = new Map(items.map((item) => [key(item), item]));
     const normalizedQuery = query.toLocaleLowerCase();
     const keywordIds = new Set<string>();
@@ -270,13 +272,19 @@ export function installMemoryPolicyHandlers(
       const item = current.get(key({ module: hit.module, id: hit.memoryId }));
       return item !== undefined && item.revision === hit.revision ? [item] : [];
     });
-    return DesktopMemoryItemListSchema.parse(
-      fuseMemoryRanks([lexical, vectorMatches], key).slice(
-        parsed.offset,
-        parsed.offset + parsed.limit,
-      ),
-    );
-  });
+    const matches = fuseMemoryRanks([lexical, vectorMatches], key);
+    return DesktopMemoryItemPageSchema.parse({
+      items: matches.slice(parsed.offset, parsed.offset + parsed.limit),
+      total: matches.length,
+    });
+  };
+  ipcMain.handle(
+    "memory-items:list",
+    async (_event, input: unknown) => (await listMemoryItemsPage(input)).items,
+  );
+  ipcMain.handle("memory-items:list-page", async (_event, input: unknown) =>
+    listMemoryItemsPage(input),
+  );
   ipcMain.handle("memory-items:get", async (_event, input: unknown) => {
     const parsed = DesktopMemoryItemRefSchema.parse(input);
     if (parsed.module === "episodic") {

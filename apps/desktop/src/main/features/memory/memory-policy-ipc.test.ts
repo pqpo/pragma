@@ -83,6 +83,18 @@ describe("Memory policy IPC", () => {
       ),
     ).toEqual(["keyword", "vector"]);
     expect(await list({ module: "semantic", query: "concise", offset: 3, limit: 2 })).toEqual([]);
+    const page = (input: object) =>
+      electron.handlers.get("memory-items:list-page")!({}, input) as Promise<{
+        items: Array<{ id: string }>;
+        total: number;
+      }>;
+    const filteredPage = await page({ module: "semantic", query: "concise", offset: 1, limit: 1 });
+    expect(filteredPage.total).toBe(3);
+    expect(filteredPage.items.map((item) => item.id)).toEqual(["keyword"]);
+    const allPage = await page({ module: "all", status: "all", limit: 1 });
+    expect(allPage.total).toBe(4);
+    expect(allPage.items).toHaveLength(1);
+    expect((await page({ module: "episodic" })).total).toBe(0);
     searchCatalog.mockClear();
     expect((await list({ module: "semantic" })).map((item) => item.id)).toEqual([
       "keyword",

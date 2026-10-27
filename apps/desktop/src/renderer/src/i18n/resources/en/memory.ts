@@ -27,6 +27,7 @@ export const memory = {
   title: "Memory",
   description: "Review the memories agents can discover through the layered ContextStore.",
   memoryType: "Memory type",
+  recordCount: "{{count}} records",
   allMemoryTypes: "All memories",
   loadMore: "Load more",
   retryLoad: "Retry",

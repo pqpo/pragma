@@ -5,13 +5,17 @@ export const MEMORY_LIST_PAGE_SIZE = 30;
 /** Refresh the loaded window and append pages without allowing stale requests to replace it. */
 export function useMemoryListPages<T>(options: {
   enabled: boolean;
-  fetchPage: (offset: number, limit: number) => Promise<readonly T[]>;
+  fetchPage: (
+    offset: number,
+    limit: number,
+  ) => Promise<readonly T[] | { items: readonly T[]; total: number }>;
   key: (item: T) => string;
   pollInterval?: number;
 }) {
   const { enabled, fetchPage, key, pollInterval } = options;
   const [items, setItems] = useState<readonly T[]>([]);
   const [loading, setLoading] = useState(enabled);
+  const [total, setTotal] = useState<number>();
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState(false);
   const generation = useRef(0);
@@ -35,14 +39,17 @@ export function useMemoryListPages<T>(options: {
             ),
           );
           if (current !== generation.current) return;
-          const records = pages.flatMap((page) => page.slice(0, MEMORY_LIST_PAGE_SIZE));
+          const rows = pages.map((page) => ("items" in page ? page.items : page));
+          const lastPage = pages.at(-1)!;
+          setTotal("total" in lastPage ? lastPage.total : undefined);
+          const records = rows.flatMap((page) => page.slice(0, MEMORY_LIST_PAGE_SIZE));
           setItems((previous) => [
             ...new Map(
               [...(append ? previous : []), ...records].map((item) => [key(item), item]),
             ).values(),
           ]);
           loadedPages.current = start + pages.length;
-          setHasMore(pages.at(-1)!.length > MEMORY_LIST_PAGE_SIZE);
+          setHasMore(rows.at(-1)!.length > MEMORY_LIST_PAGE_SIZE);
           setError(false);
         } catch {
           if (current === generation.current) {
@@ -76,6 +83,7 @@ export function useMemoryListPages<T>(options: {
     pending.current = undefined;
     loadedPages.current = 0;
     setItems([]);
+    setTotal(undefined);
     setError(false);
     setHasMore(false);
     setLoading(enabled);
@@ -94,5 +102,5 @@ export function useMemoryListPages<T>(options: {
     return () => clearInterval(timer);
   }, [enabled, pollInterval, request]);
 
-  return { items, loading, hasMore, error, refresh, loadMore };
+  return { items, total, loading, hasMore, error, refresh, loadMore };
 }

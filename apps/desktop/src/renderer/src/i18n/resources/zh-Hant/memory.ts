@@ -24,6 +24,7 @@ export const memory = {
   title: "記憶",
   description: "檢視 Agent 透過分層 ContextStore 可以發現的記憶。",
   memoryType: "記憶類型",
+  recordCount: "共 {{count}} 筆記錄",
   allMemoryTypes: "全部記憶",
   loadMore: "載入更多",
   retryLoad: "重試",

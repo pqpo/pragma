@@ -364,13 +364,25 @@
 }
 
 .memory-list-filter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   flex-shrink: 0;
   margin-bottom: 12px;
   padding: 16px 16px 0;
 }
 
 .memory-list-filter > .ui-select {
-  width: 100%;
+  min-width: 0;
+  flex: 1;
+}
+
+.memory-list-count {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .memory-list-item {
