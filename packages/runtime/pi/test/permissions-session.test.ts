@@ -3,6 +3,8 @@ import {
   createPragma,
   createStaticRuntimeResolver,
   defineExpert,
+  PragmaPaths,
+  readRuntimeSessionsForOwners,
   type ResolvedModelProvider,
 } from "@pragma/core";
 import { createInMemoryExecutionStore } from "@pragma/core/testing";
@@ -129,11 +131,41 @@ describe("Pi Session native approvals", () => {
       try {
         await run(true);
         expect(await readFile(join(root, "native.txt"), "utf8")).toBe("SESSION_OK");
+        expect(
+          await readRuntimeSessionsForOwners(
+            new PragmaPaths({ pragmaHome: join(root, "pragma") }),
+            [session.sessionId],
+          ),
+        ).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              processState: "running",
+              processOwner: expect.objectContaining({
+                type: "host",
+                processId: process.pid,
+                instanceId: expect.any(String),
+              }),
+            }),
+          ]),
+        );
         await session.releaseAfterTerminal();
         session = await app.experts.resumeSession(expert, { sessionId: session.sessionId });
         await rm(join(root, "native.txt"));
         await run(true);
         expect(await readFile(join(root, "native.txt"), "utf8")).toBe("SESSION_OK");
+        expect(
+          await readRuntimeSessionsForOwners(
+            new PragmaPaths({ pragmaHome: join(root, "pragma") }),
+            [session.sessionId],
+          ),
+        ).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              processState: "running",
+              processOwner: expect.objectContaining({ type: "host", processId: process.pid }),
+            }),
+          ]),
+        );
         expect(approvals).toBe(permissionMode === "request-approval" ? 2 : 0);
         if (permissionMode === "request-approval") {
           await rm(join(root, "native.txt"));

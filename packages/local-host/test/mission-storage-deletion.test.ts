@@ -8,10 +8,8 @@ import {
   moveOwnedStorageToTrash,
   PragmaPaths,
   readRuntimeSessionsForOwners,
-  createRuntimeSessionRecord,
-  readRuntimeSessionRecord,
 } from "@pragma/core";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { createMissionControllerStore } from "../src/missions/controller/mission-controller-store.ts";
 import { withMissionControllerDeletionBarrier } from "../src/missions/controller/storage-locks.ts";
 import {
@@ -19,64 +17,75 @@ import {
   isMissionDeletionCommitted,
 } from "../src/missions/deletion.ts";
 import { createMissionStore } from "../src/missions/repository/mission-store.ts";
-import { confirmHistoricalRuntimeStops } from "../src/missions/historical-runtime-stop.ts";
+import { stopHistoricalRuntimeProcesses } from "../src/missions/historical-runtime-stop.ts";
 
 it.runIf(process.platform === "linux" || process.platform === "darwin")(
-  "confirms a historical Runtime only after its private process exits, preserving unknown runtimes",
+  "stops only the deleted owner's orphan process and allows a later cleanup retry",
   async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-old-runtime-"));
     roots.push(home);
     const paths = new PragmaPaths({ pragmaHome: home });
-    const record = await createRuntimeSessionRecord({
-      paths,
-      owner: { type: "expert-session", ownerId: "historical-owner" },
-      systemSessionId: "historical-runtime",
-      agentId: "expert",
-      runtime: { id: "codex-local", kind: "codex-local", displayName: "Codex" },
-      workspace: home,
-    });
-    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)",
+      ],
+      {
+        env: {
+          ...process.env,
+          CODEX_HOME: paths.ownedRuntimeRoot("deleted-owner", "session", "codex"),
+        },
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+    const ready = new Promise<void>((resolve) => child.stdout!.once("data", () => resolve()));
+    const other = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
       env: {
         ...process.env,
-        CODEX_HOME: paths.ownedRuntimeRoot(record.owner.ownerId, record.systemSessionId, "codex"),
+        CODEX_HOME: paths.ownedRuntimeRoot("deleted-owner-other", "session", "codex"),
       },
       stdio: "ignore",
     });
     const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    const otherExited = new Promise<void>((resolve) => other.once("exit", () => resolve()));
     try {
-      await new Promise<void>((resolve, reject) => {
-        child.once("spawn", resolve);
-        child.once("error", reject);
-      });
-      expect(await confirmHistoricalRuntimeStops(paths, [record])).toEqual([record]);
-      expect(
-        (await readRuntimeSessionRecord(paths, record.owner.ownerId, record.systemSessionId))
-          .processState,
-      ).toBe("starting");
-      child.kill();
+      await Promise.all(
+        [child, other].map(
+          (process) =>
+            new Promise<void>((resolve, reject) => {
+              process.once("spawn", resolve);
+              process.once("error", reject);
+            }),
+        ),
+      );
+      await ready;
+      await expect(stopHistoricalRuntimeProcesses(paths, ["deleted-owner"])).rejects.toThrow(
+        "MISSION_DELETE_PROCESS_CLEANUP_PENDING",
+      );
+      expect(child.signalCode).toBeNull();
+      await expect(
+        stopHistoricalRuntimeProcesses(paths, ["deleted-owner"], "SIGKILL"),
+      ).rejects.toThrow("MISSION_DELETE_PROCESS_CLEANUP_PENDING");
       await exited;
-      // Missing process-inspection tools must preserve the owner for a later retry.
-      vi.stubEnv("PATH", "");
-      try {
-        expect(await confirmHistoricalRuntimeStops(paths, [record])).toEqual([record]);
-        expect(
-          (await readRuntimeSessionRecord(paths, record.owner.ownerId, record.systemSessionId))
-            .processState,
-        ).toBe("starting");
-      } finally {
-        vi.unstubAllEnvs();
-      }
-      expect(await confirmHistoricalRuntimeStops(paths, [record])).toEqual([]);
-      expect(
-        (await readRuntimeSessionRecord(paths, record.owner.ownerId, record.systemSessionId))
-          .processState,
-      ).toBe("stopped");
-      expect(await confirmHistoricalRuntimeStops(paths, [record])).toEqual([]);
-      const unknown = { ...record, runtime: { id: "remote", kind: "remote" } };
-      expect(await confirmHistoricalRuntimeStops(paths, [unknown])).toEqual([unknown]);
+      expect(child.signalCode).toBe("SIGKILL");
+      const recreated = paths.ownedRuntimeRoot("deleted-owner", "session", "codex");
+      const unrelated = paths.ownedRuntimeRoot("deleted-owner-other", "session", "codex");
+      await Promise.all([
+        mkdir(recreated, { recursive: true }),
+        mkdir(unrelated, { recursive: true }),
+      ]);
+      expect(other.exitCode).toBeNull();
+      expect(other.signalCode).toBeNull();
+      await expect(
+        stopHistoricalRuntimeProcesses(paths, ["deleted-owner"]),
+      ).resolves.toBeUndefined();
+      await expect(stat(recreated)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(unrelated)).resolves.toBeDefined();
     } finally {
-      child.kill();
-      await exited;
+      child.kill("SIGKILL");
+      other.kill();
+      await Promise.all([exited, otherExited]);
     }
   },
 );

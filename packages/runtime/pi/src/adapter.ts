@@ -369,6 +369,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       },
     },
     {
+      sessionProcess: "host",
       sessionRestoreHandler: options.sessionRestoreHandler,
       sessionSyncCallback: options.sessionSyncCallback,
       createProcessEnvironment: () => ({ ...(options.env ?? process.env) }),

@@ -1,12 +1,14 @@
-import { stat } from "node:fs/promises";
+import { ExpertSessionLeaseSchema } from "../execution/expert-session-lease.ts";
+import { withFileLock } from "../storage/file-lock.ts";
+import { runtimeHostProcessStatus } from "./host-process.ts";
+import type { RuntimeHostProcess } from "../storage/migrations/runtime-session/index.ts";
+import { stat, readFile } from "node:fs/promises";
 import { isOwnerDeletionFenced } from "../storage/owner-deletion.ts";
-import {
-  runtimeSessionRecordMigrationChain,
-  type RuntimeSessionRecord,
-} from "../storage/migrations/runtime-session/index.ts";
+import { type RuntimeSessionRecord } from "../storage/migrations/runtime-session/index.ts";
 import {
   openRuntimeSessionCatalog,
   runtimeSessionCatalogPath,
+  upgradeRuntimeSessionCatalogRecord,
 } from "../storage/migrations/runtime-session-catalog/index.ts";
 import type { PragmaPaths } from "../storage/pragma-paths.ts";
 import type {
@@ -16,7 +18,7 @@ import type {
   RuntimeSessionRef,
 } from "./runtime-adapter.ts";
 
-export type { RuntimeSessionRecord };
+export type { RuntimeSessionRecord, RuntimeHostProcess };
 export type RuntimeSessionProcessState = RuntimeSessionRecord["processState"];
 export type RuntimeSessionRetentionState = RuntimeSessionRecord["retentionState"];
 
@@ -27,12 +29,13 @@ export async function createRuntimeSessionRecord(options: {
   readonly agentId: string;
   readonly runtime: RuntimeAdapterDescriptor;
   readonly workspace: string;
+  readonly processOwner?: RuntimeHostProcess | null;
 }): Promise<RuntimeSessionRecord> {
   if (isOwnerDeletionFenced(options.paths, options.owner.ownerId))
     throw new Error("RUNTIME_OWNER_DELETED");
   const now = new Date().toISOString();
   const record: RuntimeSessionRecord = {
-    schemaVersion: "pragma.runtime-session/v3",
+    schemaVersion: "pragma.runtime-session/v4",
     owner: options.owner,
     systemSessionId: options.systemSessionId,
     expertId: options.agentId,
@@ -40,6 +43,7 @@ export async function createRuntimeSessionRecord(options: {
     runtimeSessionRef: null,
     currentWorkspace: options.workspace,
     workspaceHistory: [options.workspace],
+    processOwner: options.processOwner ?? null,
     processState: "starting",
     retentionState: "retained",
     createdAt: now,
@@ -87,6 +91,7 @@ export async function restoreRuntimeSessionRecord(options: {
   readonly runtime: RuntimeAdapterDescriptor;
   readonly runtimeSession: RuntimeSessionRef;
   readonly workspace: string;
+  readonly processOwner?: RuntimeHostProcess | null;
 }): Promise<RuntimeSessionRecord> {
   const record = await readRuntimeSessionRecord(
     options.paths,
@@ -106,6 +111,7 @@ export async function restoreRuntimeSessionRecord(options: {
       workspaceHistory: current.workspaceHistory.includes(options.workspace)
         ? current.workspaceHistory
         : [...current.workspaceHistory, options.workspace],
+      processOwner: options.processOwner ?? null,
       processState: "running",
     };
   });
@@ -140,12 +146,31 @@ export async function updateRuntimeSessionRecord(
     >
   >,
 ): Promise<RuntimeSessionRecord> {
-  return await writeRuntimeSessionRecord(
+  let changedHost = false;
+  const updated = await writeRuntimeSessionRecord(
     paths,
     record,
-    (current) => ({ ...current, ...patch }),
+    (current) => {
+      // Native teardown and observations from an old Host can arrive after an
+      // explicit restore. They must not rewrite its successor's record.
+      const previous = record.processOwner;
+      const active = current.processOwner;
+      if (
+        (previous?.type === "host" || active?.type === "host") &&
+        (previous?.type !== "host" ||
+          active?.type !== "host" ||
+          previous.instanceId !== active.instanceId)
+      ) {
+        changedHost = true;
+        return current;
+      }
+      return { ...current, ...patch };
+    },
     "skip",
   );
+  // A retired driver must retain its own identity across later cleanup writes,
+  // rather than accidentally adopting the successor identity returned by storage.
+  return changedHost ? record : updated;
 }
 
 export function readRuntimeSessionContextWindowUsage(
@@ -160,7 +185,9 @@ export async function readRuntimeSessionRecord(
   systemSessionId: string,
 ): Promise<RuntimeSessionRecord> {
   const database = await openRuntimeSessionCatalog(paths);
+  let loaded: RuntimeSessionRecord;
   try {
+    database.exec("BEGIN IMMEDIATE");
     const row = database
       .prepare(
         `SELECT system_session_id AS systemSessionId, owner_id AS ownerId,
@@ -176,18 +203,25 @@ export async function readRuntimeSessionRecord(
         }
       | undefined;
     if (row === undefined) throw new Error(`Runtime Session not found: ${systemSessionId}`);
-    const record = runtimeSessionRecordMigrationChain.upgrade(JSON.parse(row.recordJson)).value;
+    const record = upgradeRuntimeSessionCatalogRecord(database, row.recordJson);
     assertEqual(record.systemSessionId, row.systemSessionId, "Catalog system Session id");
     assertEqual(record.owner.ownerId, row.ownerId, "Catalog owner id");
     assertEqual(record.owner.type, row.ownerType, "Catalog owner type");
-    return record;
+    database.exec("COMMIT");
+    loaded = record;
   } catch (error) {
+    try {
+      database.exec("ROLLBACK");
+    } catch {
+      /* BEGIN may have failed before acquiring a transaction. */
+    }
     if (error instanceof Error && error.message.startsWith("Runtime Session not found:"))
       throw error;
     throw unsupported(runtimeSessionCatalogPath(paths), error);
   } finally {
     database.close();
   }
+  return await reconcileRuntimeHostState(paths, loaded);
 }
 
 async function writeRuntimeSessionRecord(
@@ -214,10 +248,15 @@ async function writeRuntimeSessionRecord(
       .get(record.systemSessionId, record.owner.ownerId, record.owner.type) as
       { readonly recordJson: string } | undefined;
     if (row === undefined) throw new Error(`Runtime Session not found: ${record.systemSessionId}`);
-    const current = runtimeSessionRecordMigrationChain.upgrade(JSON.parse(row.recordJson)).value;
+    const current = upgradeRuntimeSessionCatalogRecord(database, row.recordJson);
     assertEqual(current.systemSessionId, record.systemSessionId, "Catalog system Session id");
     assertOwner(current.owner, record.owner);
-    const updated = { ...update(current), updatedAt: new Date().toISOString() };
+    const next = update(current);
+    if (next === current) {
+      database.exec("COMMIT");
+      return current;
+    }
+    const updated = { ...next, updatedAt: new Date().toISOString() };
     const result = database
       .prepare(
         `UPDATE runtime_sessions SET record_json = ?, updated_at = ?
@@ -267,6 +306,7 @@ function isConstraint(error: unknown): boolean {
 export async function readRuntimeSessionsForOwners(
   paths: PragmaPaths,
   ids: readonly string[],
+  options: { readonly reconcileHostState?: boolean } = {},
 ): Promise<readonly RuntimeSessionRecord[]> {
   if (ids.length === 0) return [];
   try {
@@ -277,7 +317,9 @@ export async function readRuntimeSessionsForOwners(
     throw error;
   }
   const database = await openRuntimeSessionCatalog(paths);
+  let records: RuntimeSessionRecord[];
   try {
+    database.exec("BEGIN IMMEDIATE");
     const rows = database
       .prepare(
         "SELECT owner_id AS ownerId, system_session_id AS systemSessionId, record_json AS recordJson FROM runtime_sessions WHERE owner_id IN (SELECT value FROM json_each(?))",
@@ -287,13 +329,92 @@ export async function readRuntimeSessionsForOwners(
       systemSessionId: string;
       recordJson: string;
     }[];
-    return rows.map((row) => {
-      const record = runtimeSessionRecordMigrationChain.upgrade(JSON.parse(row.recordJson)).value;
+    records = rows.map((row) => {
+      const record = upgradeRuntimeSessionCatalogRecord(database, row.recordJson);
       assertEqual(record.owner.ownerId, row.ownerId, "Catalog owner id");
       assertEqual(record.systemSessionId, row.systemSessionId, "Catalog system Session id");
       return record;
     });
+    database.exec("COMMIT");
+  } catch (error) {
+    try {
+      database.exec("ROLLBACK");
+    } catch {
+      /* BEGIN may have failed before acquiring a transaction. */
+    }
+    throw error;
   } finally {
     database.close();
   }
+  if (options.reconcileHostState === false) return records;
+  const hostStatuses = new Map<string, ReturnType<typeof runtimeHostProcessStatus>>();
+  return await Promise.all(
+    records.map(async (record) => await reconcileRuntimeHostState(paths, record, hostStatuses)),
+  );
+}
+
+/** Repair a targeted in-process record only from evidence of its Host's exit. */
+async function reconcileRuntimeHostState(
+  paths: PragmaPaths,
+  record: RuntimeSessionRecord,
+  statuses = new Map<string, ReturnType<typeof runtimeHostProcessStatus>>(),
+): Promise<RuntimeSessionRecord> {
+  if (
+    record.processState === "stopped" ||
+    record.processOwner === null ||
+    isOwnerDeletionFenced(paths, record.owner.ownerId)
+  )
+    return record;
+  const owner = record.processOwner;
+  if (owner.type === "host") {
+    const key = JSON.stringify([owner.processId, owner.processStartToken]);
+    const status = statuses.get(key) ?? runtimeHostProcessStatus(owner);
+    statuses.set(key, status);
+    if ((await status) !== "dead") return record;
+    return await writeRuntimeSessionRecord(
+      paths,
+      record,
+      (current) =>
+        current.processOwner?.type === "host" &&
+        current.processOwner.instanceId === owner.instanceId
+          ? { ...current, processState: "stopped" }
+          : current,
+      "skip",
+    );
+  }
+  if (record.owner.type !== "expert-session") return record;
+  // A legacy Pi record has no invented Host identity. Its owner's historical
+  // lease can still positively prove exit. Hold the same lock as lease takeover.
+  return await withFileLock(
+    paths.expertSessionLock(record.owner.ownerId),
+    async () => {
+      let lease;
+      try {
+        lease = ExpertSessionLeaseSchema.parse(
+          JSON.parse(await readFile(paths.expertSessionLease(record.owner.ownerId), "utf8")),
+        );
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return record;
+        throw error;
+      }
+      if (
+        lease.processId === undefined ||
+        (await runtimeHostProcessStatus({
+          processId: lease.processId,
+          processStartToken: null,
+        })) !== "dead"
+      )
+        return record;
+      return await writeRuntimeSessionRecord(
+        paths,
+        record,
+        (current) =>
+          current.processOwner?.type === "legacy-host"
+            ? { ...current, processState: "stopped" }
+            : current,
+        "skip",
+      );
+    },
+    { operation: "runtime-session.legacy-host-recovery" },
+  );
 }

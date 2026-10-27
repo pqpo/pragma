@@ -4,7 +4,6 @@ import { defineLocalHostMissionMessageFormat } from "../mission-command-admissio
 import { SKILL_REVISION_EXPERT_REF, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import { type LocalHostMissionPromptAdmissionHook } from "../mission-command-admission.ts";
-import { confirmHistoricalRuntimeStops } from "./historical-runtime-stop.ts";
 import {
   createMissionExecutionKernel,
   type MissionExecutionResources,
@@ -39,9 +38,9 @@ import {
   PragmaPaths,
   readRuntimeSessionContextWindowUsage,
   readRuntimeSessionRecord,
+  readRuntimeSessionsForOwners,
   runtimeSessionDeletionSources,
   runtimeSupportsSteer,
-  readRuntimeSessionsForOwners,
   withFileLock,
   StoredExecutionView,
   withStorageDiagnostics,
@@ -3210,49 +3209,40 @@ export function createLocalHostMissionExecutionService(
         if (context.owner.type === "expert-session") sessionIds.add(context.owner.ownerId);
       }
     });
+    const runtimeProcessOwnerIds = async () => [
+      ...new Set(
+        (
+          await readRuntimeSessionsForOwners(
+            new PragmaPaths({ pragmaHome: options.pragmaHome }),
+            [...sessionIds, ...executionIds],
+            { reconcileHostState: false },
+          )
+        )
+          .filter((record) => record.processOwner === null && record.processState !== "stopped")
+          .map((record) => record.owner.ownerId),
+      ),
+    ];
     const prepared = await deletionService.prepare({
       missionId: id,
       executionIds: [...executionIds],
-      payload: { mission, sessionIds: [...sessionIds] },
+      payload: {
+        mission,
+        sessionIds: [...sessionIds],
+      },
       ...(options.missions.storagePath === undefined
         ? {}
         : { missionPath: options.missions.storagePath(id) }),
     });
     await options.prepareOwnerDeletion?.({ mission, executionIds: [...executionIds] });
-    const stop =
-      session === undefined
-        ? (active?.handle.stopForDeletion("Mission deleted.") ?? Promise.resolve())
-        : session.stopForDeletion("Mission deleted.");
-    const stopped = await measureDeletionPhase("runtime_stop", () =>
-      settlementOutcomeWithin(stop, 15_000),
-    );
-    const unconfirmedOwners =
-      stopped.status === "fulfilled"
-        ? await confirmHistoricalRuntimeStops(
-            new PragmaPaths({ pragmaHome: options.pragmaHome }),
-            await readRuntimeSessionsForOwners(
-              new PragmaPaths({ pragmaHome: options.pragmaHome }),
-              [...sessionIds, ...executionIds],
-            ),
-          )
-        : [];
-    if (stopped.status !== "fulfilled" || unconfirmedOwners.length > 0) {
-      const error = Object.assign(new Error("MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED"), {
-        code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
-      });
-      logger.warn(
-        "mission.delete_runtime_stop_unconfirmed",
-        "Mission retained because Runtime stop was not confirmed.",
-        {
-          missionId: id,
-          errorCode: error.message,
-          outcome: stopped.status,
-          ...(stopped.status === "rejected" ? { error: stopped.error } : {}),
-          unconfirmedSystemSessionIds: unconfirmedOwners.map((record) => record.systemSessionId),
-        },
-      );
-      throw error;
-    }
+    // Seal native work now, but never make its acknowledgement a prerequisite
+    // for the user's deletion. Post-commit settlement joins or retries teardown.
+    const stopRuntime = async () => {
+      if (session !== undefined) await session.stopForDeletion("Mission deleted.");
+      else await active?.handle.stopForDeletion("Mission deleted.");
+    };
+    const stop = stopRuntime();
+    // Observe rejection immediately while the owner graph is inventoried/moved.
+    void stop.catch(() => undefined);
     // Only an admitted run can add owners during inventory. Existing Execution
     // contexts retain the same owner; inspect just newly allocated Executions.
     if (session !== undefined || active !== undefined) {
@@ -3267,24 +3257,14 @@ export function createLocalHostMissionExecutionService(
         )
       ).flat())
         if (context.owner.type === "expert-session") sessionIds.add(context.owner.ownerId);
-      if (added.length > 0) {
-        await deletionService.updateOwners(id, [...executionIds], {
-          mission,
-          sessionIds: [...sessionIds],
-        });
-        const outstanding = await confirmHistoricalRuntimeStops(
-          new PragmaPaths({ pragmaHome: options.pragmaHome }),
-          await readRuntimeSessionsForOwners(new PragmaPaths({ pragmaHome: options.pragmaHome }), [
-            ...sessionIds,
-            ...executionIds,
-          ]),
-        );
-        if (outstanding.length > 0)
-          throw Object.assign(new Error("MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED"), {
-            code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
-          });
-      }
     }
+    // Refresh even an older prepared deletion. Its original payload predates
+    // the distinction between in-process Pi sessions and orphan CLI children.
+    await deletionService.updateOwners(id, [...executionIds], {
+      mission,
+      sessionIds: [...sessionIds],
+      runtimeProcessOwnerIds: await runtimeProcessOwnerIds(),
+    });
     if (session !== undefined && sessionService.deleteSessionIfCurrent(id, session))
       sessionService.clearCompilation(id);
     if (active !== undefined) {
@@ -3299,7 +3279,16 @@ export function createLocalHostMissionExecutionService(
       trackMissionDeletionSettlement(pendingDeletionSettlements, id, combined);
     }
     const observers = pendingDeletionSettlements.get(id);
+    let stopping: Promise<void> | undefined = stop;
     deletionService.trackSettlement(id, async () => {
+      try {
+        await (stopping ??= stopRuntime());
+      } catch (error) {
+        // Only the next admitted worker attempt may start another stop. Starting
+        // it here would dispatch uncounted work even after the budget is spent.
+        stopping = undefined;
+        throw error;
+      }
       await Promise.all([
         observers,
         session?.finishDeletion() ?? active?.handle.finishDeletion?.() ?? Promise.resolve(),

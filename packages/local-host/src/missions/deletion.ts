@@ -1,14 +1,25 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, writeFile, rm, stat } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import {
   PragmaPaths,
+  decodePragmaPathSegment,
+  encodePragmaPathSegment,
+  applyAtomicStateMigration,
+  recoverAtomicStateMigration,
+  writeStateMigrationBackup,
   withFileLock,
   recoverRuntimeSessionDeletion,
   StorageDeletionJournalSchema,
   type PragmaLogger,
 } from "@pragma/core";
 import { z } from "zod";
+import {
+  MissionDeletionRecordSchema,
+  missionDeletionMigrationChain,
+  type MissionDeletionRecord,
+} from "./deletion-migrations/index.ts";
+import { stopHistoricalRuntimeProcesses } from "./historical-runtime-stop.ts";
 import { createIntegrationError } from "@pragma/shared/integration";
 
 export const MISSION_DELETION_STEPS = [
@@ -19,36 +30,12 @@ export const MISSION_DELETION_STEPS = [
   "settlement",
 ] as const;
 export type MissionDeletionStep = (typeof MISSION_DELETION_STEPS)[number];
-const StepSchema = z
-  .object({
-    done: z.boolean(),
-    attempts: z.number().int().nonnegative(),
-    nextAt: z.number().nonnegative(),
-    errorCode: z.string().optional(),
-  })
-  .strict();
-export const MissionDeletionRecordSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.mission-deletion/v1"),
-    missionId: z.string().min(1),
-    deletionId: z.string().uuid(),
-    phase: z.enum(["prepared", "committed", "completed"]),
-    executionIds: z.array(z.string().min(1)),
-    payload: z.record(z.string(), z.unknown()),
-    missionPath: z.string().optional(),
-    steps: z
-      .object({
-        usage: StepSchema,
-        memory: StepSchema,
-        drafts: StepSchema,
-        claims: StepSchema,
-        settlement: StepSchema,
-      })
-      .strict(),
-    createdAt: z.string().datetime(),
-  })
-  .strict();
-export type MissionDeletionRecord = z.infer<typeof MissionDeletionRecordSchema>;
+export const MISSION_DELETION_MAX_RETRIES = 10;
+const RETRY_EXHAUSTED = "mission.delete_cleanup_retry_exhausted";
+export {
+  MissionDeletionRecordSchema,
+  type MissionDeletionRecord,
+} from "./deletion-migrations/index.ts";
 export type MissionDeletionPorts = Record<
   MissionDeletionStep,
   (record: MissionDeletionRecord, signal: AbortSignal) => Promise<void>
@@ -58,9 +45,36 @@ export async function readMissionDeletionRecord(
   paths: PragmaPaths,
   id: string,
 ): Promise<MissionDeletionRecord | undefined> {
+  return await withFileLock(
+    `${paths.missionDeletion(id)}.lock`,
+    async () => await readMissionDeletionRecordUnlocked(paths, id),
+    { operation: "mission-deletion.read" },
+  );
+}
+
+async function readMissionDeletionRecordUnlocked(
+  paths: PragmaPaths,
+  id: string,
+): Promise<MissionDeletionRecord | undefined> {
   for (const path of [paths.missionDeletion(id), paths.missionDeletionCompleted(id)]) {
     try {
-      const record = MissionDeletionRecordSchema.parse(JSON.parse(await readFile(path, "utf8")));
+      const resource = { family: "pragma.mission-deletion", id };
+      const validateDocuments = (documents: Readonly<Record<string, unknown>>) => {
+        if (
+          Object.keys(documents).length !== 1 ||
+          MissionDeletionRecordSchema.parse(documents[basename(path)]).missionId !== id
+        )
+          throw new Error("Mission deletion migration owner mismatch.");
+      };
+      await recoverAtomicStateMigration({
+        aggregateRoot: dirname(path),
+        journalFile: `${path}.migration`,
+        resource,
+        validateDocuments,
+      });
+      const source = await readFile(path, "utf8");
+      const upgraded = missionDeletionMigrationChain.upgrade(JSON.parse(source));
+      const record = upgraded.value;
       if (record.missionId !== id)
         throw createIntegrationError({
           code: "STORAGE_CORRUPTED",
@@ -73,6 +87,26 @@ export async function readMissionDeletionRecord(
             reason: "owner_mismatch",
           },
         });
+      if (upgraded.migrated) {
+        const backup = join(
+          paths.archivesRoot(),
+          "storage-migrations",
+          "mission-deletion-v2",
+          encodePragmaPathSegment(id),
+          path === paths.missionDeletion(id) ? "pending.json" : "completed.json",
+        );
+        await mkdir(dirname(backup), { recursive: true, mode: 0o700 });
+        await writeStateMigrationBackup(backup, source);
+        await applyAtomicStateMigration({
+          aggregateRoot: dirname(path),
+          journalFile: `${path}.migration`,
+          resource,
+          fromVersion: upgraded.fromVersion,
+          toVersion: upgraded.toVersion,
+          documents: { [basename(path)]: record },
+          validateDocuments,
+        });
+      }
       return record;
     } catch (error) {
       if (!missing(error)) throw error;
@@ -175,7 +209,7 @@ export function createMissionDeletionService(options: {
     await withFileLock(
       `${options.paths.missionDeletion(id)}.lock`,
       async () => {
-        const record = await read(id);
+        const record = await readMissionDeletionRecordUnlocked(options.paths, id);
         if (record === undefined) throw new Error("Mission deletion record is missing.");
         const updated = action(record);
         if (updated !== record) await save(updated);
@@ -201,19 +235,67 @@ export function createMissionDeletionService(options: {
       `${options.paths.missionDeletion(record.missionId)}.${step}.lock`,
       async () => {
         if (pending.has(key)) return;
-        const fresh = await read(record.missionId);
-        if (
-          fresh === undefined ||
-          fresh.phase !== "committed" ||
-          fresh.steps[step].done ||
-          fresh.steps[step].nextAt > Date.now()
-        )
-          return;
+        let admittedRecord: MissionDeletionRecord | undefined;
+        await mutate(record.missionId, (current) => {
+          const state = current.steps[step];
+          if (current.phase !== "committed" || state.done || state.nextAt > Date.now())
+            return current;
+          if (state.runs > 0 && current.retryAttempts >= MISSION_DELETION_MAX_RETRIES) {
+            errors.set(key, RETRY_EXHAUSTED);
+            if (step === "settlement") settlements.delete(record.missionId);
+            return current;
+          }
+          admittedRecord = {
+            ...current,
+            retryAttempts: current.retryAttempts + (state.runs > 0 ? 1 : 0),
+            steps: { ...current.steps, [step]: { ...state, runs: state.runs + 1 } },
+          };
+          return admittedRecord;
+        });
+        const fresh = admittedRecord;
+        if (fresh === undefined) return;
         const stepStartedAt = performance.now();
         const abort = new AbortController();
         const operation = Promise.resolve().then(async () => {
-          await options.ports[step](fresh, abort.signal);
-          if (step === "settlement") await settlements.get(fresh.missionId)?.();
+          const cleanups = [Promise.resolve().then(() => options.ports[step](fresh, abort.signal))];
+          if (step === "settlement") {
+            cleanups.push(Promise.resolve().then(() => settlements.get(fresh.missionId)?.()));
+            // Existing payload fields retain the owner graph across Host restarts.
+            // Orphan teardown proceeds even while a native close is unresponsive.
+            cleanups.push(
+              (async () => {
+                const sessionIds = z.array(z.string().min(1)).parse(fresh.payload.sessionIds ?? []);
+                // New deletions distinguish in-process hosts from independent CLI
+                // children. Legacy deletion records retain their existing fallback.
+                const ownerIds = z
+                  .array(z.string().min(1))
+                  .parse(
+                    fresh.payload.runtimeProcessOwnerIds ?? [...sessionIds, ...fresh.executionIds],
+                  );
+                try {
+                  await stopHistoricalRuntimeProcesses(
+                    options.paths,
+                    ownerIds,
+                    fresh.steps.settlement.attempts > 0 ? "SIGKILL" : "SIGTERM",
+                  );
+                } catch (error) {
+                  if (
+                    !(error instanceof Error) ||
+                    error.message !== "MISSION_DELETE_PROCESS_CLEANUP_PENDING" ||
+                    fresh.steps.settlement.attempts > 0
+                  )
+                    throw error;
+                  // Escalate independently of native close: it may be waiting on
+                  // the very child that ignored SIGTERM. Keep the worker lease.
+                  await new Promise<void>((resolve) => setTimeout(resolve, 250));
+                  await stopHistoricalRuntimeProcesses(options.paths, ownerIds, "SIGKILL");
+                }
+              })(),
+            );
+          }
+          const outcomes = await Promise.allSettled(cleanups);
+          const failure = outcomes.find((outcome) => outcome.status === "rejected");
+          if (failure?.status === "rejected") throw failure.reason;
         });
         pending.set(key, operation);
         void operation.then(
@@ -250,6 +332,7 @@ export function createMissionDeletionService(options: {
               steps: {
                 ...current.steps,
                 [step]: {
+                  ...current.steps[step],
                   done: expired,
                   attempts,
                   nextAt: Date.now() + BACKOFF[Math.min(attempts - 1, BACKOFF.length - 1)]!,
@@ -314,9 +397,10 @@ export function createMissionDeletionService(options: {
     for (const name of names.filter((name) => name.endsWith(".json"))) {
       let record: MissionDeletionRecord;
       try {
-        record = MissionDeletionRecordSchema.parse(
-          JSON.parse(await readFile(join(options.paths.missionDeletionRoot(), name), "utf8")),
-        );
+        const id = decodePragmaPathSegment(name.slice(0, -5));
+        const loaded = await read(id);
+        if (loaded === undefined) continue;
+        record = loaded;
       } catch (error) {
         errors.set(name, "MISSION_DELETE_RECORD_INVALID");
         options.logger.warn(
@@ -333,30 +417,49 @@ export function createMissionDeletionService(options: {
       // A durable Host commit is sufficient after trash and its journal expire.
       // Only the prepare/commit crash window requires transaction recovery.
       if (record.phase === "prepared") {
+        // An intent with no storage journal is waiting for an explicit delete,
+        // rather than a failed background recovery attempt.
         try {
-          let journal = JSON.parse(
-            await readFile(
-              join(options.paths.deletionJournalRoot(), `${record.deletionId}.json`),
-              "utf8",
+          await stat(join(options.paths.deletionJournalRoot(), `${record.deletionId}.json`));
+        } catch (error) {
+          if (missing(error)) continue;
+        }
+        let admitted = false;
+        await mutate(record.missionId, (current) => {
+          if (current.phase !== "prepared") return current;
+          if (current.retryAttempts >= MISSION_DELETION_MAX_RETRIES) {
+            errors.set(current.missionId, RETRY_EXHAUSTED);
+            settlements.delete(current.missionId);
+            return current;
+          }
+          admitted = true;
+          return { ...current, retryAttempts: current.retryAttempts + 1 };
+        });
+        if (!admitted) continue;
+        try {
+          let journal = StorageDeletionJournalSchema.parse(
+            JSON.parse(
+              await readFile(
+                join(options.paths.deletionJournalRoot(), `${record.deletionId}.json`),
+                "utf8",
+              ),
             ),
-          ) as {
-            schemaVersion?: unknown;
-            deletionId?: unknown;
-            owner?: { id?: unknown };
-            status?: unknown;
-          };
+          );
           if (
             journal.schemaVersion !== "pragma.storage-deletion/v1" ||
             journal.deletionId !== record.deletionId ||
-            journal.owner?.id !== record.missionId
+            journal.owner.id !== record.missionId ||
+            journal.owner.type !== "mission"
           )
             throw new Error("Mission deletion transaction mismatch.");
           if (journal.status !== "trashed") {
             await recoverRuntimeSessionDeletion(options.paths, record.deletionId);
-            journal = JSON.parse(
-              await readFile(
-                join(options.paths.deletionJournalRoot(), `${record.deletionId}.json`),
-                "utf8",
+            journal = StorageDeletionJournalSchema.parse(
+              JSON.parse(
+                await readFile(
+                  join(options.paths.deletionJournalRoot(), `${record.deletionId}.json`),
+                  "utf8",
+                ),
               ),
             );
           }
@@ -390,6 +493,17 @@ export function createMissionDeletionService(options: {
       if (MISSION_DELETION_STEPS.every((step) => record.steps[step].done))
         finalizeIds.add(record.missionId);
       for (const step of MISSION_DELETION_STEPS) {
+        if (
+          !record.steps[step].done &&
+          record.steps[step].runs > 0 &&
+          record.retryAttempts >= MISSION_DELETION_MAX_RETRIES
+        ) {
+          errors.set(`${record.missionId}:${step}`, RETRY_EXHAUSTED);
+          // No further admission can use this closure. Drop retained native
+          // Session/Execution references; durable failure evidence stays on disk.
+          if (step === "settlement") settlements.delete(record.missionId);
+          continue;
+        }
         if (
           !record.steps[step].done &&
           record.steps[step].nextAt <= Date.now() &&
@@ -477,11 +591,12 @@ export function createMissionDeletionService(options: {
       return await withFileLock(
         `${options.paths.missionDeletion(input.missionId)}.lock`,
         async () => {
-          const existing = await read(input.missionId);
+          const existing = await readMissionDeletionRecordUnlocked(options.paths, input.missionId);
           if (existing !== undefined) return existing;
-          const step = () => ({ done: false, attempts: 0, nextAt: 0 });
+          const step = () => ({ done: false, attempts: 0, runs: 0, nextAt: 0 });
           const record = MissionDeletionRecordSchema.parse({
-            schemaVersion: "pragma.mission-deletion/v1",
+            schemaVersion: "pragma.mission-deletion/v2",
+            retryAttempts: 0,
             ...input,
             deletionId: randomUUID(),
             phase: "prepared",

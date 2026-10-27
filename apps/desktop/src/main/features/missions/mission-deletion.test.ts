@@ -8,6 +8,7 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   createRuntimeSessionRecord,
   updateRuntimeSessionRecord,
+  readRuntimeSessionsForOwners,
   createStaticRuntimeResolver,
   createNoopLoggerProvider,
   PragmaPaths,
@@ -48,6 +49,7 @@ afterEach(async () => {
 async function fixture(
   closeSession: () => Promise<void> = async () => {},
   providedRuntime?: RuntimeAdapter,
+  startTurn?: () => Promise<{ outputText: string; runtimeSessionId: string }>,
 ) {
   const root = await mkdtemp(join(tmpdir(), "pragma-delete-integration-"));
   roots.push(root);
@@ -89,14 +91,17 @@ async function fixture(
   });
   const runtime =
     providedRuntime ??
-    defineRuntimeTestDriver<never, { id: string }>({
-      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-      createSession: () => ({ id: "native" }),
-      readSession: (session) => ({ runtimeSessionId: session.id }),
-      startTurn: () => ({ outputText: "done", runtimeSessionId: "native" }),
-      mapEvent: () => ({ events: [] }),
-      closeSession,
-    });
+    defineRuntimeTestDriver<never, { id: string }>(
+      {
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: () => ({ id: "native" }),
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        startTurn: startTurn ?? (() => ({ outputText: "done", runtimeSessionId: "native" })),
+        mapEvent: () => ({ events: [] }),
+        closeSession,
+      },
+      { sessionProcess: "host" },
+    );
   const executions = createSqliteExecutionStore({ pragmaHome: paths.root });
   stores.push(executions);
   const runner = createDesktopMissionTestApplication({
@@ -119,7 +124,7 @@ async function fixture(
 }
 describe("Mission deletion integration", () => {
   it.runIf(process.platform === "linux" || process.platform === "darwin")(
-    "deletes a completed historical Mission with a stale running Runtime outside Host memory",
+    "deletes immediately with an orphan Runtime and stops the process in background",
     async () => {
       const target = await fixture();
       await target.runner.startRun(target.mission.id);
@@ -153,12 +158,6 @@ describe("Mission deletion integration", () => {
           child.once("spawn", resolve);
           child.once("error", reject);
         });
-        await expect(target.runner.delete(target.mission.id)).rejects.toMatchObject({
-          code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
-        });
-        await access(target.missions.storagePath!(target.mission.id));
-        child.kill();
-        await exited;
         await target.runner.delete(target.mission.id);
         await expect(access(target.missions.storagePath!(target.mission.id))).rejects.toMatchObject(
           {
@@ -166,46 +165,76 @@ describe("Mission deletion integration", () => {
           },
         );
         expect((await target.deletion.read(target.mission.id))?.phase).toBe("committed");
+        await target.deletion.runOnce();
+        await exited;
+        expect(child.signalCode).toBe("SIGTERM");
       } finally {
         child.kill();
         await exited;
       }
     },
   );
-  it("retains owners with an additional unconfirmed Runtime and retries after confirmation", async () => {
-    const target = await fixture();
-    await target.runner.startRun(target.mission.id);
-    await vi.waitFor(
-      async () =>
-        expect((await target.missions.get(target.mission.id)).execution?.status).toBe("succeeded"),
-      { timeout: 10_000 },
-    );
-    const mission = await target.missions.get(target.mission.id);
-    const foreign = await createRuntimeSessionRecord({
-      paths: target.paths,
-      owner: { type: "expert-session", ownerId: mission.execution!.sessionId! },
-      systemSessionId: "foreign-native",
-      agentId: "expert",
-      runtime: { id: "fake", kind: "fake", displayName: "Fake" },
-      workspace: target.root,
-    });
-    await expect(target.runner.delete(target.mission.id)).rejects.toMatchObject({
-      code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
-    });
-    await access(target.missions.storagePath!(target.mission.id));
-    await updateRuntimeSessionRecord(target.paths, foreign, { processState: "stopped" });
-    await target.runner.delete(target.mission.id);
-    await expect(access(target.missions.storagePath!(target.mission.id))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-  });
-  it("retains the owner graph when Native close rejects and retries the original stop", async () => {
+  it.each(["fake", "cloud-pi-agent"])(
+    "deletes a historical %s Runtime without a stop acknowledgement",
+    async (kind) => {
+      const target = await fixture();
+      await target.runner.startRun(target.mission.id);
+      await vi.waitFor(
+        async () =>
+          expect((await target.missions.get(target.mission.id)).execution?.status).toBe(
+            "succeeded",
+          ),
+        { timeout: 10_000 },
+      );
+      const mission = await target.missions.get(target.mission.id);
+      const record = await createRuntimeSessionRecord({
+        paths: target.paths,
+        owner: { type: "expert-session", ownerId: mission.execution!.sessionId! },
+        systemSessionId: "historical-native",
+        agentId: "expert",
+        runtime: { id: kind, kind, displayName: kind },
+        workspace: target.root,
+        processOwner:
+          kind === "cloud-pi-agent"
+            ? {
+                type: "host",
+                processId: process.pid,
+                instanceId: randomUUID(),
+                processStartToken: null,
+              }
+            : null,
+      });
+      await updateRuntimeSessionRecord(target.paths, record, { processState: "running" });
+      if (kind === "cloud-pi-agent") {
+        // Reproduce an older failed deletion whose durable payload had no
+        // independent-process inventory. It must be refreshed on retry.
+        await target.deletion.prepare({
+          missionId: mission.id,
+          executionIds: [mission.execution!.id],
+          payload: { mission, sessionIds: [record.owner.ownerId] },
+          missionPath: target.missions.storagePath!(mission.id),
+        });
+      }
+      await target.runner.delete(target.mission.id);
+      if (kind === "cloud-pi-agent")
+        expect((await target.deletion.read(mission.id))?.payload.runtimeProcessOwnerIds).toEqual(
+          [],
+        );
+      await expect(access(target.missions.storagePath!(target.mission.id))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(await readRuntimeSessionsForOwners(target.paths, [record.owner.ownerId])).toEqual([]);
+      expect(
+        (await target.missions.list()).some((mission) => mission.id === target.mission.id),
+      ).toBe(false);
+      await expect(target.runner.delete(target.mission.id)).resolves.toBeUndefined();
+    },
+  );
+  it("commits when native close rejects and retries resource cleanup in background", async () => {
     const close = vi
       .fn<() => Promise<void>>()
-      .mockImplementationOnce(async () => {
-        throw new Error("Native close rejected.");
-      })
-      .mockImplementation(async () => undefined);
+      .mockRejectedValueOnce(new Error("Native close rejected."))
+      .mockResolvedValue(undefined);
     const target = await fixture(close);
     await target.runner.startRun(target.mission.id);
     await vi.waitFor(
@@ -213,19 +242,87 @@ describe("Mission deletion integration", () => {
         expect((await target.missions.get(target.mission.id)).execution?.status).toBe("succeeded"),
       { timeout: 10_000 },
     );
-    await expect(target.runner.delete(target.mission.id)).rejects.toMatchObject({
-      code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
-    });
-    await access(target.missions.storagePath!(target.mission.id));
-    expect((await target.deletion.read(target.mission.id))?.phase).toBe("prepared");
-    expect(close).toHaveBeenCalledOnce();
     await target.runner.delete(target.mission.id);
-    expect(close).toHaveBeenCalledTimes(2);
     await expect(access(target.missions.storagePath!(target.mission.id))).rejects.toMatchObject({
       code: "ENOENT",
     });
+    expect((await target.deletion.read(target.mission.id))?.phase).toBe("committed");
+    await target.deletion.runOnce();
+    expect(close).toHaveBeenCalledTimes(1);
+    const record = (await target.deletion.read(target.mission.id))!;
+    await writeFile(
+      target.paths.missionDeletion(target.mission.id),
+      JSON.stringify({
+        ...record,
+        steps: { ...record.steps, settlement: { ...record.steps.settlement, nextAt: 0 } },
+      }),
+    );
+    await target.deletion.runOnce();
+    await vi.waitFor(() => expect(close.mock.calls.length).toBeGreaterThanOrEqual(2));
   });
-
+  it("never starts another native stop when the ten-retry budget is exhausted", async () => {
+    const close = vi.fn(async () => {
+      throw new Error("Native close permanently rejected.");
+    });
+    const target = await fixture(close);
+    await target.runner.startRun(target.mission.id);
+    await vi.waitFor(
+      async () =>
+        expect((await target.missions.get(target.mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: 10_000 },
+    );
+    await target.runner.delete(target.mission.id);
+    for (let retry = 0; retry <= 10; retry++) {
+      await target.deletion.runOnce();
+      expect(close).toHaveBeenCalledTimes(1 + retry);
+      const record = (await target.deletion.read(target.mission.id))!;
+      expect(record.retryAttempts).toBe(retry);
+      await writeFile(
+        target.paths.missionDeletion(target.mission.id),
+        JSON.stringify({
+          ...record,
+          steps: { ...record.steps, settlement: { ...record.steps.settlement, nextAt: 0 } },
+        }),
+      );
+    }
+    await target.deletion.runOnce();
+    await target.deletion.runOnce();
+    expect(close).toHaveBeenCalledTimes(11);
+    expect(target.deletion.inspect().errorCode).toBeDefined();
+  });
+  it("deletes an active turn without waiting for its late model response", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = false;
+    const target = await fixture(undefined, undefined, async () => {
+      started = true;
+      await gate;
+      return { outputText: "late response", runtimeSessionId: "native" };
+    });
+    const running = target.runner.startRun(target.mission.id);
+    void running.catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(started).toBe(true), { timeout: 10_000 });
+      await target.runner.delete(target.mission.id);
+      await expect(access(target.missions.storagePath!(target.mission.id))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      release();
+      await running.catch(() => undefined);
+      await target.deletion.runOnce();
+      expect(
+        (await target.missions.list()).some((mission) => mission.id === target.mission.id),
+      ).toBe(false);
+      await expect(access(target.missions.storagePath!(target.mission.id))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      release();
+      await running.catch(() => undefined);
+    }
+  });
   it("commits with hung cleanup, shares duplicate deletes, and rejects late Mission writes", async () => {
     const target = await fixture();
     await Promise.all([
@@ -254,7 +351,7 @@ describe("Mission deletion integration", () => {
     expect(target.usage).toHaveBeenCalledOnce();
     expect((await target.deletion.read(target.mission.id))?.steps.memory.done).toBe(true);
   });
-  it("retains files on unconfirmed native stop and allows retry after the same stop finishes", async () => {
+  it("commits while native stop hangs and completes cleanup after it finishes", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -272,18 +369,14 @@ describe("Mission deletion integration", () => {
       { timeout: 10_000 },
     );
     const executionId = (await target.missions.get(target.mission.id)).execution!.id;
-    const nativeTimeout = globalThis.setTimeout;
-    const timeoutSpy = vi
-      .spyOn(globalThis, "setTimeout")
-      .mockImplementation(((callback, delay, ...args) =>
-        nativeTimeout(callback, delay === 15_000 ? 30 : delay, ...args)) as typeof setTimeout);
-    await expect(target.runner.delete(target.mission.id)).rejects.toMatchObject({
-      code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
+    await target.runner.delete(target.mission.id);
+    await expect(access(target.missions.storagePath!(target.mission.id))).rejects.toMatchObject({
+      code: "ENOENT",
     });
-    await access(target.missions.storagePath!(target.mission.id));
-    expect((await target.deletion.read(target.mission.id))?.phase).toBe("prepared");
+    expect((await target.deletion.read(target.mission.id))?.phase).toBe("committed");
+    await target.deletion.runOnce();
+    expect((await target.deletion.read(target.mission.id))?.steps.settlement.done).toBe(false);
     release();
-    timeoutSpy.mockRestore();
     await target.runner.delete(target.mission.id);
     expect(closes).toBe(1);
     const record = (await target.deletion.read(target.mission.id))!;
@@ -299,7 +392,7 @@ describe("Mission deletion integration", () => {
     });
   }, 60_000);
   it.runIf(process.env.PRAGMA_MISSION_DELETE_NATIVE === "1")(
-    "retains and retries deletion with a real suspended Codex process",
+    "deletes with a real suspended Codex process and cleans up after it resumes",
     async () => {
       let child: ChildProcessWithoutNullStreams | undefined;
       let ready = false;
@@ -332,23 +425,17 @@ describe("Mission deletion integration", () => {
         process.kill(child!.pid!, "SIGSTOP");
         suspended = true;
         const started = performance.now();
-        await expect(target.runner.delete(target.mission.id)).rejects.toMatchObject({
-          code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
-        });
-        await access(target.missions.storagePath!(target.mission.id));
-        process.stdout.write(
-          `MISSION_DELETE_NATIVE_TIMEOUT ${Math.round(performance.now() - started)}ms\n`,
-        );
-        process.kill(child!.pid!, "SIGCONT");
-        suspended = false;
-        const retry = performance.now();
         await target.runner.delete(target.mission.id);
-        expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
         await expect(access(target.missions.storagePath!(target.mission.id))).rejects.toMatchObject(
           { code: "ENOENT" },
         );
-        process.stdout.write(
-          `MISSION_DELETE_NATIVE_RETRY ${Math.round(performance.now() - retry)}ms\n`,
+        expect(performance.now() - started).toBeLessThan(5_000);
+        process.kill(child!.pid!, "SIGCONT");
+        suspended = false;
+        await target.deletion.runOnce();
+        await vi.waitFor(
+          () => expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true),
+          { timeout: 10_000 },
         );
       } finally {
         if (suspended) process.kill(child!.pid!, "SIGCONT");
