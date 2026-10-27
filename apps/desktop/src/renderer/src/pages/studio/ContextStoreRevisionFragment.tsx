@@ -573,18 +573,6 @@ export function ContextStoreRevisionFragment(props: {
                             ? t("revisionDraftAwaitingConfirmation")
                             : t(`revisionState.${job.state}`)}
                         </span>
-                        {job.error !== undefined && !awaitingConfirmation ? (
-                          <span
-                            className="form-error"
-                            role="alert"
-                            title={localizedContextStoreRevisionError(
-                              job.error,
-                              translateRevisionError,
-                            )}
-                          >
-                            {localizedContextStoreRevisionError(job.error, translateRevisionError)}
-                          </span>
-                        ) : null}
                       </span>
                       <time
                         className="revision-task-updated"

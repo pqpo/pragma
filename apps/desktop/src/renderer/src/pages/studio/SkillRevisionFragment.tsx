@@ -643,11 +643,6 @@ export function SkillRevisionFragment(props: {
                         <span className={`revision-task-state is-${entry.job.state}`}>
                           {t(`revisionState.${entry.job.state}`)}
                         </span>
-                        {entry.job.error ? (
-                          <span className="form-error" role="alert" title={entry.job.error.message}>
-                            {entry.job.error.message}
-                          </span>
-                        ) : null}
                       </span>
                       <time
                         className="revision-task-updated"

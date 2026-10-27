@@ -262,13 +262,10 @@ it("opens rejected Store history and its Diff after review while keeping all con
   const rejected = render().props as Parameters<typeof ContextStoreRevisionDiffFragment>[0];
   rejected.onBack();
   const history = elements(render());
-  expect(
-    history.some(
-      (node) =>
-        node.props.className === "form-error" &&
-        node.props.title === i18n.t("revisionUserRejected", { ns: "studio" }),
-    ),
-  ).toBe(true);
+  expect(history.some((node) => node.props.className === "revision-task-state is-rejected")).toBe(
+    true,
+  );
+  expect(history.some((node) => node.props.className === "form-error")).toBe(false);
   const detail = open();
   expect(detail.job.state).toBe("rejected");
   expect(detail.draft.overlay.files[0]?.content).toBe("Verify results before completion.");
