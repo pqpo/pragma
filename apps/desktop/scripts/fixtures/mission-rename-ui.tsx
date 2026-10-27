@@ -4,6 +4,7 @@ import { flushSync } from "react-dom";
 import { i18n } from "../../src/renderer/src/i18n/index.ts";
 import { MissionRailRow } from "../../src/renderer/src/pages/missions/mission-rail.tsx";
 import { MissionRenameDialog } from "../../src/renderer/src/pages/missions/mission-rename-dialog.tsx";
+import { ConfirmationDialog } from "../../src/renderer/src/components/Dialog.tsx";
 import type { MissionSummary } from "../../src/shared/contracts/index.ts";
 import "../../src/renderer/src/styles/index.css";
 
@@ -22,10 +23,12 @@ const mission = {
 let failSave = false;
 let saveCalls = 0;
 let opened = 0;
+let deleteCalls = 0;
 let pendingSave: (() => void) | undefined;
 function App() {
   const [title, setTitle] = useState(mission.title);
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   return (
     <main style={{ padding: 32 }}>
       <aside style={{ width: 300 }}>
@@ -41,12 +44,28 @@ function App() {
           }}
           onTogglePin={() => undefined}
           onMarkComplete={() => undefined}
-          onDelete={() => undefined}
+          onDelete={() => setDeleting(true)}
         />
       </aside>
       <button id="outside" type="button">
         Outside
       </button>
+      {deleting ? (
+        <ConfirmationDialog
+          title={i18n.t("deleteTitle", { ns: "missions" })}
+          description={i18n.t("deleteDescription", { ns: "missions", title })}
+          cancelLabel={i18n.t("actions.cancel", { ns: "common" })}
+          confirmLabel={i18n.t("deleteMission", { ns: "missions" })}
+          busyLabel={i18n.t("deleting", { ns: "missions" })}
+          busy={false}
+          tone="danger"
+          onCancel={() => setDeleting(false)}
+          onConfirm={() => {
+            deleteCalls += 1;
+            setDeleting(false);
+          }}
+        />
+      ) : null}
       {editing ? (
         <MissionRenameDialog
           mission={{ ...mission, title }}
@@ -241,6 +260,17 @@ export async function runMissionRenameUiTests() {
     assert(document.querySelector(".mission-row-preview"), "Focused Portal closed");
     key(document.activeElement as HTMLElement, "Tab");
     assert(
+      document.activeElement === element(".mission-row-preview-edit.is-danger"),
+      "Tab from rename did not reach delete",
+    );
+    key(document.activeElement as HTMLElement, "Tab", { shiftKey: true });
+    assert(
+      document.activeElement === element(".mission-row-preview-edit"),
+      "Shift+Tab from delete did not return to rename",
+    );
+    key(document.activeElement as HTMLElement, "Tab");
+    key(document.activeElement as HTMLElement, "Tab");
+    assert(
       document.activeElement === element("#outside"),
       "Tab from preview skipped the next control in page order",
     );
@@ -259,6 +289,25 @@ export async function runMissionRenameUiTests() {
     key(element(".mission-rename-input"), "Escape");
     await frames();
     assert(!document.querySelector('[role="dialog"]'), "Escape did not cancel dialog");
+
+    // Deletion from an active task's preview requires explicit confirmation.
+    for (const confirm of [false, true]) {
+      mouse(row, "mouseover");
+      advance(500);
+      mouse(element(".mission-row-preview-edit.is-danger"), "click");
+      await frames();
+      assert(!document.querySelector(".mission-row-preview"), "Delete left preview open");
+      assert(deleteCalls === 0 && opened === 0, "Delete ran before confirmation or opened task");
+      const dialog = element('[role="alertdialog"]');
+      assert(dialog.textContent?.includes("修改后的任务"), "Delete confirmation lost task title");
+      mouse(
+        element(confirm ? ".danger-button" : '[role="alertdialog"] .secondary-button'),
+        "click",
+      );
+      await frames();
+      assert(!document.querySelector('[role="alertdialog"]'), "Delete dialog did not close");
+      assert(Number(deleteCalls) === (confirm ? 1 : 0), "Delete confirmation/cancel was ignored");
+    }
 
     // Unmounting a row cancels its pending opening timer; long existing titles remain intact.
     mouse(row, "mouseover");
@@ -291,7 +340,7 @@ export async function runMissionRenameUiTests() {
     return {
       passed: true,
       checks:
-        "hover timers, Portal click and Tab order, Unicode validation, IME defaults and Escape, busy focus trap, retry, duplicate save, refresh",
+        "hover timers, Portal click and Tab order, delete confirmation and cancel, Unicode validation, IME defaults and Escape, busy focus trap, retry, duplicate save, refresh",
     };
   } finally {
     window.setTimeout = nativeSet;

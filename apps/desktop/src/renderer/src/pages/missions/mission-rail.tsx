@@ -524,6 +524,7 @@ function MissionRowPreviewCard(props: {
   readonly onEnter: () => void;
   readonly onLeave: () => void;
   readonly onRename: () => void;
+  readonly onDelete: () => void;
   readonly id: string;
   readonly mission: MissionSummary;
   readonly open: boolean;
@@ -600,6 +601,18 @@ function MissionRowPreviewCard(props: {
             }}
           >
             <PencilSimple size={14} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="mission-row-preview-edit is-danger"
+            aria-label={t("deleteNamed", { title: props.mission.title })}
+            title={t("deleteMission")}
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onDelete();
+            }}
+          >
+            <Trash size={14} aria-hidden="true" />
           </button>
         </strong>
       </div>
@@ -736,6 +749,14 @@ export function MissionRailRow(props: {
       event.preventDefault();
       cardRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
     } else if (cardRef.current?.contains(event.target as Node)) {
+      const cardButtons = [...cardRef.current.querySelectorAll<HTMLButtonElement>("button")];
+      const currentIndex = cardButtons.indexOf(event.target as HTMLButtonElement);
+      const adjacent = cardButtons[currentIndex + (event.shiftKey ? -1 : 1)];
+      if (adjacent !== undefined) {
+        event.preventDefault();
+        adjacent.focus();
+        return;
+      }
       if (event.shiftKey) {
         event.preventDefault();
         last?.focus();
@@ -880,6 +901,11 @@ export function MissionRailRow(props: {
           rowRef.current?.querySelector<HTMLButtonElement>(".mission-row-open")?.focus();
           hidePreview();
           props.onRename(props.mission);
+        }}
+        onDelete={() => {
+          rowRef.current?.querySelector<HTMLButtonElement>(".mission-row-open")?.focus();
+          hidePreview();
+          props.onDelete(props.mission);
         }}
         id={previewId}
         mission={props.mission}

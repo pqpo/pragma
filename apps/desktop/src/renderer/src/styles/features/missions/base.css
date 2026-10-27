@@ -1378,6 +1378,14 @@
   color: var(--ui-text);
 }
 
+.mission-row-preview-edit.is-danger {
+  color: var(--ui-danger);
+}
+
+.mission-row-preview-edit.is-danger:hover {
+  background: var(--ui-danger-subtle);
+}
+
 .mission-row-preview-heading > strong {
   font-weight: 600;
 }
