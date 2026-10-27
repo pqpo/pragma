@@ -342,7 +342,7 @@
 
 .capability-row-actions .capability-row-menu button:hover,
 .capability-row-actions .capability-row-menu button:focus-visible {
-  background: var(--surface-muted);
+  background: var(--ui-surface-subtle);
 }
 
 .capability-row-actions .capability-row-menu button:focus-visible {
