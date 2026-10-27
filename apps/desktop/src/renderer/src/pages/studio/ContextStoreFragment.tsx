@@ -616,15 +616,10 @@ export function ContextStoreDetailFragment(props: {
 
   const openEntry = async (entry: ContextStoreEntry) => {
     if (entry.kind === "directory") {
-      if (await save()) {
-        loadRequestRef.current++;
-        setSelectedEntry(entry);
-        setContent(null);
-        try {
-          if (await directories.toggle(entry.id)) setError(null);
-        } catch (cause) {
-          setError(errorMessage(cause));
-        }
+      try {
+        if (await directories.toggle(entry.id)) setError(null);
+      } catch (cause) {
+        setError(errorMessage(cause));
       }
       return;
     }

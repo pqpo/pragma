@@ -350,10 +350,6 @@ export function SkillFileWorkspace(props: {
         onOpenEntry={(entry) => {
           if (savingRef.current) return;
           if (entry.kind === "directory") {
-            requestRef.current++;
-            setSelectedEntry(entry);
-            setSelected(null);
-            setLoading(false);
             void directories
               .toggle(entry.id)
               .then((changed) => {
