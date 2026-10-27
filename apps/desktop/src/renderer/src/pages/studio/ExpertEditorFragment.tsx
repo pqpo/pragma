@@ -593,29 +593,6 @@ export function ExpertEditorFragment(props: {
                     ) : null}
                   </div>
                 ) : null}
-                {selectedRuntimeInfo?.permissionModes ? (
-                  <div className="capability-editor-field">
-                    <span>{t("permissionMode", { ns: "studio" })}</span>
-                    <SelectMenu
-                      ariaLabel={t("permissionMode", { ns: "studio" })}
-                      className="form-select"
-                      menuClassName="expert-permission-menu"
-                      value={selectedPermissionModeId ?? ""}
-                      disabled={draft.model === null}
-                      options={permissionOptions}
-                      onChange={(permissionModeId) => {
-                        if (draft.model !== null)
-                          setDraft({ ...draft, model: { ...draft.model, permissionModeId } });
-                      }}
-                    />
-                    {selectedPermissionOption ? (
-                      <small className="field-hint">{selectedPermissionOption.description}</small>
-                    ) : null}
-                    <small className="field-hint">
-                      {t("permissionModeHint", { ns: "studio" })}
-                    </small>
-                  </div>
-                ) : null}
                 {draft.model !== null ? (
                   <div className="capability-editor-field">
                     <span>{t("thinkingLevel", { ns: "studio" })}</span>
@@ -648,6 +625,29 @@ export function ExpertEditorFragment(props: {
                         });
                       }}
                     />
+                  </div>
+                ) : null}
+                {selectedRuntimeInfo?.permissionModes ? (
+                  <div className="capability-editor-field">
+                    <span>{t("permissionMode", { ns: "studio" })}</span>
+                    <SelectMenu
+                      ariaLabel={t("permissionMode", { ns: "studio" })}
+                      className="form-select"
+                      menuClassName="expert-permission-menu"
+                      value={selectedPermissionModeId ?? ""}
+                      disabled={draft.model === null}
+                      options={permissionOptions}
+                      onChange={(permissionModeId) => {
+                        if (draft.model !== null)
+                          setDraft({ ...draft, model: { ...draft.model, permissionModeId } });
+                      }}
+                    />
+                    {selectedPermissionOption ? (
+                      <small className="field-hint">{selectedPermissionOption.description}</small>
+                    ) : null}
+                    <small className="field-hint">
+                      {t("permissionModeHint", { ns: "studio" })}
+                    </small>
                   </div>
                 ) : null}
                 <ExpertCapabilityPicker
