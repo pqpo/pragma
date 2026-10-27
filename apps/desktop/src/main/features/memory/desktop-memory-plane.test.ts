@@ -508,6 +508,125 @@ describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
     await plane.stop();
   });
 
+  it.each(["both", "episodic", "semantic"] as const)(
+    "counts %s conversation failures once and removes the logical task from both views",
+    async (failedType) => {
+      const pragmaHome = await temporaryRoot("pragma-memory-logical-attention-");
+      const plane = await createDesktopMemoryPlane({
+        pragmaHome,
+        logger: createPragmaLogger(undefined, { component: "test.logical-attention" }),
+      });
+      try {
+        const now = new Date();
+        const evidence = [
+          MemoryEvidenceEnvelopeSchema.parse({
+            schemaVersion: "pragma.memory-evidence/v1",
+            messageId: "terminal-memory-extraction-failed",
+            topic: "execution.execution.terminal",
+            schemaRef: "pragma.memory.execution-terminal/v2",
+            sourceRef: {
+              type: "pragma.execution",
+              id: "execution-memory-extraction-failed",
+              canonicalEventId: "canonical-memory-extraction-failed",
+            },
+            subjectRefs: [{ type: "pragma.expert", id: "7k2m9q4v8np6r3dt" }],
+            correlationId: "execution-memory-extraction-failed",
+            occurredAt: now.toISOString(),
+            visibility: { mode: "host-private" },
+            sensitivity: "internal",
+            bindings: [],
+            attribution: {
+              rootRef: { type: "pragma.expert", id: "7k2m9q4v8np6r3dt" },
+              producerRefs: [{ type: "pragma.expert", id: "7k2m9q4v8np6r3dt" }],
+            },
+            policySnapshot: {
+              capture: true,
+              recall: true,
+              learning: "local-candidates",
+              appliedRevisions: [],
+            },
+            payload: { outcome: "succeeded" },
+          }),
+        ];
+
+        await plane.episodicStore.ingest(evidence);
+        await plane.semanticStore.ingest(evidence);
+        const due = new Date(now.getTime() + 6 * 60 * 60 * 1_000);
+        const failure = {
+          diagnostic: {
+            schemaVersion: "pragma.memory-extraction-failure/v1" as const,
+            code: "memory_curator_failed",
+            message: "Memory Curator failed.",
+            phase: "curator_run" as const,
+            failedAt: due.toISOString(),
+          },
+          now: due,
+          retry: "configuration" as const,
+        };
+        if (failedType === "both" || failedType === "episodic") {
+          const job = await plane.episodicStore.claimDueJob(due);
+          expect(job).toBeDefined();
+          await plane.episodicStore.fail({ ...failure, job: job! });
+        }
+        if (failedType === "both" || failedType === "semantic") {
+          const job = await plane.semanticStore.claimDueJob(due);
+          expect(job).toBeDefined();
+          await plane.semanticStore.fail({ ...failure, job: job! });
+        }
+        const attention = await plane.conversationExtractionJobs.listJobsPage({
+          statuses: ["attention"],
+          sortKeyPrefix: "conversation",
+          limit: 1,
+        });
+        expect(attention.total).toBe(1);
+        expect((await plane.getStatus()).extractionNeedsAttention).toBe(attention.total);
+        const task = attention.jobs[0]!;
+        const retireJobs = vi.fn(async () => undefined);
+        await plane.setConversationExtractor(undefined, { retireJobs });
+        await plane.manageMemoryJob({
+          module: "conversation",
+          action: "delete",
+          id: task.job.id,
+          expectedRevision: task.job.revision,
+        });
+        expect(retireJobs).toHaveBeenCalledOnce();
+        expect((await plane.getStatus()).extractionNeedsAttention).toBe(0);
+        expect(
+          (
+            await plane.conversationExtractionJobs.listJobsPage({
+              statuses: ["attention"],
+              sortKeyPrefix: "conversation",
+              limit: 1,
+            })
+          ).total,
+        ).toBe(0);
+      } finally {
+        await plane.stop();
+      }
+    },
+  );
+
+  it("counts independent learning tasks using full lane totals rather than page lengths", async () => {
+    const pragmaHome = await temporaryRoot("pragma-memory-learning-attention-");
+    const plane = await createDesktopMemoryPlane({
+      pragmaHome,
+      logger: createPragmaLogger(undefined, { component: "test.learning-attention" }),
+    });
+    try {
+      vi.spyOn(plane.knowledgeLearningStore, "listJobsPage").mockResolvedValue({
+        total: 12,
+        jobs: [],
+      });
+      vi.spyOn(plane.skillLearningStore, "listJobsPage").mockResolvedValue({
+        total: 3,
+        jobs: [],
+      });
+      expect((await plane.getStatus()).extractionNeedsAttention).toBe(15);
+    } finally {
+      await plane.stop();
+    }
+  });
+
   it("does not downgrade an unavailable module when extraction also needs attention", () => {
     expect(resolveMemoryModuleHealthStatus("unavailable", 1)).toBe("unavailable");
     expect(resolveMemoryModuleHealthStatus("degraded", 1)).toBe("degraded");

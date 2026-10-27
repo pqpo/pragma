@@ -159,6 +159,7 @@ export interface DesktopMemoryPlane {
   deleteExecutionState(executionIds: readonly string[]): Promise<void>;
   maintainStorage(): Promise<void>;
   getStatus(): Promise<{
+    readonly extractionNeedsAttention: number;
     readonly hostDelivery?:
       | readonly {
           moduleId: string;
@@ -950,10 +951,31 @@ export async function createDesktopMemoryPlane(options: {
             ? {}
             : { lastErrorCode: retrievalStatus.errorCode }),
         });
+      // Use the board's grouped lane: two delivery failures can belong to one task.
+      const [conversationAttention, knowledgeAttention, skillAttention] = await Promise.all([
+        data.conversationExtractionJobs.listJobsPage({
+          statuses: ["attention"],
+          sortKeyPrefix: "conversation",
+          limit: 1,
+        }),
+        knowledge.store.listJobsPage({
+          statuses: ["needs_attention"],
+          sortKeyPrefix: "knowledge",
+          limit: 1,
+        }),
+        skill.store.listJobsPage({
+          statuses: ["needs_attention"],
+          sortKeyPrefix: "skill",
+          limit: 1,
+        }),
+      ]);
+      const extractionNeedsAttention =
+        conversationAttention.total + knowledgeAttention.total + skillAttention.total;
       const hostDelivery = options.hostDeliveryDiagnostics?.() ?? [];
       const currentError = lastError ?? attentionError ?? retrievalError;
       return {
         hostDelivery,
+        extractionNeedsAttention,
         state: stopped
           ? "stopped"
           : currentError !== undefined ||

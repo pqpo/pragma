@@ -1829,10 +1829,7 @@ export function MemoryDegradedAlert(props: {
   const [dismissedSignature, setDismissedSignature] = useState<string>();
   if (props.health?.state !== "degraded") return null;
   if (dismissedSignature === signature) return null;
-  const attention = props.health.modules.reduce(
-    (total, module) => total + (module.work?.needsAttention ?? 0),
-    0,
-  );
+  const attention = props.health.extractionNeedsAttention;
   const extractionOnly =
     attention > 0 &&
     !props.health.modules.some((module) => module.status === "unavailable") &&
@@ -1871,6 +1868,7 @@ function memoryDegradedAlertSignature(
   if (health?.state !== "degraded") return undefined;
   return JSON.stringify({
     state: health.state,
+    extractionNeedsAttention: health.extractionNeedsAttention,
     lastError: health.lastError?.code,
     modules: health.modules.map((module) => ({
       id: module.moduleId,

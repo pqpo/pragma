@@ -212,6 +212,7 @@ describe("MemoryPage", () => {
       <MemoryHealth
         health={{
           state: "running",
+          extractionNeedsAttention: 0,
           feed: {
             lastSequence: 1_325,
             eventCount: 1_325,
@@ -541,6 +542,7 @@ describe("MemoryPage", () => {
         onViewTasks={() => undefined}
         health={{
           state: "degraded",
+          extractionNeedsAttention: 1,
           feed: {
             lastSequence: 4,
             eventCount: 4,
@@ -579,6 +581,29 @@ describe("MemoryPage", () => {
               },
               updatedAt: "2026-08-04T00:00:00.000Z",
             },
+            {
+              moduleId: "pragma.memory.semantic",
+              moduleVersion: "1.0.0",
+              status: "degraded",
+              lag: 0,
+              processed: 4,
+              retried: 0,
+              deadLettered: 0,
+              skipped: 0,
+              lastErrorCode: "memory_curator_failed",
+              work: {
+                records: 0,
+                pending: 0,
+                running: 0,
+                needsAttention: 1,
+                rejected: 0,
+                expired: 0,
+                evidenceRecords: 2,
+                evidenceBytes: 512,
+                truncatedExecutions: 0,
+              },
+              updatedAt: "2026-08-04T00:00:00.000Z",
+            },
           ],
           maintenance: {
             deletedEvents: 0,
@@ -592,6 +617,7 @@ describe("MemoryPage", () => {
     );
 
     const html = renderToStaticMarkup(alert);
+    expect(html).toContain("1 个提炼任务需要处理");
     expect(html).toContain("查看提炼任务");
     expect(html).toContain('role="alert"');
     expect(html).toContain("记忆提取需要处理");
@@ -606,6 +632,7 @@ describe("MemoryPage", () => {
       <MemoryDegradedAlert
         health={{
           state: "degraded",
+          extractionNeedsAttention: 1,
           feed: {
             lastSequence: 4,
             eventCount: 4,

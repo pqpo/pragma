@@ -48,6 +48,9 @@ falls back to the localized task kind and immutable creation time, without query
 Memory to invent a historical title. The card limits titles to two lines and shows one aggregate
 result; per-type outcomes remain available in task details.
 
+The All Memory attention alert uses the same grouped attention lane as the task board, counting
+Knowledge and Skill jobs independently. Per-module health counters continue to count deliveries.
+
 The UI groups both delivery records into one task, exposes both outcomes and the continuation
 count, and distinguishes continuation from an explicit fresh restart. Restart regenerates only
 unfinished types and preserves published Memory. Completed-history limits count the logical task,

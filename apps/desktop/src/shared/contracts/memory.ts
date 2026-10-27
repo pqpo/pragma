@@ -64,6 +64,7 @@ export const HostDeliveryDiagnosticSchema = z.object({
 });
 
 export const DesktopMemoryPlaneStatusSchema = z.object({
+  extractionNeedsAttention: z.number().int().nonnegative(),
   hostDelivery: z.array(HostDeliveryDiagnosticSchema).optional(),
   state: z.enum(["running", "stopped", "degraded"]),
   feed: z.object({

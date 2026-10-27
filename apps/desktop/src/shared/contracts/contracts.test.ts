@@ -146,6 +146,7 @@ describe("desktop memory contracts", () => {
     expect(
       DesktopMemoryPlaneStatusSchema.parse({
         state: "running",
+        extractionNeedsAttention: 0,
         feed: { lastSequence: 12, eventCount: 10 },
         delivery: { pending: 1, quarantined: 0 },
         modules: [],
