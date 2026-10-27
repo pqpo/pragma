@@ -1108,13 +1108,16 @@
   text-align: left;
 }
 
-.mission-row.has-loading .mission-row-open,
+.mission-row.has-loading .mission-row-open {
+  padding-right: 32px;
+}
+
 .mission-row.is-pinned .mission-row-open {
-  padding-right: 40px;
+  padding-right: 28px;
 }
 
 .mission-row.is-pinned.has-loading .mission-row-open {
-  padding-right: 72px;
+  padding-right: 56px;
 }
 
 .mission-row-open:focus-visible {
@@ -1175,7 +1178,7 @@
 }
 
 .mission-row.is-pinned .mission-row-loading {
-  right: 44px;
+  right: 36px;
 }
 
 .mission-row-loading > svg {
@@ -1196,18 +1199,23 @@
 
 .mission-row-icon-action {
   display: grid;
-  width: 32px;
+  width: 24px;
   height: 32px;
   place-items: center;
   padding: 0;
   border: 0;
   border-radius: var(--ui-radius-md);
-  background: transparent;
+  background: inherit;
   color: var(--faint);
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
   transition: opacity 140ms ease-out;
+}
+
+.mission-row-icon-action:not(:last-child) {
+  position: absolute;
+  right: 100%;
 }
 
 .mission-row:hover .mission-row-actions,
@@ -1222,7 +1230,8 @@
   pointer-events: auto;
 }
 
-.mission-row.is-active .mission-row-actions {
+.mission-row.is-active:hover .mission-row-actions,
+.mission-row.is-active:has(:focus-visible) .mission-row-actions {
   background: var(--ui-selection);
 }
 
