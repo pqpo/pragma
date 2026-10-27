@@ -1,6 +1,6 @@
 export const studio = {
   permissionMode: "權限模式",
-  permissionModeHint: "使用此 Harness 的執行權限。受管工具繼續遵守各自的審批策略。",
+  permissionModeHint: "MCP 等受管工具使用獨立審批策略；明確工具審批與業務強制審批仍然生效。",
   permissionModeLabels: {
     "full-access": "完全存取",
     "request-approval": "請求審批",
@@ -10,7 +10,82 @@ export const studio = {
     default: "預設審批",
     auto: "自動審批",
     "native-auto": "原生自動審批",
-    "auto-approve": "自動接受編輯（停用命令）",
+    "auto-approve": "編輯與命令免審批",
+  },
+
+  permissionModeTitles: {
+    "codex-local": {
+      "full-access": "完全存取（免審批）",
+      "request-approval": "工作區沙箱（越界時詢問）",
+      "read-only": "唯讀（禁止寫入）",
+      "auto-review": "自動審核越界請求",
+    },
+    "claude-code-local": {
+      bypassPermissions: "免審批執行",
+      default: "需要權限時詢問",
+      auto: "自動風險審核",
+    },
+    "qodercli-local": {
+      bypassPermissions: "免審批執行",
+      default: "需要權限時詢問",
+      auto: "由 Qoder 判斷權限",
+    },
+    "cloud-pi-agent": {
+      "full-access": "使用宿主權限執行",
+    },
+    antigravity: {
+      "full-access": "完全存取（免審批）",
+      "request-approval": "修改與命令先詢問",
+      "native-auto": "自動審核沙箱請求",
+    },
+  },
+  permissionModeReasons: {
+    "codex-local": { "auto-review": "目前尚未接通，暫不可選。" },
+    antigravity: { "native-auto": "目前尚未接通，暫不可選。" },
+  },
+  permissionModeDescriptions: {
+    "opencode-local": {
+      "full-access":
+        "適合需要網頁工具或工作區外檔案的任務。檔案編輯、命令和網頁工具無需逐次審批；明確禁止規則仍然生效。",
+      "request-approval":
+        "適合希望親自確認操作的任務。修改檔案、執行命令和使用網頁工具前詢問你。檔案工具不能直接存取工作區外目錄，技能目錄除外；獲批的命令仍可連網或存取外部檔案，並非沙箱隔離。",
+      "auto-approve":
+        "適合直接修改檔案、執行命令的任務，兩者無需審批。停用網頁工具，檔案工具僅可直接存取工作區和技能目錄。命令仍可連網或存取外部檔案，並非沙箱隔離；明確禁止規則仍然生效。",
+    },
+    "codex-local": {
+      "full-access":
+        "適合需要廣泛存取宿主環境的任務。讀寫檔案、執行命令不受執行階段沙箱限制，也無需執行階段審批；實際存取能力仍受宿主帳號權限限制。",
+      "request-approval":
+        "適合日常開發。可直接修改工作區檔案、執行沙箱允許的命令，無需逐次確認；需要擴大存取範圍時再詢問你，拒絕後繼續受沙箱限制。",
+      "read-only":
+        "適合程式碼審查、檢視檔案和排查問題。原生檔案工具和命令在唯讀沙箱內執行，不能寫入檔案，也不能申請擴大權限；MCP 工具另按各自策略執行。",
+      "auto-review": "用於代你審核擴大沙箱存取範圍的請求。",
+    },
+    "claude-code-local": {
+      bypassPermissions:
+        "適合自主完成任務。略過 Claude Code 對檔案修改、命令等工具操作的權限確認；此模式不會額外提供工作區沙箱。",
+      default:
+        "適合希望掌握關鍵操作的任務。Claude Code 按自身規則直接放行已獲允許的操作，其餘需要權限的操作交由你確認，並非每次讀取或執行命令都會詢問。",
+      auto: "適合減少手動確認。Claude Code 判斷操作風險，可能放行、拒絕或轉交你確認。需要版本與模型支援；不支援的模型可能退回檔案編輯免審批模式。",
+    },
+    "qodercli-local": {
+      bypassPermissions:
+        "適合自主完成任務。略過 Qoder 對檔案修改、命令等工具操作的權限確認；此模式不會額外提供工作區沙箱。",
+      default:
+        "適合希望掌握關鍵操作的任務。Qoder 按自身權限規則執行，需要審批的操作交由你確認，並非每個操作都會詢問。",
+      auto: "適合減少手動確認。由 Qoder 決定哪些操作直接執行；仍發起的審批請求交由你確認，也可能拒絕操作。不等於完全存取或唯讀模式。",
+    },
+    "cloud-pi-agent": {
+      "full-access":
+        "適合直接執行任務。按宿主帳號權限讀寫檔案和執行命令，無原生審批；可執行宿主允許的連網或外部檔案存取。Pi 不提供內建沙箱，目前僅支援此模式。",
+    },
+    antigravity: {
+      "full-access":
+        "適合直接執行任務。原生檔案和命令工具按宿主權限執行，無需逐次確認；不啟用原生命令沙箱。",
+      "request-approval":
+        "適合希望親自確認修改的任務。已識別的讀取工具可直接讀取允許目錄；檔案修改、命令和其他非讀取操作先由你審批。同時啟用原生命令沙箱，批准操作也不會解除沙箱限制。",
+      "native-auto": "用於由執行階段自動審核沙箱權限請求。",
+    },
   },
 
   skillSettings: "技能設定",

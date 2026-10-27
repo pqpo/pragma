@@ -13,14 +13,15 @@ export const permissionModes: RuntimePermissionCatalog = {
     {
       id: "request-approval",
       label: "Ask for approval",
-      description: "Edits and web requests ask; shell and external directories are disabled.",
+      description:
+        "Asks before edits, commands and web requests. Direct external directory access is restricted except runtime skills; approved commands are not sandboxed.",
       available: true,
     },
     {
       id: "auto-approve",
-      label: "Accept edits",
+      label: "Edit and run commands",
       description:
-        "Workspace edits are allowed; shell, external directories and unknown requests are denied.",
+        "Edits and commands run without approval. Web tools and direct external directory access are blocked except runtime skills. Commands are not sandboxed and can access the network and external files; explicit deny rules still apply.",
       available: true,
     },
   ],

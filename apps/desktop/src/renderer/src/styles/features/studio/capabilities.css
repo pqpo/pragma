@@ -1645,3 +1645,18 @@
 .drawer-scrim {
   background: rgb(var(--ui-shadow-rgb) / 28%);
 }
+
+.expert-permission-menu {
+  max-width: min(640px, calc(100vw - 24px));
+}
+
+.expert-permission-menu .ui-select-option {
+  padding-block: 8px;
+}
+
+.expert-permission-menu .ui-select-option-copy > span,
+.expert-permission-menu .ui-select-option-copy > small {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

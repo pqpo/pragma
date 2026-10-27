@@ -60,6 +60,36 @@ export function ExpertEditorFragment(props: {
   const isEditing = props.mode === "edit";
   const isBuiltIn = isBuiltInExpert(props.initialValue);
   const selectedRuntimeInfo = props.runtimes.find((runtime) => runtime.id === selectedRuntime);
+  const permissionOptions =
+    selectedRuntimeInfo?.permissionModes?.modes.map((mode) => {
+      const description = t(`permissionModeDescriptions.${selectedRuntimeInfo.kind}.${mode.id}`, {
+        ns: "studio",
+        defaultValue: mode.description,
+      });
+      const reason = mode.reason
+        ? t(`permissionModeReasons.${selectedRuntimeInfo.kind}.${mode.id}`, {
+            ns: "studio",
+            defaultValue: mode.reason,
+          })
+        : undefined;
+      return {
+        value: mode.id,
+        label: t(
+          [
+            `permissionModeTitles.${selectedRuntimeInfo.kind}.${mode.id}`,
+            `permissionModeLabels.${mode.id}`,
+          ],
+          { ns: "studio", defaultValue: mode.label },
+        ),
+        disabled: !mode.available,
+        description: reason ? `${description} ${reason}` : description,
+      };
+    }) ?? [];
+  const selectedPermissionModeId =
+    draft.model?.permissionModeId ?? selectedRuntimeInfo?.permissionModes?.defaultModeId;
+  const selectedPermissionOption = permissionOptions.find(
+    (option) => option.value === selectedPermissionModeId,
+  );
   const modelOptions = selectedRuntimeInfo?.models ?? [];
   const selectedModel = modelOptions.find(
     (model) => model.id === draft.model?.modelId && model.provider.id === draft.model?.providerId,
@@ -569,25 +599,18 @@ export function ExpertEditorFragment(props: {
                     <SelectMenu
                       ariaLabel={t("permissionMode", { ns: "studio" })}
                       className="form-select"
-                      value={
-                        draft.model?.permissionModeId ??
-                        selectedRuntimeInfo.permissionModes.defaultModeId
-                      }
+                      menuClassName="expert-permission-menu"
+                      value={selectedPermissionModeId ?? ""}
                       disabled={draft.model === null}
-                      options={selectedRuntimeInfo.permissionModes.modes.map((mode) => ({
-                        value: mode.id,
-                        label: t(`permissionModeLabels.${mode.id}`, {
-                          ns: "studio",
-                          defaultValue: mode.label,
-                        }),
-                        disabled: !mode.available,
-                        description: mode.reason ?? mode.description,
-                      }))}
+                      options={permissionOptions}
                       onChange={(permissionModeId) => {
                         if (draft.model !== null)
                           setDraft({ ...draft, model: { ...draft.model, permissionModeId } });
                       }}
                     />
+                    {selectedPermissionOption ? (
+                      <small className="field-hint">{selectedPermissionOption.description}</small>
+                    ) : null}
                     <small className="field-hint">
                       {t("permissionModeHint", { ns: "studio" })}
                     </small>

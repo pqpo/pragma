@@ -1,7 +1,7 @@
 export const studio = {
   permissionMode: "Permission mode",
   permissionModeHint:
-    "Full access skips default MCP approval. Explicit tool policies and required business approvals still apply.",
+    "Managed tools, including MCP tools, use separate approval policies. Explicit tool approvals and required business approvals still apply.",
   permissionModeLabels: {
     "full-access": "Full access",
     "request-approval": "Ask for approval",
@@ -11,7 +11,88 @@ export const studio = {
     default: "Default approval",
     auto: "Auto approval",
     "native-auto": "Native auto approval",
-    "auto-approve": "Accept edits (no shell)",
+    "auto-approve": "Edit and run commands",
+  },
+
+  permissionModeTitles: {
+    "codex-local": {
+      "full-access": "Full access without approval",
+      "request-approval": "Workspace sandbox; ask to expand",
+      "read-only": "Read only; no file changes",
+      "auto-review": "Automatically review sandbox requests",
+    },
+    "claude-code-local": {
+      bypassPermissions: "Run without approval",
+      default: "Ask when permission is needed",
+      auto: "Automatic risk review",
+    },
+    "qodercli-local": {
+      bypassPermissions: "Run without approval",
+      default: "Ask when permission is needed",
+      auto: "Let Qoder decide permissions",
+    },
+    "cloud-pi-agent": {
+      "full-access": "Run with host permissions",
+    },
+    antigravity: {
+      "full-access": "Full access without approval",
+      "request-approval": "Ask before changes and commands",
+      "native-auto": "Automatically review sandbox requests",
+    },
+  },
+  permissionModeReasons: {
+    "codex-local": {
+      "auto-review":
+        "This integration is not connected, so this option cannot currently be selected.",
+    },
+    antigravity: {
+      "native-auto":
+        "This integration is not connected, so this option cannot currently be selected.",
+    },
+  },
+  permissionModeDescriptions: {
+    "opencode-local": {
+      "full-access":
+        "For tasks that need web tools or files outside the workspace. File edits, commands and web tools run without approval; explicit deny rules still apply.",
+      "request-approval":
+        "For reviewing actions yourself. Asks before file edits, commands and web requests. Direct file tools cannot access external directories, except runtime skills. Approved commands can still access the network and external files; this is not a sandbox.",
+      "auto-approve":
+        "For editing files and running commands without approval. Web tools and direct file access outside the workspace are blocked, except runtime skills. Commands can still access the network and external files; this is not a sandbox. Explicit deny rules still apply.",
+    },
+    "codex-local": {
+      "full-access":
+        "For tasks that need unrestricted host access. Files and commands run without a sandbox or runtime approval; access is still limited by the host account permissions.",
+      "request-approval":
+        "For everyday development. Can edit workspace files and run permitted commands without asking each time. Requests approval when broader access is needed; declining keeps the sandbox restrictions.",
+      "read-only":
+        "For reviewing code or investigating files. Native tools and commands run in a read-only sandbox and cannot write files or request broader access. Managed MCP tools have separate policies.",
+      "auto-review": "Would review requests to expand sandbox access for you.",
+    },
+    "claude-code-local": {
+      bypassPermissions:
+        "For autonomous execution. Skips Claude Code tool permission prompts, including file changes and commands. This mode does not add a workspace sandbox.",
+      default:
+        "For keeping control of actions. Claude Code allows actions covered by its rules and asks you about actions that need permission; it does not ask before every read or command.",
+      auto: "For reducing manual prompts. Claude Code reviews action risks and may allow, deny or ask you to decide. Requires a supported model and runtime; unsupported models may fall back to accepting file edits without approval.",
+    },
+    "qodercli-local": {
+      bypassPermissions:
+        "For autonomous execution. Skips Qoder tool permission prompts, including file changes and commands. This mode does not add a workspace sandbox.",
+      default:
+        "For keeping control of actions. Qoder applies its permission rules and forwards actions that need approval to you; this does not mean every operation asks.",
+      auto: "For reducing manual prompts. Qoder decides which actions can run directly; requests it forwards still need your approval. Actions may be denied. This is not full access or a read-only mode.",
+    },
+    "cloud-pi-agent": {
+      "full-access":
+        "For direct execution using the host account. Can read and write files and run commands without native approval, including network or external-file access allowed by the host. Pi provides no built-in sandbox; this is its only available mode.",
+    },
+    antigravity: {
+      "full-access":
+        "For direct execution. Allows native file and command tools without asking, using host permissions; the native command sandbox is not enabled.",
+      "request-approval":
+        "For reviewing changes yourself. Known read tools in allowed directories run directly; file changes, commands and other non-read actions require your approval. Native command sandboxing is also enabled; approval does not remove its restrictions.",
+      "native-auto": "Would use the runtime’s automatic reviewer for sandbox requests.",
+    },
   },
 
   skillSettings: "Skill settings",

@@ -5,21 +5,24 @@ export const permissionModes: RuntimePermissionCatalog = {
   modes: [
     {
       id: "bypassPermissions",
-      label: "Bypass permissions",
-      description: "Native permission bypass; managed tool policies still apply.",
+      label: "Run without approval",
+      description:
+        "For autonomous execution. Skips Qoder tool permission prompts, including file changes and commands. This mode does not add a workspace sandbox.",
       defaultMcpApproval: "none",
       available: true,
     },
     {
       id: "default",
-      label: "Default",
-      description: "Native permission requests are forwarded to the user.",
+      label: "Ask when permission is needed",
+      description:
+        "For keeping control of actions. Qoder applies its permission rules and forwards actions that need approval to you; this does not mean every operation asks.",
       available: true,
     },
     {
       id: "auto",
-      label: "Auto",
-      description: "Native runtime evaluates tool authorization.",
+      label: "Let Qoder decide permissions",
+      description:
+        "For reducing manual prompts. Qoder decides which actions can run directly; requests it forwards still need your approval. Actions may be denied. This is not full access or a read-only mode.",
       available: true,
     },
   ],

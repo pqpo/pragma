@@ -5,9 +5,9 @@ export const permissionModes: RuntimePermissionCatalog = {
   modes: [
     {
       id: "full-access",
-      label: "Native execution / full access",
+      label: "Run with host permissions",
       description:
-        "Uses host process permissions. Pi has no built-in tool approval or sandbox policy.",
+        "For direct execution using the host account. Can read and write files and run commands without native approval, including network or external-file access allowed by the host. Pi provides no built-in sandbox; this is its only available mode.",
       defaultMcpApproval: "none",
       available: true,
     },

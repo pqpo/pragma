@@ -575,10 +575,316 @@ describe("ExpertEditorFragment", () => {
       );
       expect(html).toContain('aria-label="Permission mode"');
       expect(html).toContain(label);
-      expect(html).toContain("Managed tools keep their separate policies");
+      expect(html).toContain("Managed tools, including MCP tools, use separate approval policies");
       expect(html).not.toContain("Plan mode");
     },
   );
+
+  it.each([
+    [
+      "en",
+      "auto-approve",
+      "Edit and run commands",
+      "For editing files and running commands without approval.",
+      "Commands can still access the network and external files; this is not a sandbox.",
+    ],
+    [
+      "zh-Hans",
+      "auto-approve",
+      "编辑与命令免审批",
+      "适合直接修改文件、运行命令的任务，两者无需审批。",
+      "命令仍可联网或访问外部文件，并非沙箱隔离",
+    ],
+    [
+      "zh-Hant",
+      "auto-approve",
+      "編輯與命令免審批",
+      "適合直接修改檔案、執行命令的任務，兩者無需審批。",
+      "命令仍可連網或存取外部檔案，並非沙箱隔離",
+    ],
+    [
+      "en",
+      "request-approval",
+      "Ask for approval",
+      "For reviewing actions yourself.",
+      "Approved commands can still access the network and external files; this is not a sandbox.",
+    ],
+    [
+      "zh-Hans",
+      "request-approval",
+      "请求审批",
+      "适合希望亲自确认操作的任务。",
+      "获批的命令仍可联网或访问外部文件，并非沙箱隔离",
+    ],
+    [
+      "zh-Hant",
+      "request-approval",
+      "請求審批",
+      "適合希望親自確認操作的任務。",
+      "獲批的命令仍可連網或存取外部檔案，並非沙箱隔離",
+    ],
+    [
+      "en",
+      "full-access",
+      "Full access",
+      "For tasks that need web tools or files outside the workspace.",
+      "explicit deny rules still apply",
+    ],
+    [
+      "zh-Hans",
+      "full-access",
+      "完全访问",
+      "适合需要网页工具或工作区外文件的任务。",
+      "显式禁止规则仍然生效",
+    ],
+    [
+      "zh-Hant",
+      "full-access",
+      "完全存取",
+      "適合需要網頁工具或工作區外檔案的任務。",
+      "明確禁止規則仍然生效",
+    ],
+  ])(
+    "explains OpenCode permissions in %s for %s",
+    async (locale, permissionModeId, label, description, boundary) => {
+      await i18n.changeLanguage(locale);
+      const html = renderToStaticMarkup(
+        <ExpertEditorFragment
+          mode="edit"
+          initialStep="capabilities"
+          initialValue={{ ...draft, model: { ...draft.model!, permissionModeId } }}
+          runtimes={[
+            {
+              id: "test",
+              kind: "opencode-local",
+              displayName: "OpenCode",
+              isDefault: true,
+              status: "available",
+              models: [],
+              permissionModes: {
+                defaultModeId: "full-access",
+                modes: [
+                  {
+                    id: permissionModeId,
+                    label: "Accept edits",
+                    description: "Untranslated runtime description",
+                    available: true,
+                  },
+                ],
+              },
+            },
+          ]}
+          contextStores={[]}
+          capabilities={[]}
+          experts={[]}
+          resources={[]}
+          memoryEnabled={true}
+          onCancel={() => undefined}
+          onCreated={async () => undefined}
+        />,
+      );
+      expect(html).toContain(label);
+      expect(html).toContain(boundary);
+      expect(html).toContain(`<small class="field-hint">${description}`);
+      expect(html).toContain("expert-permission-menu");
+      expect(html).not.toContain("Untranslated runtime description");
+      expect(html).not.toContain("禁用命令");
+      expect(html).not.toContain("停用命令");
+    },
+  );
+
+  describe.each(["en", "zh-Hans", "zh-Hant"])("runtime permission copy in %s", (locale) => {
+    it.each([
+      [
+        "codex-local",
+        "full-access",
+        true,
+        ["Full access without approval", "完全访问（免审批）", "完全存取（免審批）"],
+      ],
+      [
+        "codex-local",
+        "request-approval",
+        true,
+        [
+          "Workspace sandbox; ask to expand",
+          "工作区沙箱（越界时询问）",
+          "工作區沙箱（越界時詢問）",
+        ],
+      ],
+      [
+        "codex-local",
+        "read-only",
+        true,
+        ["Read only; no file changes", "只读（禁止写入）", "唯讀（禁止寫入）"],
+      ],
+      [
+        "codex-local",
+        "auto-review",
+        false,
+        ["Automatically review sandbox requests", "自动审核越界请求", "自動審核越界請求"],
+      ],
+      [
+        "claude-code-local",
+        "bypassPermissions",
+        true,
+        ["Run without approval", "免审批执行", "免審批執行"],
+      ],
+      [
+        "claude-code-local",
+        "default",
+        true,
+        ["Ask when permission is needed", "需要权限时询问", "需要權限時詢問"],
+      ],
+      [
+        "claude-code-local",
+        "auto",
+        true,
+        ["Automatic risk review", "自动风险审核", "自動風險審核"],
+      ],
+      [
+        "qodercli-local",
+        "bypassPermissions",
+        true,
+        ["Run without approval", "免审批执行", "免審批執行"],
+      ],
+      [
+        "qodercli-local",
+        "default",
+        true,
+        ["Ask when permission is needed", "需要权限时询问", "需要權限時詢問"],
+      ],
+      [
+        "qodercli-local",
+        "auto",
+        true,
+        ["Let Qoder decide permissions", "由 Qoder 判断权限", "由 Qoder 判斷權限"],
+      ],
+      [
+        "cloud-pi-agent",
+        "full-access",
+        true,
+        ["Run with host permissions", "使用宿主权限执行", "使用宿主權限執行"],
+      ],
+      [
+        "antigravity",
+        "full-access",
+        true,
+        ["Full access without approval", "完全访问（免审批）", "完全存取（免審批）"],
+      ],
+      [
+        "antigravity",
+        "request-approval",
+        true,
+        ["Ask before changes and commands", "修改与命令先询问", "修改與命令先詢問"],
+      ],
+      [
+        "antigravity",
+        "native-auto",
+        false,
+        ["Automatically review sandbox requests", "自动审核沙箱请求", "自動審核沙箱請求"],
+      ],
+    ] as const)(
+      "explains %s / %s and retains availability",
+      async (kind, permissionModeId, available, titles) => {
+        await i18n.changeLanguage(locale);
+        const html = renderToStaticMarkup(
+          <ExpertEditorFragment
+            mode="edit"
+            initialStep="capabilities"
+            initialValue={{ ...draft, model: { ...draft.model!, permissionModeId } }}
+            runtimes={[
+              {
+                id: "test",
+                kind,
+                displayName: kind,
+                isDefault: true,
+                status: "available",
+                models: [],
+                permissionModes: {
+                  defaultModeId: permissionModeId,
+                  modes: [
+                    {
+                      id: permissionModeId,
+                      label: "Untranslated native title",
+                      description: "Untranslated native explanation",
+                      available,
+                      ...(available
+                        ? {}
+                        : { reason: "Native approval reviewer integration is not connected." }),
+                    },
+                  ],
+                },
+              },
+            ]}
+            contextStores={[]}
+            capabilities={[]}
+            experts={[]}
+            resources={[]}
+            memoryEnabled={true}
+            onCancel={() => undefined}
+            onCreated={async () => undefined}
+          />,
+        );
+        const title = titles[["en", "zh-Hans", "zh-Hant"].indexOf(locale)];
+        expect(html).toContain(title);
+        expect(html).not.toContain("Untranslated native");
+        expect(html).not.toContain("Native approval reviewer integration is not connected.");
+        const option = html
+          .match(/<button[^>]*role="option"[^>]*>[\s\S]*?<\/button>/g)
+          ?.find((markup) => markup.includes(title!));
+        expect(option).toBeDefined();
+        expect(option?.includes('disabled=""')).toBe(!available);
+        if (!available)
+          expect(html).toContain(
+            locale === "en"
+              ? "cannot currently be selected"
+              : locale === "zh-Hans"
+                ? "暂不可选"
+                : "暫不可選",
+          );
+        if (kind === "codex-local" && permissionModeId === "request-approval")
+          expect(html).toContain(
+            locale === "en"
+              ? "without asking each time"
+              : locale === "zh-Hans"
+                ? "无需逐次确认"
+                : "無需逐次確認",
+          );
+        if (kind === "claude-code-local" && permissionModeId === "auto")
+          expect(html).toContain(
+            locale === "en"
+              ? "fall back"
+              : locale === "zh-Hans"
+                ? "退回文件编辑免审批"
+                : "退回檔案編輯免審批",
+          );
+        if (kind === "qodercli-local" && permissionModeId === "auto")
+          expect(html).toContain(
+            locale === "en"
+              ? "still need your approval"
+              : locale === "zh-Hans"
+                ? "仍发起的审批请求"
+                : "仍發起的審批請求",
+          );
+        if (kind === "cloud-pi-agent")
+          expect(html).toContain(
+            locale === "en"
+              ? "only available mode"
+              : locale === "zh-Hans"
+                ? "仅支持此模式"
+                : "僅支援此模式",
+          );
+        if (kind === "antigravity" && permissionModeId === "request-approval")
+          expect(html).toContain(
+            locale === "en"
+              ? "approval does not remove"
+              : locale === "zh-Hans"
+                ? "批准操作也不会解除沙箱限制"
+                : "批准操作也不會解除沙箱限制",
+          );
+      },
+    );
+  });
 
   it("does not expose semantic identity fields during an ordinary edit", () => {
     const html = renderToStaticMarkup(
