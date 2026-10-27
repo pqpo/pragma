@@ -20,7 +20,7 @@ export async function auditDesktopCli(resources, executable) {
   const archive = join(resources, "app.asar");
   const directory = join(`${archive}.unpacked`, "out/main/desktop-cli");
   const mainIdentity = JSON.parse(
-    extractFile(archive, "out/main/distribution.json").toString("utf8"),
+    extractFile(archive, join("out", "main", "distribution.json")).toString("utf8"),
   );
   if (mainIdentity.distributionId !== config.id || mainIdentity.distributionDigest !== digest)
     throw new Error("Packaged Desktop main distribution does not match this release.");

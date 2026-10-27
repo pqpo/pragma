@@ -5,7 +5,30 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createPackageWithOptions, uncacheAll } from "@electron/asar";
 import { auditRuntimeResources } from "./audit-runtime-resources.mjs";
+import { auditDesktopCli } from "./audit-desktop-cli.mjs";
 import { auditPackagedResources, forbiddenClaudePayload } from "./audit-packaged-app.mjs";
+
+test("reads the packed Desktop distribution identity before rejecting a different release", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-distribution-audit-"));
+  try {
+    const source = join(root, "source");
+    const resources = join(root, "resources");
+    await mkdir(join(source, "out", "main"), { recursive: true });
+    await mkdir(resources);
+    await writeFile(
+      join(source, "out", "main", "distribution.json"),
+      JSON.stringify({ distributionId: "different-release", distributionDigest: "mismatch" }),
+    );
+    await createPackageWithOptions(source, join(resources, "app.asar"), {});
+    await assert.rejects(
+      auditDesktopCli(resources, process.execPath),
+      /Packaged Desktop main distribution does not match this release/,
+    );
+  } finally {
+    uncacheAll();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("rejects all SDK platforms, old layouts and renamed native/script payloads", () => {
   for (const platform of [
