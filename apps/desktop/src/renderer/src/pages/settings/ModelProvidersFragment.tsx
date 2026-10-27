@@ -729,9 +729,20 @@ function ModelCapabilityEditor(props: {
   return (
     <article className="model-capability-editor" ref={props.editorRef}>
       <header className="selected-model-card-header">
-        <div className="model-identity-copy">
-          <strong title={props.model.name}>{props.model.name}</strong>
-          {props.model.name !== props.model.id ? <small>{props.model.id}</small> : null}
+        <div className="model-header-identity">
+          <div className="model-identity-copy">
+            <strong title={props.model.id}>{props.model.name}</strong>
+          </div>
+          <SelectMenu
+            ariaLabel={t("models.kind")}
+            className="model-kind-select"
+            value={props.model.kind}
+            options={[
+              { value: "generation", label: t("models.generation") },
+              { value: "embedding", label: t("models.embedding") },
+            ]}
+            onChange={changeKind}
+          />
         </div>
         <button
           className="model-remove-button"
@@ -742,19 +753,6 @@ function ModelCapabilityEditor(props: {
           <X size={16} aria-hidden="true" />
         </button>
       </header>
-      <div className="model-kind-row">
-        <span>{t("models.kind")}</span>
-        <SelectMenu
-          ariaLabel={t("models.kind")}
-          className="form-select"
-          value={props.model.kind}
-          options={[
-            { value: "generation", label: t("models.generation") },
-            { value: "embedding", label: t("models.embedding") },
-          ]}
-          onChange={changeKind}
-        />
-      </div>
       {props.model.kind === "generation" ? (
         <GenerationModelCapabilityEditor {...props} model={props.model} />
       ) : (
@@ -928,8 +926,9 @@ function GenerationModelCapabilityEditor(props: {
         <div className="thinking-settings">
           <div className="thinking-settings-header">
             <div>
-              <strong>{t("models.thinkingLevels")}</strong>
-              <small>{t("models.thinkingLevelsDescription")}</small>
+              <strong title={t("models.thinkingLevelsDescription")}>
+                {t("models.thinkingLevels")}
+              </strong>
             </div>
             <label className="capability-toggle capability-toggle-compact">
               <input
@@ -976,57 +975,63 @@ function GenerationModelCapabilityEditor(props: {
                   </label>
                 ))}
               </div>
-              <div className="thinking-default-field">
-                <span>{t("models.defaultThinkingLevel")}</span>
-                <SelectMenu
-                  ariaLabel={t("models.defaultThinkingLevel")}
-                  className="form-select"
-                  value={props.model.thinking.defaultLevel ?? ""}
-                  placement="bottom"
-                  options={[
-                    { value: "", label: t("models.runtimeDefault") },
-                    ...supported.map((level) => ({ value: level, label: level })),
-                  ]}
-                  onChange={(value) =>
-                    props.onChange({
-                      ...props.model,
-                      thinking: {
-                        ...props.model.thinking!,
-                        defaultLevel:
-                          value === "" ? undefined : (value as (typeof THINKING_LEVELS)[number]),
-                      },
-                    })
-                  }
-                />
-              </div>
             </div>
           )}
         </div>
       ) : null}
 
-      {props.compatibilityProfiles.length > 0 ? (
-        <div className="model-profile-field">
-          <span>{t("models.modelCompatibilityOverride")}</span>
-          <SelectMenu
-            ariaLabel={t("models.modelCompatibilityOverride")}
-            className="form-select"
-            value={props.model.compatibilityProfileId ?? ""}
-            placement="bottom"
-            options={[
-              { value: "", label: t("models.inheritCompatibility") },
-              ...props.compatibilityProfiles.map((profile) => ({
-                value: profile.id,
-                label: profile.displayName,
-                description: profile.description,
-              })),
-            ]}
-            onChange={(value) =>
-              props.onChange({
-                ...props.model,
-                compatibilityProfileId: value === "" ? undefined : value,
-              })
-            }
-          />
+      {props.model.thinking !== undefined || props.compatibilityProfiles.length > 0 ? (
+        <div className="model-options-grid">
+          {props.model.thinking !== undefined ? (
+            <div className="thinking-default-field">
+              <span>{t("models.defaultThinkingLevel")}</span>
+              <SelectMenu
+                ariaLabel={t("models.defaultThinkingLevel")}
+                className="form-select"
+                value={props.model.thinking.defaultLevel ?? ""}
+                placement="bottom"
+                options={[
+                  { value: "", label: t("models.runtimeDefault") },
+                  ...supported.map((level) => ({ value: level, label: level })),
+                ]}
+                onChange={(value) =>
+                  props.onChange({
+                    ...props.model,
+                    thinking: {
+                      ...props.model.thinking!,
+                      defaultLevel:
+                        value === "" ? undefined : (value as (typeof THINKING_LEVELS)[number]),
+                    },
+                  })
+                }
+              />
+            </div>
+          ) : null}
+          {props.compatibilityProfiles.length > 0 ? (
+            <div className="model-profile-field">
+              <span>{t("models.modelCompatibilityOverride")}</span>
+              <SelectMenu
+                ariaLabel={t("models.modelCompatibilityOverride")}
+                className="form-select"
+                value={props.model.compatibilityProfileId ?? ""}
+                placement="bottom"
+                options={[
+                  { value: "", label: t("models.inheritCompatibility") },
+                  ...props.compatibilityProfiles.map((profile) => ({
+                    value: profile.id,
+                    label: profile.displayName,
+                    description: profile.description,
+                  })),
+                ]}
+                onChange={(value) =>
+                  props.onChange({
+                    ...props.model,
+                    compatibilityProfileId: value === "" ? undefined : value,
+                  })
+                }
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

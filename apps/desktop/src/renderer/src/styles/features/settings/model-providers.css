@@ -761,9 +761,8 @@
 }
 .model-token-limit-field {
   display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px 16px;
+  align-content: start;
+  gap: 8px;
   min-width: 0;
   color: var(--ui-text-secondary);
   font-size: 12px;
@@ -999,6 +998,22 @@
   gap: 12px;
   min-width: 0;
 }
+.model-options-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: 16px;
+}
+.model-kind-select {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+.model-header-identity {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
 .model-identity-copy {
   display: grid;
   min-width: 0;
@@ -1012,37 +1027,29 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.model-identity-copy small {
-  overflow: hidden;
-  color: var(--ui-text-secondary);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .model-card-body {
   display: grid;
-  gap: 24px;
+  gap: 16px;
   min-width: 0;
 }
 .model-token-grid {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
   gap: 16px;
 }
 .model-token-limit-field > small {
-  grid-column: 2;
   color: var(--ui-text-secondary);
   font-size: 12px;
   line-height: 1.45;
 }
 .model-capability-group {
   display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
-  align-items: start;
-  gap: 16px;
+  gap: 8px;
 }
 .capability-toggle-list {
   display: grid;
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: 12px 16px;
 }
 .capability-toggle {
   position: relative;
@@ -1114,13 +1121,14 @@
 }
 .thinking-settings {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 .thinking-settings-header {
-  display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
-  align-items: start;
-  gap: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
 }
 .thinking-settings-header > div:first-child {
   display: grid;
@@ -1131,21 +1139,15 @@
   font-size: 12px;
   font-weight: 500;
 }
-.thinking-settings-header > div:first-child > small {
-  color: var(--ui-text-secondary);
-  font-size: 12px;
-  line-height: 1.45;
-}
 .provider-editor .fixed-thinking-note {
+  margin: 0;
   color: var(--ui-text-secondary);
   font-size: 12px;
   line-height: 1.45;
-  margin: 0 0 0 156px;
 }
 .provider-editor .thinking-controls {
   display: grid;
-  gap: 16px;
-  margin-left: 156px;
+  min-width: 0;
 }
 .provider-editor .thinking-level-options {
   display: flex;
@@ -1207,9 +1209,8 @@
 }
 .model-profile-field {
   display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
-  align-items: center;
-  gap: 16px;
+  align-content: start;
+  gap: 8px;
   min-width: 0;
   color: var(--ui-text-secondary);
   font-size: 12px;
@@ -1233,16 +1234,7 @@
   gap: 16px;
   min-width: 0;
 }
-.model-kind-row {
-  display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
-  align-items: center;
-  gap: 16px;
-  color: var(--ui-text-secondary);
-  font-size: 12px;
-}
 .embedding-limit-description {
-  margin-left: 156px;
   color: var(--ui-text-secondary);
   font-size: 12px;
   line-height: 1.45;
@@ -1265,9 +1257,6 @@
 }
 .capability-toggle > input:focus-visible + .capability-toggle-indicator {
   box-shadow: 0 0 0 3px var(--ui-focus);
-}
-.model-kind-row .form-select .ui-select-trigger {
-  min-height: 40px;
 }
 .provider-wizard-content.is-models {
   overflow: clip;
@@ -1338,10 +1327,6 @@
     grid-row: 1;
   }
 
-  .thinking-controls {
-    grid-template-columns: 1fr;
-  }
-
   .provider-editor .static-field {
     grid-template-columns: 120px minmax(0, 1fr);
     column-gap: 16px;
@@ -1378,11 +1363,6 @@
     flex-direction: column;
   }
 
-  .thinking-settings-header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .model-discovery-count {
     align-self: flex-start;
   }
@@ -1393,16 +1373,6 @@
 
   .manual-model-row > button {
     width: 100%;
-  }
-
-  .model-token-grid {
-    max-width: none;
-    grid-template-columns: 1fr;
-  }
-
-  .capability-toggle-list {
-    max-width: none;
-    grid-template-columns: 1fr;
   }
 
   .provider-editor .static-field {
@@ -1440,47 +1410,6 @@
     grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
     gap: 24px;
   }
-
-  .model-token-limit-field {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .model-kind-row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .model-profile-field {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .model-capability-group {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .thinking-settings-header {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .model-token-limit-field > small {
-    grid-column: 1;
-  }
-
-  .provider-editor .thinking-controls {
-    margin-left: 0;
-  }
-
-  .provider-editor .fixed-thinking-note {
-    margin-left: 0;
-  }
-
-  .embedding-limit-description {
-    margin-left: 0;
-  }
 }
 @media (max-height: 750px) {
   .provider-wizard-content.is-models {
@@ -1498,22 +1427,6 @@
   }
   .provider-preset-section h4 {
     padding-top: 0;
-  }
-  .model-token-limit-field,
-  .model-kind-row,
-  .model-profile-field,
-  .model-capability-group,
-  .thinking-settings-header {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
-  .model-token-limit-field > small {
-    grid-column: 1;
-  }
-  .provider-editor .thinking-controls,
-  .provider-editor .fixed-thinking-note,
-  .embedding-limit-description {
-    margin-left: 0;
   }
 }
 @container provider-editor (max-width: 560px) {
