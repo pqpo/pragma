@@ -672,6 +672,15 @@
   min-width: 0;
 }
 
+.capability-detail.has-tool-workspace {
+  row-gap: 16px;
+}
+
+.capability-detail.has-tool-workspace .capability-detail-header {
+  margin-top: 0;
+  padding-bottom: 0;
+}
+
 .capability-detail.has-tool-workspace .studio-screen-body {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -776,7 +785,7 @@
   height: auto;
   min-height: 0;
   gap: 22px;
-  margin-top: 26px;
+  margin-top: 16px;
   overflow: hidden;
 }
 
