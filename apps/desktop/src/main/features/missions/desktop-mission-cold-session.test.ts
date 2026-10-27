@@ -296,7 +296,7 @@ it.each(["expert", "team"] as const)(
       const nativeRecords = await readRuntimeSessionsForOwners(paths, [sessionId]);
       expect(nativeRecords.length).toBeGreaterThan(0);
       for (const record of nativeRecords) {
-        await createRuntimeSessionRecord({
+        const coldRecord = await createRuntimeSessionRecord({
           paths: coldPaths,
           owner: record.owner,
           systemSessionId: record.systemSessionId,
@@ -304,7 +304,12 @@ it.each(["expert", "team"] as const)(
           runtime: { ...record.runtime, displayName: "Fixture" },
           workspace: record.currentWorkspace,
         });
-        await updateRuntimeSessionRecord(coldPaths, record, {});
+        await updateRuntimeSessionRecord(coldPaths, coldRecord, {
+          runtimeSessionRef: record.runtimeSessionRef,
+          contextWindowUsage: record.contextWindowUsage,
+          processState: record.processState,
+          retentionState: record.retentionState,
+        });
       }
       await original.stopLocalController(mission.id);
       // A separate Inbox/owner scope prevents the original standalone control
@@ -399,9 +404,8 @@ it.each(["expert", "team"] as const)(
       await vi.waitFor(
         async () => {
           const prompts = await coldSessions.listPrompts(sessionId);
-          expect(prompts.find((entry) => entry.requestId === newRequestId)?.status).toBe(
-            "succeeded",
-          );
+          const prompt = prompts.find((entry) => entry.requestId === newRequestId);
+          expect(prompt?.status, prompt?.error).toBe("succeeded");
         },
         { timeout: 10_000 },
       );
