@@ -106,6 +106,7 @@ export function SelectMenu<Value extends string>(props: {
       setMenuStyle({
         left,
         width,
+        maxHeight: `min(280px, ${Math.max(0, (placement === "bottom" ? availableBelow : availableAbove) - menuGap)}px)`,
         ...(placement === "bottom"
           ? { top: trigger.bottom + menuGap }
           : { bottom: window.innerHeight - trigger.top + menuGap }),

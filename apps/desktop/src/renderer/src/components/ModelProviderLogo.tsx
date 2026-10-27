@@ -4,7 +4,7 @@ import deepseekIcon from "@lobehub/icons-static-svg/icons/deepseek-color.svg";
 import fireworksIcon from "@lobehub/icons-static-svg/icons/fireworks-color.svg";
 import geminiIcon from "@lobehub/icons-static-svg/icons/gemini-color.svg";
 import groqIcon from "@lobehub/icons-static-svg/icons/groq.svg";
-import kimiIcon from "@lobehub/icons-static-svg/icons/kimi-color.svg";
+import kimiIcon from "@lobehub/icons-static-svg/icons/kimi.svg";
 import lmStudioIcon from "@lobehub/icons-static-svg/icons/lmstudio.svg";
 import minimaxIcon from "@lobehub/icons-static-svg/icons/minimax-color.svg";
 import mistralIcon from "@lobehub/icons-static-svg/icons/mistral-color.svg";

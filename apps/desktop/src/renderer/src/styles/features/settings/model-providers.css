@@ -940,6 +940,7 @@
 }
 .selected-model-list {
   display: grid;
+  flex-shrink: 0;
   gap: 32px;
 }
 .selected-model-card-header {
@@ -1250,7 +1251,7 @@
   flex: 1;
   flex-shrink: 1;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
 }
 .model-selection-workspace {

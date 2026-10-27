@@ -73,18 +73,39 @@ export function ProviderEditor(props: {
   const [scrollTargetId, setScrollTargetId] = useState<string | null>(null);
   const modelConfigPaneRef = useRef<HTMLDivElement>(null);
   const wizardContentRef = useRef<HTMLDivElement>(null);
+  const modelListRef = useRef<HTMLDivElement>(null);
   const modelEditorRefs = useRef(new Map<string, HTMLElement>());
+
+  useLayoutEffect(() => {
+    const pane = modelConfigPaneRef.current;
+    const list = modelListRef.current;
+    const content = wizardContentRef.current;
+    const lastModel = draft.models.at(-1);
+    const lastEditor = lastModel && modelEditorRefs.current.get(lastModel.id);
+    if (!pane || !list || !content || !lastEditor) return;
+
+    const updateScrollSpace = () => {
+      const scroller = getComputedStyle(pane).overflowY !== "visible" ? pane : content;
+      // Leave enough room for even the final model's heading to reach the top.
+      list.style.paddingBottom = `${Math.max(0, scroller.clientHeight - lastEditor.getBoundingClientRect().height)}px`;
+    };
+    updateScrollSpace();
+    const observer = new ResizeObserver(updateScrollSpace);
+    observer.observe(pane);
+    observer.observe(content);
+    observer.observe(lastEditor);
+    return () => {
+      observer.disconnect();
+      list.style.paddingBottom = "";
+    };
+  }, [draft.models, step]);
 
   useLayoutEffect(() => {
     if (scrollTargetId === null) return;
     const pane = modelConfigPaneRef.current;
     const editor = modelEditorRefs.current.get(scrollTargetId);
     const scroller =
-      pane &&
-      getComputedStyle(pane).overflowY !== "visible" &&
-      pane.scrollHeight > pane.clientHeight
-        ? pane
-        : wizardContentRef.current;
+      pane && getComputedStyle(pane).overflowY !== "visible" ? pane : wizardContentRef.current;
     if (scroller && editor) {
       scroller.scrollTo({
         top:
@@ -108,7 +129,6 @@ export function ProviderEditor(props: {
     setScrollTargetId(model.id);
   };
 
-  const [discoveryMessage, setDiscoveryMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [compatibilityProfiles, setCompatibilityProfiles] = useState<
@@ -183,7 +203,6 @@ export function ProviderEditor(props: {
       const refreshedModels = reconcileDiscoveredModels(draft.models, result.models);
       const merged = mergeModels(refreshedModels, result.models);
       setAvailableModels(merged);
-      setDiscoveryMessage(result.message);
       if (draft.models.length === 0 && result.models.length > 0) {
         setDraft({ ...draft, models: result.models.slice(0, 3) });
       } else if (refreshedModels !== draft.models) {
@@ -192,7 +211,7 @@ export function ProviderEditor(props: {
       setStep("models");
     } catch (discoveryError) {
       setAvailableModels(draft.models);
-      setDiscoveryMessage(errorMessage(discoveryError));
+      setError(errorMessage(discoveryError));
       setStep("models");
     } finally {
       setBusy(false);
@@ -229,14 +248,12 @@ export function ProviderEditor(props: {
 
   const filteredModels = useMemo(() => {
     const query = modelQuery.trim().toLowerCase();
-    return availableModels
-      .filter(
-        (model) =>
-          query === "" ||
-          model.id.toLowerCase().includes(query) ||
-          model.name.toLowerCase().includes(query),
-      )
-      .slice(0, 100);
+    return availableModels.filter(
+      (model) =>
+        query === "" ||
+        model.id.toLowerCase().includes(query) ||
+        model.name.toLowerCase().includes(query),
+    );
   }, [availableModels, modelQuery]);
 
   return (
@@ -425,12 +442,6 @@ export function ProviderEditor(props: {
 
         {step === "models" ? (
           <section className="provider-wizard-panel provider-models-panel">
-            <div className="wizard-heading">
-              <div>
-                <h3>{t("models.chooseModels", { ns: "settings" })}</h3>
-                <p>{discoveryMessage ?? t("models.chooseModelsDescription", { ns: "settings" })}</p>
-              </div>
-            </div>
             <div className="model-selection-workspace">
               <div className="model-discovery-pane">
                 <div className="model-discovery-toolbar">
@@ -548,7 +559,7 @@ export function ProviderEditor(props: {
                     <p>{t("models.selectedModelsDescription", { ns: "settings" })}</p>
                   </div>
                 </div>
-                <div className="selected-model-list">
+                <div className="selected-model-list" ref={modelListRef}>
                   {draft.models.map((model) => (
                     <ModelCapabilityEditor
                       key={model.id}
