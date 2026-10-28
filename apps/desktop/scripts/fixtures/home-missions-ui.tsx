@@ -12,7 +12,14 @@ const executor = {
   ref: "expert:v2vt1v01vzz6j24q",
   name: "Product Designer",
 };
-const defaults = { workspace, recentWorkspaces: [], executorRef: executor.ref };
+const defaults = {
+  workspace,
+  recentWorkspaces: Array.from({ length: 12 }, (_, index) => ({
+    path: `/workspace/recent-${index}`,
+    basename: `recent-${index}`,
+  })),
+  executorRef: executor.ref,
+};
 function mission(id: string, title: string): Mission {
   return {
     schemaVersion: "pragma.mission/v12",
@@ -56,7 +63,7 @@ const methods = {
         customized: false,
         tags: [],
         teamMemberships: [],
-        alwaysVisible: true,
+        alwaysVisible: false,
         preference: { favoriteScope: "global", hidden: false },
       },
     ],
@@ -186,9 +193,55 @@ export async function runHomeMissionsUiTests() {
   await frames();
   return { created: 3, runs: runs.length, listPreserved: true };
 }
+// Check the painted surface, since DOM presence alone misses clipping and covered menus.
+async function assertOverlayVisible(selector: string) {
+  await frames();
+  await new Promise((resolve) => setTimeout(resolve, 160));
+  const surface = element(selector);
+  const bounds = surface.getBoundingClientRect();
+  assert(bounds.top >= 0 && bounds.bottom <= innerHeight, `${selector} escaped the viewport`);
+  assert(bounds.left >= 0 && bounds.right <= innerWidth, `${selector} escaped horizontally`);
+  for (const y of [bounds.top + 8, bounds.bottom - 8]) {
+    const hit = document.elementFromPoint(bounds.left + bounds.width / 2, y);
+    assert(hit && surface.contains(hit), `${selector} is clipped or covered at ${y}`);
+  }
+}
+async function checkNestedOverlays() {
+  click("#home-projects-tab");
+  await waitFor(() => !element<HTMLButtonElement>(".home-shortcuts-actions > button").disabled);
+  click(".home-shortcuts-actions > button");
+  await waitFor(() => !!document.querySelector(".home-project-dialog"));
+  click(".home-project-dialog .mission-executor-trigger");
+  await assertOverlayVisible(".home-project-dialog .mission-executor-menu");
+  click(".home-project-dialog .mission-executor-close-button");
+  await waitFor(() => !document.querySelector(".home-project-dialog .mission-executor-menu"));
+  click(".home-project-dialog .mission-workspace-trigger");
+  await assertOverlayVisible(".home-project-dialog .mission-workspace-menu");
+  const workspaceMenu = element(".home-project-dialog .mission-workspace-menu");
+  workspaceMenu.scrollTop = workspaceMenu.scrollHeight;
+  await frames();
+  await assertOverlayVisible(".home-project-dialog .mission-workspace-menu");
+  click(".home-project-dialog .mission-workspace-menu button");
+  click(".home-project-dialog .ui-dialog-footer .secondary-button");
+  await waitFor(() => !document.querySelector(".home-project-dialog"));
+  click("#home-favorites-tab");
+  click(".home-shortcuts-actions > button");
+  await waitFor(() => !!document.querySelector(".mission-executor-manager-dialog"));
+  await new Promise((resolve) => setTimeout(resolve, 160));
+  click(".mission-executor-manager-dialog .mission-executor-favorite-trigger");
+  await assertOverlayVisible(".mission-executor-manager-dialog .mission-executor-favorite-menu");
+  click(".mission-executor-favorite-menu > button:nth-child(3)");
+  await assertOverlayVisible(".mission-executor-manager-dialog .mission-executor-favorite-menu");
+  element(".mission-executor-manager-dialog").dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+  await frames();
+  await waitFor(() => !document.querySelector(".mission-executor-manager-dialog"));
+}
 export async function prepareHomeMissionsVisual(language: string) {
   await i18n.changeLanguage(language);
   await frames();
+  await checkNestedOverlays();
   const main = element(".mission-main").getBoundingClientRect();
   const home = element(".home-mission-create");
   assert(home.getBoundingClientRect().right <= main.right + 1, "Home escaped the detail pane");

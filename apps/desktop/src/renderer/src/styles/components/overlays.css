@@ -359,14 +359,16 @@
     translate 120ms ease-out;
 }
 
+/* Identity transforms still create containing blocks and trap nested fixed overlays.
+   Keep open surfaces untransformed; only entering/exiting surfaces need transforms. */
 [data-ui-motion="menu"] {
   transform-origin: left bottom;
-  scale: 1;
+  scale: none;
 }
 
 [data-ui-motion="dialog"] {
-  translate: 0 0;
-  scale: 1;
+  translate: none;
+  scale: none;
 }
 
 [data-ui-motion="backdrop"] {
