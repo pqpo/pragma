@@ -24,7 +24,7 @@ const memoryLearningInstructions = [
 ].join("\n\n");
 
 const directLearningInstructions =
-  "本任务提供学习工具：每次 start 前用 select_learning_sources 选择精确支持来源。无明显增量时调用 finish_memory_learning，说明 accumulate（暂不提炼，保留记忆）/duplicate（已有覆盖）/unsupported（依据不足）的具体理由；相关待审目标需填写精确 waitForTarget。";
+  "本任务提供学习工具：先 find_learning_targets 发现目标，再 read_learning_target 用返回的纯 id（不带 skill:、capability: 或 context-store: 前缀）读取实际内容，遍历 nextOffset；修订 start 使用返回的精确 targetRef。每次 start 前先读取来源，再用 select_learning_sources 选择精确支持来源。工具返回 invalid_input 时按 message/recovery 在本 Mission 内纠正并重试，不视为系统故障；目标 changed_or_unread 需重新读取，sources_required 需补选来源。无明显增量时调用 finish_memory_learning，说明 accumulate（暂不提炼，保留记忆）/duplicate（已有覆盖）/unsupported（依据不足）的具体理由；相关待审目标需填写精确 waitForTarget。";
 
 const retainedRevisionInstructions =
   "本任务是已保留的修订草稿执行，不提供直接提炼的学习工具。按已有修订请求和授权来源继续原草稿，使用实际提供的修订工具检查并提交；不要调用未提供的学习工具，也不要编造无变更回执。";

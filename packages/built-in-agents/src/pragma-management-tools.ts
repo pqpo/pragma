@@ -1001,6 +1001,57 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
                           : /unavailable/iu.test(rawMessage)
                             ? "unavailable"
                             : "internal_error";
+  const learningRecovery: Record<string, { tool: string; reason: string }> = {
+    memory_revision_target_changed_or_unread: {
+      tool: "read_learning_target",
+      reason:
+        "Read the current target using its exact unqualified id from find_learning_targets, then retry the same revision with targetRef.",
+    },
+    memory_revision_sources_required: {
+      tool: "select_learning_sources",
+      reason: "Read authorized sources, select their exact handles, then retry the same revision.",
+    },
+    memory_revision_target_denied: {
+      tool: "find_learning_targets",
+      reason:
+        "Discover authorized targets and use the exact returned targetRef for revision start; use id for read_learning_target.",
+    },
+    memory_revision_pending: {
+      tool: "finish_memory_learning",
+      reason:
+        "Use the pending target's exact id as waitForTarget; do not create a duplicate asset.",
+    },
+    memory_revision_successful_episode_required: {
+      tool: "select_learning_sources",
+      reason:
+        "Select supporting evidence including a succeeded Episode. If none exists, finish as unsupported without creating a draft.",
+    },
+    knowledge_learning_topic_immature: {
+      tool: "select_learning_sources",
+      reason:
+        "New Knowledge needs cross-conversation support or a succeeded Episode; otherwise finish as accumulate without a draft.",
+    },
+    memory_learning_target_already_exists: {
+      tool: "find_learning_targets",
+      reason:
+        "Find and read the existing asset, then revise it using its targetRef instead of creating a duplicate.",
+    },
+  };
+  const recovery =
+    typeof hostCode === "string" && Object.hasOwn(learningRecovery, hostCode)
+      ? learningRecovery[hostCode]
+      : undefined;
+  if (recovery !== undefined) {
+    const payload = PragmaManagementErrorSchema.parse({
+      schemaVersion: "pragma.management-error/v1",
+      code: "invalid_input",
+      message: rawMessage.slice(0, 2_000),
+      retryable: false,
+      details: { cause: hostCode },
+      recovery,
+    });
+    return createTextToolResult(JSON.stringify(payload), { details: payload, isError: true });
+  }
   const payload = PragmaManagementErrorSchema.parse({
     schemaVersion: "pragma.management-error/v1",
     code,

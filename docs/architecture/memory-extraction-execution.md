@@ -150,6 +150,18 @@ repeated work avoided, evidence support and unverified limitations; creation als
 assets cannot serve the purpose and why an independent asset is valuable. Formal content excludes
 raw Evidence, internal source IDs and sensitive paths. No extra plan or approval protocol is introduced.
 
+Learning target discovery returns two distinct identities: `read_learning_target` takes the exact
+unqualified `id`, while revision start takes `targetRef`. Read current target content before start,
+and read/select supporting source handles before each start. Known learning precondition errors
+return `invalid_input` with the original cause and a recovery tool in the existing management-error
+contract, allowing correction in the same Mission. Unresolved unread-target, denied-target and
+missing-source-selection start errors remain diagnostic blockers in the existing failure map;
+Successful source selection clears the missing-selection blocker; successful target reads clear
+unread/denied-target blockers. Successful start also clears its blocker. Corrected prerequisites
+can finish without creating a draft. Insufficient evidence can still finish as accumulate/unsupported.
+Terminal diagnostics retain a stable underlying failure code when available instead of replacing it
+with a missing-receipt or generic read error. Unknown exceptions remain internal errors.
+
 A normal no-draft outcome calls `finish_memory_learning` with a concrete accumulate/duplicate/unsupported
 reason. `accumulate` means defer extraction and retain underlying Episode/Fact under existing retention
 and permission rules. Future relevant effective changes may trigger reevaluation with old and new

@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import {
   createTextToolResult,
+  readToolResult,
   PragmaPaths,
   withFileLock,
   type ExpertAgentManagedTool,
@@ -18,6 +19,7 @@ import {
   SKILL_REVISION_EXPERT_REF,
   KnowledgeRevisionDraftReceiptSchema,
   SkillRevisionDraftReceiptSchema,
+  PragmaManagementErrorSchema,
   type KnowledgeRevisionSubmissionPort,
   type SkillRevisionSubmissionPort,
 } from "@pragma/built-in-agents";
@@ -638,7 +640,13 @@ export function createMemoryRevisionExecutor(options: {
         }
         if (state.waitForTarget !== undefined) throw failure("memory_revision_pending");
         if (Object.keys(state.readFailures).length > 0)
-          throw failure(state.readFailures.budget ?? "memory_revision_read_failed");
+          throw failure(
+            state.readFailures.budget ??
+              Object.values(state.readFailures).find((code) =>
+                /^[a-z][a-z0-9_.-]{0,199}$/u.test(code),
+              ) ??
+              "memory_revision_read_failed",
+          );
         if (state.drafts.some((draft) => !draft.submitted))
           throw failure("memory_revision_draft_not_submitted");
         const submitted = state.drafts.filter((draft) => draft.submitted);
@@ -940,9 +948,24 @@ export function createMemoryRevisionExecutor(options: {
         try {
           const input = await inputFor(key);
           const result = await call(schema.parse(args), input);
-          if (name.startsWith("read_") || name.startsWith("find_") || name.startsWith("list_"))
+          if (
+            name.startsWith("read_") ||
+            name.startsWith("find_") ||
+            name.startsWith("list_") ||
+            name === "select_learning_sources"
+          )
             await update(key, async (current) => {
               delete current.readFailures[name];
+              // A corrected prerequisite may reveal no useful delta; starting a draft is optional.
+              const corrected =
+                name === "select_learning_sources"
+                  ? ["memory_revision_sources_required"]
+                  : name === "read_learning_target"
+                    ? ["memory_revision_target_changed_or_unread", "memory_revision_target_denied"]
+                    : [];
+              for (const toolName of ["knowledge_revision_start", "skill_revision_start"])
+                if (corrected.includes(current.readFailures[toolName] ?? ""))
+                  delete current.readFailures[toolName];
             });
           return createTextToolResult(JSON.stringify(result));
         } catch (error) {
@@ -959,6 +982,17 @@ export function createMemoryRevisionExecutor(options: {
           return createTextToolResult(
             JSON.stringify({
               error: error instanceof Error ? error.message : "memory_revision_tool_failed",
+              ...(name === "read_learning_target" &&
+              error instanceof Error &&
+              error.message === "memory_revision_target_denied"
+                ? {
+                    recovery: {
+                      tool: "find_learning_targets",
+                      reason:
+                        "Use the exact returned id as targetId without a resource prefix, then read_learning_target again.",
+                    },
+                  }
+                : {}),
             }),
             { isError: true },
           );
@@ -1013,7 +1047,7 @@ export function createMemoryRevisionExecutor(options: {
       ),
       custom(
         "read_learning_target",
-        "Read an authorized pinned target or Skill package file. Read relevant actual contents before revision.",
+        "Read an authorized pinned target or Skill package file using the exact unqualified id returned by find_learning_targets (never targetRef or a skill: prefix). Follow nextOffset before revision.",
         page.extend({ targetId: z.string(), path: SkillPackageFileSchema.shape.path.optional() }),
         async ({ targetId, path, offset }, input) => {
           let target = (await targets(input)).find((item) => item.id === targetId);
@@ -1134,20 +1168,44 @@ export function createMemoryRevisionExecutor(options: {
           } catch (error) {
             if (isRead)
               await update(key, async (current) => {
-                current.readFailures[tool.name] = "memory_revision_read_failed";
+                const code = error instanceof Error && "code" in error ? error.code : undefined;
+                current.readFailures[tool.name] =
+                  typeof code === "string" && /^[a-z][a-z0-9_.-]{0,199}$/u.test(code)
+                    ? code
+                    : "memory_revision_read_failed";
               });
             throw error;
           }
+          if (tool.name.endsWith("_revision_start"))
+            await update(key, async (current) => {
+              const response = readToolResult(result);
+              if (response === undefined) return;
+              const payload = response.details as { details?: { cause?: unknown } } | undefined;
+              if (response.isError) {
+                if (
+                  typeof payload?.details?.cause === "string" &&
+                  [
+                    "memory_revision_target_changed_or_unread",
+                    "memory_revision_sources_required",
+                    "memory_revision_target_denied",
+                  ].includes(payload.details.cause)
+                )
+                  current.readFailures[tool.name] = payload.details.cause;
+              } else delete current.readFailures[tool.name];
+            });
           if (isRead)
             await update(key, async (current) => {
-              if (
-                typeof result === "object" &&
-                result !== null &&
-                "isError" in result &&
-                result.isError
-              )
-                current.readFailures[tool.name] = "memory_revision_read_failed";
-              else delete current.readFailures[tool.name];
+              const response = readToolResult(result);
+              if (response?.isError) {
+                const diagnostic = PragmaManagementErrorSchema.safeParse(response.details);
+                const cause = diagnostic.success ? diagnostic.data.details?.cause : undefined;
+                current.readFailures[tool.name] =
+                  typeof cause === "string" && /^[a-z][a-z0-9_.-]{0,199}$/u.test(cause)
+                    ? cause
+                    : diagnostic.success
+                      ? diagnostic.data.code
+                      : "memory_revision_read_failed";
+              } else delete current.readFailures[tool.name];
             });
           if (
             tool.name.endsWith("discard_draft") &&
