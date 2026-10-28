@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   createStaticRuntimeResolver,
+  fingerprintExpertExecutionDefinition,
   getToolResultText,
   EXECUTION_ID_ATTR,
   INVOCATION_ID_ATTR,
@@ -29,12 +30,14 @@ import {
 import {
   createMissionStore,
   withMissionPreparationFailure,
+  type LocalHostSystemExecutorSnapshot,
   type LocalHostMissionApplication,
 } from "@pragma/local-host";
 import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import { KnowledgeSourceSnapshotSchema, SkillSourceSnapshotSchema } from "@pragma/shared";
 import { createMemoryRevisionExecutor } from "./memory-revision-executor.ts";
 import type { createMemoryLearningRevisions } from "./memory-learning-revisions.ts";
+import { systemExecutorStopSource } from "../missions/system-executor-stop-source.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -133,6 +136,41 @@ async function fixture(kind: "knowledge" | "skill" = "knowledge") {
     })),
     submitDraft: vi.fn(async () => ({ draftId, jobId, revision: 2, state: "pending_review" })),
   } as unknown as SkillRevisionSubmissionPort;
+  let pinnedSource: LocalHostSystemExecutorSnapshot | undefined;
+  let definitionFingerprint: string | undefined;
+  const compileStop = async (missionId: string) => {
+    const mission = await missions.get(missionId);
+    const ref = kind === "knowledge" ? STORE_REVISION_EXPERT_REF : SKILL_REVISION_EXPERT_REF;
+    const stopped = await compileBuiltInAgent({
+      ...systemExecutorStopSource(
+        {
+          ref,
+          environmentId: "test",
+          definitionStateRoot: join(root, "definitions"),
+          workspace: mission.workspace.path,
+          pragmaHome: root,
+          expertResource: builtInAgentResource(ref),
+          adapterHost: {
+            environmentId: "test",
+            projectRoot: root,
+            resolveBinding: async () => {
+              throw new Error("Stop must not reopen tools");
+            },
+            resolveSecret: async () => {
+              throw new Error("Stop must not resolve secrets");
+            },
+            resolveArtifact: async () => {
+              throw new Error("Stop must not resolve artifacts");
+            },
+          },
+        },
+        pinnedSource,
+      ),
+      compilationPurpose: "stop",
+    });
+    expect(fingerprintExpertExecutionDefinition(stopped.value)).toBe(definitionFingerprint);
+    return stopped;
+  };
   const compile = async (missionId: string) => {
     const mission = await missions.get(missionId);
     const ref = kind === "knowledge" ? STORE_REVISION_EXPERT_REF : SKILL_REVISION_EXPERT_REF;
@@ -160,6 +198,12 @@ async function fixture(kind: "knowledge" | "skill" = "knowledge") {
       runtimes,
       rootExecutionOverride: { runtimeId: "fake" },
     });
+    pinnedSource = {
+      expertResource: adapted.expertResource,
+      additionalResources: [],
+      rootExecutionOverride: { runtimeId: "fake" },
+    };
+    definitionFingerprint = fingerprintExpertExecutionDefinition(compiled.value);
     const professional = kind === "knowledge" ? "Metadata rules:" : "root-level SKILL.md";
     expect(compiled.value.instructions).toContain(professional);
     expect(compiled.value.instructions).toContain("select_learning_sources");
@@ -237,6 +281,7 @@ async function fixture(kind: "knowledge" | "skill" = "knowledge") {
     },
     tools: () => tools,
     compile,
+    compileStop,
   };
 }
 async function call(tools: Tool[], name: string, args: unknown) {
@@ -665,6 +710,41 @@ it("releases tool locks before cancelling a retired Native execution", async () 
   await f.api().executor.retireJob!(f.input.jobId);
   expect(f.application.interrupt).toHaveBeenCalledOnce();
 });
+
+it.each(["knowledge", "skill"] as const)(
+  "replays retired %s cleanup after a failed cold stop using the original definition",
+  async (kind) => {
+    const f = await fixture(kind);
+    await f.api().executor.execute(f.input);
+    const directory = join(f.root, "state", "memory-direct-revisions-v1");
+    const file = (await readdir(directory)).find((name) => name.endsWith(".json"))!;
+    const path = join(directory, file);
+    const state = JSON.parse(await readFile(path, "utf8"));
+    state.result = undefined;
+    await writeFile(path, JSON.stringify(state));
+    const missionId = f.application.startRun.mock.calls[0]![0];
+    const mission = await f.missions.get(missionId);
+    await f.missions.updateExecution(missionId, { ...mission.execution!, status: "running" });
+    f.application.delete.mockClear();
+    f.application.interrupt.mockRejectedValueOnce(new Error("temporary_stop_failure"));
+    await expect(f.api().executor.retireJob!(f.input.jobId)).rejects.toThrow(
+      "temporary_stop_failure",
+    );
+    expect(JSON.parse(await readFile(path, "utf8")).retired).toBe(true);
+    expect(f.application.delete).not.toHaveBeenCalled();
+    f.reopen();
+    f.application.interrupt.mockImplementationOnce(async () => {
+      await f.compileStop(missionId);
+    });
+    await f.api().executor.maintain!([]);
+    expect(f.application.interrupt).toHaveBeenCalledTimes(2);
+    expect(f.application.delete).toHaveBeenCalledExactlyOnceWith(missionId);
+    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readdir(join(directory, "jobs"))).toEqual([]);
+    expect(f.application.startRun).toHaveBeenCalledOnce();
+    expect(f.application.continueInternalMemoryMission).not.toHaveBeenCalled();
+  },
+);
 
 it("never settles a continuation using the previous execution projection", async () => {
   const f = await fixture();

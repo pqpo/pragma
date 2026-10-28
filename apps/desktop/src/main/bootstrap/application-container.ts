@@ -1,4 +1,5 @@
 import { unattendedMemoryRevisionResource } from "@pragma/built-in-agents";
+import { systemExecutorStopSource } from "../features/missions/system-executor-stop-source.ts";
 import { createLegacyMemoryRevisionObserver } from "../features/memory/legacy-memory-revision-observer.ts";
 import { desktopCapabilityResourceId } from "../platform/bindings/desktop-bound-resource-policy.ts";
 import { createBundleExecutorReadiness } from "../features/bundles/bundle-executor-readiness.ts";
@@ -1469,17 +1470,20 @@ export async function createDesktopApplicationContainer(
         if (purpose === "stop") {
           const resource = systemExperts.getResource(planningRef);
           if (resource === undefined) return undefined;
-          return {
-            ref: planningRef as import("@pragma/built-in-agents").BuiltInAgentRef,
-            environmentId: "desktop",
-            definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
-            workspace: mission.workspace.path,
-            pragmaHome: pragmaPaths.root,
-            runtimes: scopedRuntimes,
-            expertResource: resource,
-            additionalResources: systemExperts.getAdditionalResources(planningRef),
-            adapterHost,
-          };
+          return systemExecutorStopSource(
+            {
+              ref: planningRef as import("@pragma/built-in-agents").BuiltInAgentRef,
+              environmentId: "desktop",
+              definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
+              workspace: mission.workspace.path,
+              pragmaHome: pragmaPaths.root,
+              runtimes: scopedRuntimes,
+              expertResource: resource,
+              additionalResources: systemExperts.getAdditionalResources(planningRef),
+              adapterHost,
+            },
+            pinnedSource,
+          );
         }
         if (isMemoryRevisionPlanningRun(mission.origin, planningRef)) {
           const resource = systemExperts.getResource(planningRef);

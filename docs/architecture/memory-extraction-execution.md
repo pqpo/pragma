@@ -184,6 +184,13 @@ Authority submissions are reconciled after an uncertain tool response. Results p
 draft-owning Missions remain available for approval/rework. Deleting failed input revokes its tools;
 idle maintenance reclaims orphan no-draft state/workspaces without startup owner scans.
 
+Cold stop reconstructs system Experts from the admitted Mission execution snapshot, including
+the task-mode resource, additional resources, Runtime, model and permission overrides. It does
+not reopen the direct Revision source binding or require live learning inputs: retirement revokes
+those inputs before cancellation. The stop definition must retain the original Session definition
+fingerprint. Failed cancellation preserves the retired record and job index so idle maintenance
+can replay cancellation and deletion after restart without admitting another model turn.
+
 Legacy task compatibility is a drain, not another new-task path. Existing cached plans finish their
 old handoff, and registered Planner Missions are only observed/read. No new Planner or correction is
 admitted. A durable business decision precedes the legacy settlement marker and cleanup. Missing owner,
