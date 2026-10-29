@@ -1,3 +1,10 @@
+import {
+  builtInAgentResource,
+  STORE_REVISION_EXPERT_REF,
+  SKILL_REVISION_EXPERT_REF,
+  unattendedMemoryRevisionResource,
+} from "@pragma/built-in-agents";
+import { systemExecutorStopSource } from "./system-executor-stop-source.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -41,9 +48,15 @@ import {
 } from "./fixtures/desktop-mission-test-application.ts";
 import { createMissionStore } from "@pragma/local-host";
 
-it.each(["expert", "team"] as const)(
-  "cold-stops a real %s checkpoint without execute resources and resumes healthy sends",
+it.each(["expert", "team", "memory-knowledge", "memory-skill"] as const)(
+  "cold-stops a real %s checkpoint without execute resources",
   async (kind) => {
+    const memoryRef =
+      kind === "memory-knowledge"
+        ? STORE_REVISION_EXPERT_REF
+        : kind === "memory-skill"
+          ? SKILL_REVISION_EXPERT_REF
+          : undefined;
     const root = await mkdtemp(join(tmpdir(), `pragma-cold-${kind}-stop-`));
     const home = join(root, "original");
     const coldHome = join(root, "cold");
@@ -125,7 +138,21 @@ it.each(["expert", "team"] as const)(
         contextStores: [],
       },
     });
-    const target = kind === "expert" ? expert : team;
+    const memoryExpert =
+      memoryRef === undefined
+        ? undefined
+        : {
+            ...builtInAgentResource(memoryRef),
+            spec: expert.spec,
+          };
+    const target = memoryExpert ?? (kind === "expert" ? expert : team);
+    const origin =
+      memoryRef === undefined
+        ? undefined
+        : {
+            type: "system-memory" as const,
+            jobId: `${kind === "memory-knowledge" ? "knowledge" : "skill"}-revision:${"a".repeat(64)}`,
+          };
     const project = createPragmaProjectStore({
       projectsPath: join(root, "projects"),
       loggerProvider,
@@ -141,6 +168,7 @@ it.each(["expert", "team"] as const)(
       goal: "Hold the first turn",
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor: missionExecutorSnapshot(target),
+      ...(origin === undefined ? {} : { origin }),
     });
     let broken = false;
     let finishNormally = false;
@@ -216,6 +244,36 @@ it.each(["expert", "team"] as const)(
       pragmaHome: home,
       executionStore,
       assertExecutorReady: readiness,
+      ...(memoryRef === undefined || memoryExpert === undefined
+        ? {}
+        : {
+            getSystemExecutorResource: () => memoryExpert,
+            systemExecutorSource: async ({
+              mission: current,
+              purpose,
+              adapterHost,
+              pinnedSource,
+            }) => {
+              const source = {
+                ref: memoryRef,
+                environmentId: "desktop",
+                definitionStateRoot: join(root, "definitions"),
+                workspace: current.workspace.path,
+                pragmaHome: home,
+                expertResource: memoryExpert,
+                additionalResources: [profile],
+                adapterHost,
+              };
+              return purpose === "stop"
+                ? systemExecutorStopSource(source, pinnedSource, current)
+                : {
+                    ...source,
+                    expertResource: unattendedMemoryRevisionResource(memoryExpert, {
+                      learningTools: true,
+                    }),
+                  };
+            },
+          }),
       plugins: { inspect, resolve } as unknown as PluginStore,
       resolveSecret: secret,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
@@ -322,6 +380,7 @@ it.each(["expert", "team"] as const)(
         goal: "Hold the first turn",
         project: { id: snapshot.projectId, revision: snapshot.revision },
         executor: missionExecutorSnapshot(target),
+        ...(origin === undefined ? {} : { origin }),
       });
       await coldMissions.updateExecution(mission.id, runningMission.execution!);
       broken = true;
@@ -385,6 +444,10 @@ it.each(["expert", "team"] as const)(
           }),
         ]),
       );
+      if (memoryRef !== undefined) {
+        expect((await coldStore.get(runningMission.execution!.id))?.status).toBe("interrupted");
+        return;
+      }
       await expect(
         restarted.sendMessage({
           id: mission.id,

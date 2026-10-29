@@ -272,7 +272,11 @@ export function installMissionHandlers(options: {
         if (outcome.state === "applied" && attachmentIds.length > 0) {
           await imageDrafts.discard(attachmentIds);
         }
-        await publishMission(await getManagedMission(outcome.missionId));
+        const mission = await options.localHost.getMission(outcome.missionId);
+        if (isUserFacingMissionOrigin(mission.origin)) {
+          await ensureLegacyAutomationMissionSources();
+          await publishMission(mission);
+        }
       })
       .catch((error: unknown) => {
         console.warn(

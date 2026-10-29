@@ -330,34 +330,57 @@ export function createMemoryRevisionExecutor(options: {
       await writeFile(temporary, JSON.stringify(keys), { mode: 0o600 });
       await rename(temporary, indexPath(jobId));
     });
-  const retireRecord = async (key: string) => {
-    const state = await withFileLock(`${statePath(key)}.admission.lock`, async () =>
-      withFileLock(`${statePath(key)}.tools.lock`, async () => {
-        const current = await read(key);
-        if (current === undefined) return undefined;
-        await update(key, async (record) => {
-          record.retired = true;
+  const retirementFailures = new Map<
+    string,
+    { attempts: number; retryAt: number; error: unknown }
+  >();
+  const retireRecord = async (key: string) =>
+    withFileLock(`${statePath(key)}.retirement.lock`, async () => {
+      const previousFailure = retirementFailures.get(key);
+      if (previousFailure !== undefined && Date.now() < previousFailure.retryAt)
+        throw previousFailure.error;
+      const state = await withFileLock(`${statePath(key)}.admission.lock`, async () =>
+        withFileLock(`${statePath(key)}.tools.lock`, async () => {
+          const current = await read(key);
+          if (current === undefined) return undefined;
+          await update(key, async (record) => {
+            record.retired = true;
+          });
+          active.delete(key);
+          return current;
+        }),
+      );
+      if (state === undefined) {
+        retirementFailures.delete(key);
+        return;
+      }
+      // Native cancellation may settle pending tool calls. All metadata/tool locks end first.
+      try {
+        const mission = await options.missions.get(state.missionId);
+        if (["running", "queued", "waiting"].includes(mission.execution?.status ?? ""))
+          await options.application.interrupt(state.missionId, mission.execution!.id);
+        if (state.drafts.length === 0) await options.application.delete(state.missionId);
+      } catch (error) {
+        if (!(error instanceof MissionStoreError) || error.code !== "mission_not_found") {
+          const attempts = (previousFailure?.attempts ?? 0) + 1;
+          retirementFailures.set(key, {
+            attempts,
+            retryAt: Date.now() + Math.min(300_000, 5_000 * 2 ** Math.min(attempts - 1, 6)),
+            error,
+          });
+          throw error;
+        }
+      }
+      retirementFailures.delete(key);
+      // Draft-owning records retain bounded citation/receipt provenance for review and rework.
+      if (state.drafts.length === 0) {
+        await rm(statePath(key), { force: true });
+        await rm(join(paths.workspaceRoot(), "system-memory", key), {
+          recursive: true,
+          force: true,
         });
-        active.delete(key);
-        return current;
-      }),
-    );
-    if (state === undefined) return;
-    // Native cancellation may settle pending tool calls. All metadata/tool locks end first.
-    try {
-      const mission = await options.missions.get(state.missionId);
-      if (["running", "queued", "waiting"].includes(mission.execution?.status ?? ""))
-        await options.application.interrupt(state.missionId);
-      if (state.drafts.length === 0) await options.application.delete(state.missionId);
-    } catch (error) {
-      if (!(error instanceof MissionStoreError) || error.code !== "mission_not_found") throw error;
-    }
-    // Draft-owning records retain bounded citation/receipt provenance for review and rework.
-    if (state.drafts.length === 0) {
-      await rm(statePath(key), { force: true });
-      await rm(join(paths.workspaceRoot(), "system-memory", key), { recursive: true, force: true });
-    }
-  };
+      }
+    });
   let maintenanceOffset = 0;
   const executor: MemoryRevisionExecutor = {
     async retireJob(jobId) {
@@ -387,6 +410,7 @@ export function createMemoryRevisionExecutor(options: {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
         throw error;
       }
+      let pendingFailure: { error: unknown } | undefined;
       for (const file of [...files, ...files].slice(
         maintenanceOffset,
         maintenanceOffset + Math.min(32, files.length),
@@ -396,12 +420,20 @@ export function createMemoryRevisionExecutor(options: {
           .max(100)
           .parse(JSON.parse(await readFile(join(directory, file), "utf8")));
         const states = await Promise.all(keys.map(read));
-        for (const state of states)
-          if (state !== undefined && !retained.has(state.jobId)) await retireRecord(state.key);
+        for (const state of states) {
+          if (state === undefined || (!state.retired && retained.has(state.jobId))) continue;
+          try {
+            await retireRecord(state.key);
+          } catch (error) {
+            // A broken historical Session must not starve unrelated retirement work.
+            pendingFailure ??= { error };
+          }
+        }
         if ((await Promise.all(keys.map(read))).every((state) => state === undefined))
           await rm(join(directory, file), { force: true });
       }
       maintenanceOffset = files.length === 0 ? 0 : (maintenanceOffset + 32) % files.length;
+      if (pendingFailure !== undefined) throw pendingFailure.error;
     },
     async hasExecution(input) {
       return (await read(keyFor(input)))?.admitted === true;

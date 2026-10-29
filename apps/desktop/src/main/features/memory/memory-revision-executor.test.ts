@@ -219,7 +219,7 @@ async function fixture(kind: "knowledge" | "skill" = "knowledge") {
   } as unknown as SkillRevisionSubmissionPort;
   let pinnedSource: LocalHostSystemExecutorSnapshot | undefined;
   let definitionFingerprint: string | undefined;
-  const compileStop = async (missionId: string) => {
+  const compileStop = async (missionId: string, useSnapshot = true) => {
     const mission = await missions.get(missionId);
     const ref = kind === "knowledge" ? STORE_REVISION_EXPERT_REF : SKILL_REVISION_EXPERT_REF;
     const stopped = await compileBuiltInAgent({
@@ -231,6 +231,7 @@ async function fixture(kind: "knowledge" | "skill" = "knowledge") {
           workspace: mission.workspace.path,
           pragmaHome: root,
           expertResource: builtInAgentResource(ref),
+          rootExecutionOverride: { runtimeId: "fake" },
           adapterHost: {
             environmentId: "test",
             projectRoot: root,
@@ -245,7 +246,8 @@ async function fixture(kind: "knowledge" | "skill" = "knowledge") {
             },
           },
         },
-        pinnedSource,
+        useSnapshot ? pinnedSource : undefined,
+        mission,
       ),
       compilationPurpose: "stop",
     });
@@ -1034,6 +1036,66 @@ it.each(["knowledge", "skill"] as const)(
     expect(f.application.continueInternalMemoryMission).not.toHaveBeenCalled();
   },
 );
+
+it.each(["knowledge", "skill"] as const)(
+  "rebuilds a historical %s stop definition without a source snapshot",
+  async (kind) => {
+    const f = await fixture(kind);
+    await f.api().executor.execute(f.input);
+    await f.compileStop(f.application.startRun.mock.calls[0]![0], false);
+    expect(f.application.startRun).toHaveBeenCalledOnce();
+  },
+);
+
+it("backs off failed retirement commands while preserving the failure and eventual recovery", async () => {
+  const f = await fixture();
+  await f.api().executor.execute(f.input);
+  const missionId = f.application.startRun.mock.calls[0]![0];
+  const mission = await f.missions.get(missionId);
+  await f.missions.updateExecution(missionId, { ...mission.execution!, status: "running" });
+  await f.api().executor.execute({ ...f.input, jobId: randomUUID() });
+  const healthyMissionId = f.application.startRun.mock.calls[1]![0];
+  f.application.interrupt.mockRejectedValueOnce(new Error("temporary_stop_failure"));
+  const realNow = Date.now.bind(Date);
+  let clockOffset = 0;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + clockOffset);
+  try {
+    await expect(f.api().executor.retireJob!(f.input.jobId)).rejects.toThrow(
+      "temporary_stop_failure",
+    );
+    await expect(f.api().executor.maintain!([f.input.jobId])).rejects.toThrow(
+      "temporary_stop_failure",
+    );
+    expect(f.application.delete).toHaveBeenCalledWith(healthyMissionId);
+    expect(f.application.interrupt).toHaveBeenCalledExactlyOnceWith(
+      missionId,
+      mission.execution!.id,
+    );
+    clockOffset = 5_001;
+    await f.api().executor.maintain!([f.input.jobId]);
+    expect(f.application.interrupt).toHaveBeenCalledTimes(2);
+    expect(f.application.delete).toHaveBeenCalledWith(missionId);
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+it("serializes overlapping retirement attempts before checking failure backoff", async () => {
+  const f = await fixture();
+  await f.api().executor.execute(f.input);
+  const missionId = f.application.startRun.mock.calls[0]![0];
+  const mission = await f.missions.get(missionId);
+  await f.missions.updateExecution(missionId, { ...mission.execution!, status: "running" });
+  f.application.delete.mockClear();
+  f.application.interrupt.mockRejectedValue(new Error("temporary_stop_failure"));
+  const results = await Promise.allSettled([
+    f.api().executor.retireJob!(f.input.jobId),
+    f.api().executor.retireJob!(f.input.jobId),
+  ]);
+  expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+  expect(f.application.interrupt).toHaveBeenCalledOnce();
+  expect(f.application.delete).not.toHaveBeenCalled();
+});
 
 it("never settles a continuation using the previous execution projection", async () => {
   const f = await fixture();

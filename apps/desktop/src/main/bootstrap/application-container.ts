@@ -1503,6 +1503,7 @@ export async function createDesktopApplicationContainer(
               adapterHost,
             },
             pinnedSource,
+            mission,
           );
         }
         if (isMemoryRevisionPlanningRun(mission.origin, planningRef)) {
