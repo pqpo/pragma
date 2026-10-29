@@ -895,7 +895,7 @@ export function createDesktopMissionExecutionResources(
             const directory = options.missions.storagePath?.(mission.id);
             return directory !== undefined &&
               mission.executor.kind !== "flow" &&
-              isUserFacingMissionOrigin(mission.origin)
+              (isUserFacingMissionOrigin(mission.origin) || isMemoryDirectRevision(mission))
               ? join(directory, "execution-snapshot.json")
               : undefined;
           },

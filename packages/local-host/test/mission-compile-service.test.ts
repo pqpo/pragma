@@ -931,7 +931,7 @@ function callTargets(refs: readonly string[]): PragmaExpertResource["spec"]["too
   };
 }
 
-async function systemFixture(explicitRuntime = false) {
+async function systemFixture(explicitRuntime = false, pin = false) {
   const home = await mkdtemp(join(tmpdir(), "pragma-compile-review-"));
   const refs = [BUILT_IN_PRAGMA_REF, STORE_REVISION_EXPERT_REF, SKILL_REVISION_EXPERT_REF] as const;
   const resources = new Map<string, PragmaExpertResource>(
@@ -982,6 +982,7 @@ async function systemFixture(explicitRuntime = false) {
     environmentId: "review",
     pragmaHome: home,
     loggerProvider: createNoopLoggerProvider(),
+    ...(pin ? { executionSnapshotPath: () => join(home, "execution-snapshot.json") } : {}),
     adapterHost: () => ({
       environmentId: "review",
       projectRoot: home,
@@ -1000,6 +1001,12 @@ async function systemFixture(explicitRuntime = false) {
       },
     },
     systemExecutors: {
+      ...(pin
+        ? {
+            fingerprint: (ref: string) =>
+              resources.has(ref) ? hash(resources.get(ref)) : undefined,
+          }
+        : {}),
       getResource: (ref) => resources.get(ref),
       prepare: async (current, resolver, _purpose, adapterHost) => {
         preparedRequests.push(current);
@@ -1034,6 +1041,36 @@ async function systemFixture(explicitRuntime = false) {
     dispose: () => rm(home, { recursive: true, force: true }),
   };
 }
+
+it.each([STORE_REVISION_EXPERT_REF, SKILL_REVISION_EXPERT_REF])(
+  "retains the pinned %s definition AND compilation identity after a Registry update",
+  async (ref) => {
+    const f = await systemFixture(false, true);
+    const request = { ...f.request, executor: { kind: "expert", ref, name: "Memory Revision" } };
+    try {
+      const first = await f.service.compileStable(
+        f.service.createRequestScope(request),
+        f.runtimes,
+      );
+      const resource = f.resources.get(ref)!;
+      resource.spec.instructions += "\nNew professional instructions for future Missions.";
+      resource.metadata.description += " Updated.";
+      const cold = f.service.createRequestScope({
+        ...request,
+        execution: { sessionId: "original-session" },
+      });
+      const resumed = await f.service.compileStable(cold, f.runtimes);
+      expect(resumed.definitionFingerprint).toBe(first.definitionFingerprint);
+      expect(resumed.identity).toBe(first.identity);
+      expect((resumed.compiled.value as ExpertDefinition).instructions).not.toContain(
+        "future Missions",
+      );
+      expect(await f.service.isExecutionPinned(cold)).toBe(true);
+    } finally {
+      await f.dispose();
+    }
+  },
+);
 
 it("compiles current expert permissions independently from pinned resources and refreshes on retry", async () => {
   const home = await mkdtemp(join(tmpdir(), "pragma-expert-permissions-"));

@@ -100,7 +100,8 @@ import {
   type PromptRequest,
 } from "@pragma/shared";
 import { createIntegrationError } from "@pragma/shared/integration";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { hashMissionCommandPayload } from "./controller/command-payload.ts";
 import { basename, dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -2669,20 +2670,29 @@ export function createLocalHostMissionExecutionService(
       mission.execution?.sessionId !== undefined &&
       mission.execution.environmentFingerprint !== undefined &&
       mission.execution.environmentFingerprint !== preparation.identity;
-    // With frozen dependencies, a different compilation identity and compatible
-    // definition mean the Mission's own options changed. Preserve the existing
-    // explicit option/context succession policy separately from definition errors.
+    // A compatible pinned definition normally leaves Mission option/context
+    // changes as the reason for a different identity. Historical Memory summaries
+    // need the additional Core proof below before treating that difference as drift.
     const compatiblePinnedDefinition =
       coldIdentityChanged &&
       (await compileService.isExecutionPinned(compileScope)) &&
       preparation.definitionFingerprint !== undefined &&
       (await expertSessionStore.get(mission.execution!.sessionId!))?.definitionFingerprint ===
         preparation.definitionFingerprint;
+    // Older warm continuations could persist a live Registry identity while
+    // executing the unchanged pinned definition. Core's durable environment is
+    // stronger proof than that summary; actual profile/binding changes still stop.
+    const unchangedMemoryEnvironment =
+      compatiblePinnedDefinition &&
+      isMemoryContinuationMission(mission) &&
+      compiled !== undefined &&
+      (await executionStore.get(mission.execution!.id))?.environment?.fingerprint ===
+        executionEnvironmentSnapshot(compiled, desiredCapabilities).fingerprint;
     const definitionChanged =
       preparation.definitionChanged || (coldIdentityChanged && !compatiblePinnedDefinition);
     const memoryBindingsChanged = sessionService.memoryBindingsChanged(mission.id);
     const contextStoresChanged =
-      compatiblePinnedDefinition ||
+      (compatiblePinnedDefinition && !unchangedMemoryEnvironment) ||
       sessionService.successorRequired(mission.id) ||
       missionContextMountsNeedSuccessor(mission, contextMountsFingerprint) ||
       (memoryBindingsChanged && !lifecycleService.hasActive(mission.id));
@@ -5906,10 +5916,44 @@ export function createLocalHostMissionExecutionService(
             ? {}
             : { missionPath: options.missions.storagePath }),
         });
-      const prior = await receiptReader.getOperation({
-        missionId: input.id,
-        requestId: input.requestId,
-      });
+      const payload = { kind: "send" as const, input: { prompt: input.content, attachments: [] } };
+      const payloadHash = hashMissionCommandPayload({ missionId: input.id, kind: "send", payload });
+      let requestId = input.requestId;
+      let prior = await receiptReader.getOperation({ missionId: input.id, requestId });
+      // A rejected Inbox identity can never be applied later. Reuse a deterministic
+      // child only with complete, authoritative proof that Core never accepted it.
+      // The caller's durable reservation remains the root of this bounded chain.
+      for (let rejected = 0; prior?.state === "rejected"; rejected++) {
+        if (rejected >= 32) throw new Error("memory_curator_preparation_retries_exhausted");
+        if (prior.commandId === undefined)
+          throw new Error("memory_curator_continuation_dispatch_unconfirmed");
+        if (prior.payloadHash !== payloadHash)
+          throw new Error("memory_curator_continuation_payload_changed");
+        const sessionId = mission.execution?.sessionId;
+        const session =
+          sessionId === undefined ? undefined : await expertSessionStore.get(sessionId);
+        if (
+          session === undefined ||
+          !session.executionIds.includes(input.previousExecutionId) ||
+          session.contexts[session.rootContextId]?.snapshot === undefined
+        )
+          throw new Error("memory_curator_session_unavailable");
+        const prompts = await expertSessionStore.listPrompts(session.sessionId);
+        const promptExecutions = new Set(prompts.map((prompt) => prompt.executionId));
+        if (
+          prompts.some((prompt) => prompt.requestId === requestId) ||
+          session.executionIds.some((id) => !promptExecutions.has(id))
+        )
+          throw new Error("memory_curator_continuation_dispatch_unconfirmed");
+        const bytes = createHash("sha256")
+          .update(`pragma.memory-continuation-recovery/v1:${requestId}:${prior.commandId}`)
+          .digest();
+        bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+        bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+        const hex = bytes.subarray(0, 16).toString("hex");
+        requestId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+        prior = await receiptReader.getOperation({ missionId: input.id, requestId });
+      }
       if (prior === undefined) {
         if (
           mission.execution?.id !== input.previousExecutionId ||
@@ -5922,9 +5966,9 @@ export function createLocalHostMissionExecutionService(
       }
       const { operation } = await submitMissionCommand({
         missionId: input.id,
-        requestId: input.requestId,
+        requestId,
         kind: "send",
-        payload: { kind: "send", input: { prompt: input.content, attachments: [] } },
+        payload,
       });
       const current = await options.missions.get(input.id);
       const executionId = operation.result?.["executionId"];

@@ -10647,6 +10647,122 @@ function approvalAfterExpertFlowFixture(): PragmaFlowResource {
   };
 }
 
+it.each([false, true])(
+  "reconciles a historical Memory compilation summary only with unchanged Core environment (profile changed=%s)",
+  async (profileChanged) => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-memory-summary-recovery-"));
+    temporaryPaths.push(root);
+    const home = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const published = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const builtin =
+      await vi.importActual<typeof import("@pragma/built-in-agents")>("@pragma/built-in-agents");
+    const resource = structuredClone(builtin.builtInAgentResource(STORE_REVISION_EXPERT_REF));
+    resource.spec.capabilities = [];
+    resource.spec.contextStores = [];
+    resource.spec.tools = [];
+    resource.spec.plugins = [];
+    const nativeContexts: string[] = [];
+    const nativeInstructions: (string | undefined)[] = [];
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
+      descriptor: { id: "fake", kind: "test", displayName: "Fixture" },
+      createSession: (context) => ({ context }),
+      restoreSession: (context) => ({ context }),
+      startTurn(session) {
+        nativeContexts.push(session.context.systemSessionId);
+        nativeInstructions.push(session.context.agent.instructions);
+        return { outputText: "finished", runtimeSessionId: session.context.systemSessionId };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
+    let changed = false;
+    const openRunner = () =>
+      createDesktopMissionTestApplication({
+        missions,
+        project,
+        pragmaHome: home,
+        runtimes,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        getSystemExecutorResource: (ref) =>
+          ref === STORE_REVISION_EXPERT_REF ? resource : undefined,
+        getSystemExecutorFingerprint: () => "original-registry",
+        systemExecutorSource: async ({ mission, runtimes }) => ({
+          ref: STORE_REVISION_EXPERT_REF,
+          environmentId: "desktop",
+          definitionStateRoot: join(root, "definitions"),
+          workspace: mission.workspace.path,
+          pragmaHome: home,
+          runtimes,
+          expertResource: resource,
+          rootExecutionOverride: {
+            runtimeId: "fake",
+            ...(changed
+              ? { modelSelection: { model: { providerId: "test", modelId: "changed" } } }
+              : {}),
+          },
+        }),
+      });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Extract Memory",
+      project: { id: published.projectId, revision: published.revision },
+      executor: { kind: "expert", ref: STORE_REVISION_EXPERT_REF, name: "Revision" },
+      origin: { type: "system-memory", jobId: `knowledge-revision:${"c".repeat(64)}` },
+    });
+    let runner = openRunner();
+    await runner.startRun(mission.id);
+    await vi.waitFor(async () =>
+      expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+    );
+    await runner.stopLocalController(mission.id, "shutdown");
+    const original = (await missions.get(mission.id)).execution!;
+    expect(
+      JSON.parse(
+        await readFile(join(missions.storagePath!(mission.id), "execution-snapshot.json"), "utf8"),
+      ).sources[STORE_REVISION_EXPERT_REF].expertResource.spec.instructions,
+    ).toBe(resource.spec.instructions);
+    resource.spec.instructions += "\nUpdated professional instructions for future Missions.";
+    // The historical writer used live Registry fingerprints in this summary while
+    // compiling the pinned definition. Keep the real compiled/Core receipts intact.
+    await missions.updateExecution(mission.id, {
+      ...original,
+      environmentFingerprint: "f".repeat(64),
+    });
+    changed = profileChanged;
+    runner = openRunner();
+    try {
+      const continuation = runner.continueInternalMemoryMission({
+        id: mission.id,
+        requestId: randomUUID(),
+        previousExecutionId: original.id,
+        content: "Repair unfinished extraction",
+      });
+      if (profileChanged) {
+        await expect(continuation).rejects.toThrow("memory_curator_session_environment_changed");
+        expect(nativeContexts).toHaveLength(1);
+      } else {
+        await continuation;
+        await vi.waitFor(async () =>
+          expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+        );
+        expect(nativeContexts).toEqual([nativeContexts[0], nativeContexts[0]]);
+        expect(nativeInstructions).toEqual([nativeInstructions[0], nativeInstructions[0]]);
+        expect((await missions.get(mission.id)).execution?.sessionId).toBe(original.sessionId);
+      }
+    } finally {
+      await runner.stopLocalController(mission.id, "shutdown");
+    }
+  },
+);
+
 it("keeps a running mode frozen and adopts the expert's current mode after cold continuation", async () => {
   const root = await mkdtemp(join(tmpdir(), "pragma-expert-native-mode-"));
   temporaryPaths.push(root);

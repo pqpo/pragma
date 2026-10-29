@@ -576,14 +576,19 @@ export function createLocalHostMissionCompileService<
     runtimes?: RuntimeResolver,
   ): Promise<string> => {
     const snapshot = await readSnapshot(scope);
-    const systemExecutorFingerprints = await resolveMissionSystemDependencyFingerprints({
-      mission: scope.request,
-      project: { getRevision: async () => await scope.getRevision() },
-      getSystemExecutorFingerprint: options.systemExecutors?.fingerprint,
-      getSystemExecutorResource: (ref) =>
-        options.systemExecutors?.getDependencyResource?.(ref) ??
-        options.systemExecutors?.getResource?.(ref),
-    });
+    // Definition resources and identity must come from the same owner snapshot.
+    // Live Registry changes otherwise make an unchanged pinned Memory Session look
+    // like an execution-option change during cold recovery, blocking continuation.
+    const systemExecutorFingerprints =
+      snapshot?.fingerprints ??
+      (await resolveMissionSystemDependencyFingerprints({
+        mission: scope.request,
+        project: { getRevision: async () => await scope.getRevision() },
+        getSystemExecutorFingerprint: options.systemExecutors?.fingerprint,
+        getSystemExecutorResource: (ref) =>
+          options.systemExecutors?.getDependencyResource?.(ref) ??
+          options.systemExecutors?.getResource?.(ref),
+      }));
     const request = scope.request;
     return hash({
       project: request.project,

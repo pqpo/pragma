@@ -24,6 +24,7 @@ import {
   compileBuiltInAgent,
   STORE_REVISION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
+  KnowledgeRevisionToolError,
   type KnowledgeRevisionSubmissionPort,
   type SkillRevisionSubmissionPort,
 } from "@pragma/built-in-agents";
@@ -54,6 +55,86 @@ const context = {
   },
 };
 type Tool = ExpertAgentManagedTool<string, unknown>;
+
+it.each(
+  (["knowledge", "skill"] as const).flatMap((kind) =>
+    [false, true].map((retryable) => ({ kind, retryable })),
+  ),
+)(
+  "preserves Host retry policy for $kind reads (retryable=$retryable)",
+  async ({ kind, retryable }) => {
+    const f = await fixture(kind);
+    const port = kind === "knowledge" ? f.port : f.skillPort;
+    port.listTargets = vi.fn(async () => {
+      throw new KnowledgeRevisionToolError(
+        "revision_conflict",
+        "Host classified this conflict",
+        retryable,
+      );
+    });
+    f.setTurn(async (tools) => {
+      const result = await call(tools, `${kind}_revision_list_targets`, {});
+      expect(result).toMatchObject({ code: "revision_conflict", retryable });
+      if (!retryable) expect(result).not.toHaveProperty("recovery");
+      await call(tools, "find_learning_targets", {});
+    });
+    await expect(f.api().executor.execute(f.input)).rejects.toMatchObject({
+      code: "revision_conflict",
+      retryable,
+    });
+    f.reopen();
+    await expect(
+      f.api().executor.execute({ ...f.input, manualRetry: false }),
+    ).rejects.toMatchObject({ code: "revision_conflict", retryable });
+    expect(f.application.startRun).toHaveBeenCalledOnce();
+  },
+);
+
+it.each(["knowledge", "skill"] as const)(
+  "preserves wrapped %s read corrections at terminal observation",
+  async (kind) => {
+    const f = await fixture(kind);
+    f.setTurn(async (tools) => {
+      expect(
+        await call(tools, `${kind}_revision_get_draft`, { draftId: randomUUID() }),
+      ).toMatchObject({ error: "memory_revision_draft_denied", status: "needs_correction" });
+    });
+    await expect(f.api().executor.execute(f.input)).rejects.toMatchObject({
+      code: "memory_revision_draft_denied",
+      retryable: true,
+    });
+  },
+);
+
+it.each(["knowledge", "skill"] as const)(
+  "allows %s rediscovery to repair an invalid draft or target handle",
+  async (kind) => {
+    const f = await fixture(kind);
+    const port = kind === "knowledge" ? f.port : f.skillPort;
+    port.listDrafts = vi.fn(async () => ({ items: [], nextCursor: undefined }));
+    f.setTurn(async (tools) => {
+      for (const [name, args] of [
+        [`${kind}_revision_get_draft`, { draftId: randomUUID() }],
+        ["read_learning_target", { targetId: randomUUID() }],
+      ] as const) {
+        const feedback = await call(tools, name, args);
+        expect(feedback.status).toBe("needs_correction");
+        expect(await call(tools, feedback.nextCall.tool, feedback.nextCall.args)).toHaveProperty(
+          "items",
+        );
+      }
+      expect(
+        await call(tools, "finish_memory_learning", {
+          disposition: "accumulate",
+          reason:
+            "Authorized discovery confirms there is no existing draft or target; the source has no supported new delta.",
+        }),
+      ).toEqual({ saved: true });
+    });
+    expect(await f.api().executor.execute(f.input)).toMatchObject({ submitted: false });
+  },
+);
+
 async function fixture(kind: "knowledge" | "skill" = "knowledge") {
   const root = await mkdtemp(join(tmpdir(), "pragma-direct-revision-"));
   roots.push(root);
@@ -408,7 +489,26 @@ it("reuses an inspected existing target and retains durable submission across ma
         targetRef: target.targetRef,
         prompt: "Add the verified check",
       }),
-    ).toMatchObject({ code: expect.any(String) });
+    ).toMatchObject({
+      code: "invalid_input",
+      retryable: true,
+      message: expect.stringContaining("memory_revision_target_changed_or_unread"),
+      recovery: {
+        tool: "read_learning_target",
+        reason: expect.stringContaining(target.id),
+      },
+    });
+    expect(
+      await call(tools, "read_learning_target", { targetId: target.id, offset: 999999 }),
+    ).toMatchObject({ error: "memory_revision_offset_invalid" });
+    // A failed content-range read must not satisfy the read-before-start guard.
+    expect(
+      await call(tools, "knowledge_revision_start", {
+        targetRef: target.targetRef,
+        prompt: "Add the verified check",
+      }),
+    ).toMatchObject({ code: "invalid_input", message: "memory_revision_target_changed_or_unread" });
+    expect(f.port.start).not.toHaveBeenCalled();
     await call(tools, "read_learning_target", { targetId: target.id });
     const started = await call(tools, "knowledge_revision_start", {
       targetRef: target.targetRef,
@@ -455,6 +555,12 @@ it("reuses an inspected existing target and retains durable submission across ma
       summary: "Add verified check",
     });
     expect(receipt.state).toBe("pending_review");
+    // Publication/version churn after a committed submission must not invalidate its receipt.
+    f.revisions.getDirectDraftVersion.mockResolvedValue({
+      id: f.targetId,
+      revision: 2,
+      hash: "c".repeat(64),
+    });
     expect(
       await call(tools, "knowledge_revision_submit_draft", {
         draftId: f.draftId,
@@ -677,6 +783,189 @@ it("retries an explicitly retryable terminal failure in the original context", a
   expect(onAdmission).toHaveBeenCalledWith(true);
   expect(new Set(f.application.startRun.mock.calls.map((call) => call[0])).size).toBe(1);
 });
+
+it.each(["knowledge", "skill"] as const)(
+  "repairs all six %s learning tools in the compiled context",
+  async (kind) => {
+    const f = await fixture(kind);
+    if (kind === "knowledge")
+      f.revisions.listKnowledgeTargets.mockResolvedValue([
+        {
+          storeId: f.targetId,
+          name: "Existing",
+          description: "Guidance",
+          baseRevision: 1,
+          snapshotHash: "b".repeat(64),
+          mounted: true,
+          pending: false,
+        },
+      ]);
+    else {
+      f.revisions.listSkillTargets.mockResolvedValue([
+        {
+          bindingId: "existing",
+          normalizedKeys: ["existing"],
+          capabilityId: f.targetId,
+          name: "Existing",
+          description: "Guidance",
+          baseRevision: 1,
+          contentHash: "b".repeat(64),
+          mounted: true,
+          pending: false,
+        },
+      ]);
+      Object.assign(f.revisions, { readSkillTarget: async () => "# Existing skill" });
+    }
+    f.setTurn(async (tools) => {
+      for (const name of ["list_learning_sources", "find_learning_targets"]) {
+        expect(await call(tools, name, { offset: -1 })).toMatchObject({
+          error: "memory_revision_arguments_invalid",
+          status: "needs_correction",
+          retryable: true,
+        });
+        await call(tools, name, {});
+      }
+      const { items } = await call(tools, "list_learning_sources", {});
+      for (const [name, args] of [
+        ["read_learning_source", { handle: items[0].handle, offset: 999999 }],
+        ["read_learning_target", { targetId: f.targetId, offset: 999999 }],
+      ] as const) {
+        const feedback = await call(tools, name, args);
+        expect(feedback).toMatchObject({
+          error: "memory_revision_offset_invalid",
+          status: "needs_correction",
+          nextCall: { tool: name, args: { offset: 0 } },
+        });
+        expect(await call(tools, feedback.nextCall.tool, feedback.nextCall.args)).toHaveProperty(
+          "text",
+        );
+      }
+      expect(await call(tools, "select_learning_sources", { handles: ["invented"] })).toMatchObject(
+        { status: "needs_correction", nextCall: { tool: "list_learning_sources" } },
+      );
+      await call(tools, "select_learning_sources", { handles: [items[0].handle] });
+      expect(
+        await call(tools, "finish_memory_learning", {
+          disposition: "accumulate",
+          reason: "No delta",
+          waitForTarget: "invented",
+        }),
+      ).toMatchObject({ status: "needs_correction", nextCall: { tool: "find_learning_targets" } });
+      expect(
+        await call(tools, "finish_memory_learning", {
+          disposition: "duplicate",
+          reason: "Existing guidance already covers the source.",
+        }),
+      ).toEqual({ saved: true });
+    });
+    expect(await f.api().executor.execute(f.input)).toMatchObject({
+      submitted: false,
+      decision: { outcome: "duplicate" },
+    });
+    expect(f.application.startRun).toHaveBeenCalledOnce();
+  },
+);
+
+it.each(["knowledge", "skill"] as const)(
+  "automatically repairs a missing %s receipt after reopening with the original owner",
+  async (kind) => {
+    const f = await fixture(kind);
+    f.setTurn(async () => undefined);
+    await expect(f.api().executor.execute(f.input)).rejects.toMatchObject({
+      code: "memory_revision_receipt_missing",
+      retryable: true,
+      memoryRevisionTransient: true,
+    });
+    const missionId = f.application.startRun.mock.calls[0]![0];
+    f.reopen();
+    f.setTurn(async (tools) => {
+      await call(tools, "finish_memory_learning", {
+        disposition: "accumulate",
+        reason: "No supported delta.",
+      });
+    });
+    expect(
+      await f.api().executor.execute({
+        ...f.input,
+        claimRevision: 5,
+        manualRetry: false,
+        retryFailedExecution: true,
+      }),
+    ).toMatchObject({ submitted: false });
+    expect(f.application.continueInternalMemoryMission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: missionId,
+        content: expect.stringContaining("Chat text is not a receipt"),
+      }),
+    );
+    expect(new Set(f.application.startRun.mock.calls.map(([id]) => id)).size).toBe(1);
+  },
+);
+
+it.each(["knowledge", "skill"] as const)(
+  "bounds %s receipt repair to four admissions across scheduler restart",
+  async (kind) => {
+    const f = await fixture(kind);
+    let clock = new Date();
+    await createFileMemoryPolicyStore({ pragmaHome: f.root, now: () => clock }).updateGlobal({
+      expectedRevision: 0,
+      policy: {
+        enabled: "enabled",
+        capture: "enabled",
+        recall: "enabled",
+        learning: "local-candidates",
+      },
+    });
+    const open = () => {
+      const shared = {
+        pragmaHome: f.root,
+        now: () => clock,
+        executor: f.api().executor,
+        learningSink: { submit: vi.fn() },
+      };
+      return kind === "knowledge"
+        ? createKnowledgeMemoryModule({
+            ...shared,
+            sourceReader: { listEligibleSources: async () => f.input.sources },
+          })
+        : createSkillMemoryModule({
+            ...shared,
+            sourceReader: {
+              listEligibleSources: async () =>
+                f.input.sources.map((source) =>
+                  SkillSourceSnapshotSchema.parse({ ...source, hasSuccessfulRecovery: false }),
+                ),
+            },
+            targetReader: { listTargets: async () => [] },
+          });
+    };
+    f.setTurn(async () => undefined);
+    let module = await open();
+    try {
+      await module.scheduleRoot(f.input.rootRef);
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        clock = new Date(clock.getTime() + 24 * 60 * 60_000);
+        await module.runBackgroundOnce?.();
+        expect((await module.store.listJobs())[0]).toMatchObject({
+          attempts: attempt,
+          status: attempt === 4 ? "needs_attention" : "pending",
+          lastFailure: { code: "memory_revision_receipt_missing", retryable: true },
+        });
+        module.close();
+        f.reopen();
+        module = await open();
+      }
+      clock = new Date(clock.getTime() + 24 * 60 * 60_000);
+      await module.runBackgroundOnce?.();
+      expect(f.application.startRun).toHaveBeenCalledTimes(4);
+      expect(f.application.continueInternalMemoryMission).toHaveBeenCalledTimes(3);
+      expect(new Set(f.application.startRun.mock.calls.map(([id]) => id)).size).toBe(1);
+      expect(f.application.delete).not.toHaveBeenCalled();
+    } finally {
+      module.close();
+    }
+  },
+);
 
 it("does not admit an already cancelled task", async () => {
   const f = await fixture();
