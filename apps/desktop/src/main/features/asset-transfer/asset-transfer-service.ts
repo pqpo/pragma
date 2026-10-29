@@ -1,3 +1,7 @@
+import {
+  AssetGitSourceConflictError,
+  type AssetGitService,
+} from "../asset-git/asset-git-service.ts";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -15,6 +19,9 @@ import { z } from "zod";
 import {
   CapabilityDefinitionSchema,
   CoreAssetSyncItemSchema,
+  CoreAssetGitSourceSchema,
+  type AssetGitTarget,
+  AssetGitTargetSchema,
   WorkflowLayoutSchema,
   type CoreAssetSyncItem,
 } from "../../../shared/contracts/index.ts";
@@ -65,6 +72,7 @@ export interface CollectedItems {
 export const AssetTransferItemSchema = CoreAssetSyncItemSchema.extend({
   data: z.union([
     PragmaForwardCompatibleResourceSchema,
+    CoreAssetGitSourceSchema,
     CapabilityDefinitionSchema,
     KnowledgeDataSchema,
     SkillDataSchema,
@@ -91,6 +99,7 @@ export class AssetTransferConflictError extends Error {
   }
 }
 export function createAssetTransferService(options: {
+  readonly assetGit?: Pick<AssetGitService, "source" | "restoreSource">;
   readonly project: PragmaProjectStore;
   readonly layouts: WorkflowLayoutStore;
   readonly stores: ContextStoreStore;
@@ -326,6 +335,14 @@ export function createAssetTransferService(options: {
       }
       add("skill", id, capability.definition.name, skillPayloads.get(id)!);
     }
+    if (options.assetGit) {
+      for (const item of [...result.values()]) {
+        if ((item.kind !== "knowledge" && item.kind !== "skill") || isResourceItem(item)) continue;
+        const id = item.key.slice(item.kind.length + 1);
+        const source = await options.assetGit.source({ kind: item.kind, id });
+        if (source) add(`${item.kind}-git`, id, item.name, CoreAssetGitSourceSchema.parse(source));
+      }
+    }
     return { items: result, revisions, nameResolutionIssues };
   };
 
@@ -415,6 +432,17 @@ export function createAssetTransferService(options: {
           CapabilityDefinitionSchema.parse(change.remote.data),
         );
       prepared.push(change);
+    }
+    for (const change of prepared) {
+      const item = change.remote;
+      if (!item || (item.kind !== "knowledge-git" && item.kind !== "skill-git")) continue;
+      const target = assetGitTarget(item);
+      if (!options.assetGit) throw new Error("Asset Git association restoration is unavailable.");
+      if (!(target.kind === "knowledge" ? storeIds : capabilityIds).has(target.id))
+        throw new AssetTransferConflictError(
+          [item.key],
+          "The Git association has no asset authority.",
+        );
     }
     const desired = [
       ...current.resources.filter(
@@ -574,6 +602,7 @@ export function createAssetTransferService(options: {
     const projectRemovals: string[] = [];
     const deferredRemovals: { kind: "knowledge" | "skill" | "capability"; id: string }[] = [];
     const deferredLayouts: (() => Promise<void>)[] = [];
+    const deferredSources: (() => Promise<void>)[] = [];
     const capabilityUpdates: {
       id: string;
       definition: Exclude<z.infer<typeof CapabilityDefinitionSchema>, { kind: "skill" }>;
@@ -588,6 +617,26 @@ export function createAssetTransferService(options: {
     for (const { local, remote } of changes) {
       const item = remote ?? local;
       if (item === undefined) continue;
+      if (item.kind === "knowledge-git" || item.kind === "skill-git") {
+        const target = assetGitTarget(item);
+        if (!options.assetGit) throw new Error("Asset Git association restoration is unavailable.");
+        const current = await options.assetGit.source(target);
+        assertExpected(item.key, current);
+        deferredSources.push(async () => {
+          try {
+            await options.assetGit!.restoreSource(
+              target,
+              remote ? CoreAssetGitSourceSchema.parse(remote.data) : undefined,
+              local ? CoreAssetGitSourceSchema.parse(local.data) : null,
+            );
+          } catch (error) {
+            if (error instanceof AssetGitSourceConflictError)
+              throw new AssetTransferConflictError([item.key], error.message);
+            throw error;
+          }
+        });
+        continue;
+      }
       if (
         ["expert", "team", "flow", "automation", "runtime-profile"].includes(item.kind) ||
         (item.kind === "capability" && item.key.startsWith("capability:capability:")) ||
@@ -965,6 +1014,7 @@ export function createAssetTransferService(options: {
         }
       }
     }
+    for (const restoreSource of deferredSources) await restoreSource();
   };
 
   return { collectAssets, prepareImport, applyImport };
@@ -978,4 +1028,11 @@ export function isResourceItem(item: CoreAssetSyncItem): boolean {
 }
 function hashKnowledge(data: z.infer<typeof KnowledgeDataSchema>): string {
   return hashSnapshotContent(data.files, data.directories);
+}
+
+export function assetGitTarget(item: Pick<CoreAssetSyncItem, "kind" | "key">): AssetGitTarget {
+  return AssetGitTargetSchema.parse({
+    kind: item.kind === "knowledge-git" ? "knowledge" : "skill",
+    id: item.key.slice(item.kind.length + 1),
+  });
 }

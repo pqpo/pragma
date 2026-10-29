@@ -23,6 +23,7 @@ import {
   ContextStoreContentMetadataSchema,
   CONTEXT_STORE_FILE_MAX_BYTES,
   CoreAssetSyncItemSchema,
+  CoreAssetGitSourceSchema,
   WorkflowLayoutSchema,
   type CoreAssetSyncItem,
 } from "../../../shared/contracts/index.ts";
@@ -243,6 +244,9 @@ export function encodeSyncRepository(
             Buffer.from(file.content, "base64"),
             file.executable,
           );
+      } else if (item.kind === "knowledge-git" || item.kind === "skill-git") {
+        path = `${item.kind === "knowledge-git" ? "knowledge-bases" : "skills"}/${id}/git.yaml`;
+        addYaml(path, CoreAssetGitSourceSchema.parse(item.data));
       } else if (item.kind === "capability") {
         path = `capability-definitions/${id}.yaml`;
         addYaml(path, { id, definition: CapabilityDefinitionSchema.parse(item.data) });
@@ -270,6 +274,10 @@ function assertLogicalAssetLimit(items: ReadonlyMap<string, CoreAssetSyncItem>):
   for (const item of items.values()) {
     if (item.kind === "flow-layout")
       identities.add(`flow:${item.key.slice("flow-layout:".length)}`);
+    else if (item.kind === "knowledge-git" || item.kind === "skill-git")
+      identities.add(
+        `${item.kind === "knowledge-git" ? "knowledge" : "skill"}:${item.key.slice(item.kind.length + 1)}`,
+      );
     else if (isResourceItem(item)) {
       const resource = PragmaForwardCompatibleResourceSchema.parse(item.data);
       const binding = classifyDesktopCapabilityResource(resource);
@@ -380,6 +388,20 @@ export function decodeSyncRepository(
     } else if (
       (directory === "knowledge-bases" || directory === "skills") &&
       path.split("/").length === 3 &&
+      path.endsWith("/git.yaml")
+    ) {
+      const id = path.split("/")[1]!;
+      (directory === "knowledge-bases" ? ContextStoreIdSchema : CapabilityIdSchema).parse(id);
+      add(
+        directory === "knowledge-bases" ? "knowledge-git" : "skill-git",
+        id,
+        id,
+        CoreAssetGitSourceSchema.parse(yaml(file.bytes)),
+      );
+      consumed.add(path);
+    } else if (
+      (directory === "knowledge-bases" || directory === "skills") &&
+      path.split("/").length === 3 &&
       path.endsWith("/metadata.yaml")
     ) {
       if (directory === "knowledge-bases") {
@@ -452,6 +474,14 @@ export function decodeSyncRepository(
       }
       consumed.add(path);
     }
+  }
+  for (const item of result.values()) {
+    if (item.kind !== "knowledge-git" && item.kind !== "skill-git") continue;
+    const authority = result.get(
+      `${item.kind === "knowledge-git" ? "knowledge" : "skill"}:${item.key.slice(item.kind.length + 1)}`,
+    );
+    if (!authority) throw new Error(`Git association has no asset: ${item.key}`);
+    result.set(item.key, { ...item, name: authority.name });
   }
   for (const path of files.keys())
     if (!consumed.has(path)) throw new Error(`Unexpected or orphaned sync file: ${path}`);

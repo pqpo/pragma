@@ -1,3 +1,4 @@
+import { createAssetGitService } from "../asset-git/asset-git-service.ts";
 import { PragmaPaths } from "@pragma/core";
 import { createAutomationService } from "../automations/automation-service.ts";
 import { createAutomationStore, createAutomationBinding } from "../automations/automation-store.ts";
@@ -198,7 +199,13 @@ function device(
       };
     },
   });
+  const assetGit = createAssetGitService({
+    stateRoot: join(root, "state", "asset-git"),
+    stores,
+    capabilities,
+  });
   const options = {
+    assetGit,
     ...(projectHooks?.onAutomationsImported
       ? { onAutomationsImported: projectHooks.onAutomationsImported }
       : {}),
@@ -212,6 +219,7 @@ function device(
   };
   return {
     root,
+    assetGit,
     stores,
     project,
     layouts,
@@ -465,6 +473,118 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     expect((await b.restart().sync()).status).toBe("ready");
     expect((await b.project.get()).resources).toEqual([]);
   });
+
+  it.each(["knowledge", "skill"] as const)(
+    "synchronizes %s Git associations with conflict choices and unbinding",
+    async (kind) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const b = device(join(git.root, "b"));
+      const id =
+        kind === "knowledge"
+          ? (await addKnowledge(a.stores, "Shared docs")).id
+          : (await addSkill(a.capabilities, a.root, true)).manifest.id;
+      const target = { kind, id };
+      const first = { remote: "ssh://git@pragma.test/individual.git", branch: "main" };
+      await exec("git", [
+        "init",
+        "--bare",
+        "--initial-branch=main",
+        join(git.root, "individual.git"),
+      ]);
+      await a.assetGit.bind({ target, source: first });
+      expect((await a.assetGit.sync(target)).status).toBe("synced");
+      expect((await a.service.configure(configuration)).status).toBe("ready");
+      const path = `pragma-sync/${kind === "knowledge" ? "knowledge-bases" : "skills"}/${id}/git.yaml`;
+      expect(
+        parsePragmaYaml(
+          (await exec("git", ["--git-dir", git.bare, "show", `main:${path}`])).stdout,
+        ),
+      ).toEqual(first);
+      const imported = await b.service.configure(configuration);
+      expect(imported.status, imported.error).toBe("ready");
+      expect(await b.assetGit.source(target)).toEqual(first);
+      const sourceStatus = await b.assetGit.status(target);
+      expect(sourceStatus.status).toBe("pending");
+      expect(sourceStatus.syncedAt).toBeUndefined();
+      const restoredSync = await b.assetGit.sync(target);
+      expect(restoredSync.status, restoredSync.error).toBe("synced");
+      const key = `${kind}-git:${id}`;
+      expect(imported.items.find((item) => item.key === key)).toMatchObject({
+        assetKey: `${kind}:${id}`,
+        assetKind: kind,
+        status: "synced",
+      });
+      const revision = async () =>
+        kind === "knowledge"
+          ? (await b.stores.getSnapshot(id)).revision
+          : (await b.capabilities.get(id)).manifest.latestRevision;
+      const initialRevision = await revision();
+      const head = await git.head();
+      expect((await b.restart().sync()).status).toBe("ready");
+      expect(await git.head()).toBe(head);
+      const fromA = { ...first, branch: "from-a" };
+      await a.assetGit.restoreSource(target, fromA, first);
+      await b.assetGit.restoreSource(target, { ...first, branch: "from-b" }, first);
+      expect((await a.service.sync()).status).toBe("ready");
+      expect((await b.service.sync()).items.find((item) => item.key === key)?.status).toBe(
+        "conflict",
+      );
+      expect((await b.service.resolve(key, "remote")).status).toBe("ready");
+      expect(await b.assetGit.source(target)).toEqual(fromA);
+      expect(await revision()).toBe(initialRevision);
+      await expect(
+        b.assetGit.restoreSource(target, first, { ...first, branch: "stale" }),
+      ).rejects.toThrow("changed during restore");
+      expect(await b.assetGit.source(target)).toEqual(fromA);
+      await a.assetGit.unbind(target);
+      const unbound = await a.service.sync();
+      expect(unbound.status, unbound.error).toBe("ready");
+      expect((await b.service.sync()).status).toBe("ready");
+      expect(await b.assetGit.source(target)).toBeUndefined();
+      expect(await revision()).toBe(initialRevision);
+      await a.assetGit.restoreSource(target, first);
+      expect((await a.service.sync()).status).toBe("ready");
+      expect((await b.service.sync()).status).toBe("ready");
+      expect(await b.assetGit.source(target)).toEqual(first);
+      if (kind === "knowledge") await a.stores.remove(id);
+      else await a.capabilities.remove(id);
+      expect((await a.service.sync()).status).toBe("ready");
+      const deleted = await b.service.sync();
+      expect(deleted.status, deleted.error).toBe("ready");
+      expect(await b.assetGit.source(target)).toBeUndefined();
+      expect(await (kind === "knowledge" ? b.stores.exists(id) : b.capabilities.exists(id))).toBe(
+        false,
+      );
+    },
+  );
+
+  it.each(["knowledge", "skill"] as const)(
+    "restores %s Git associations after interrupted asset publication",
+    async (kind) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const b = device(join(git.root, "b"), kind === "knowledge" ? true : "skill");
+      const id =
+        kind === "knowledge"
+          ? (await addKnowledge(a.stores, "Shared docs")).id
+          : (await addSkill(a.capabilities, a.root, true)).manifest.id;
+      const target = { kind, id };
+      const source = { remote: "ssh://git@pragma.test/individual.git", branch: "release" };
+      await a.assetGit.restoreSource(target, source);
+      expect((await a.service.configure(configuration)).status).toBe("ready");
+      expect((await b.service.configure(configuration)).status).toBe("error");
+      expect(await b.assetGit.source(target)).toBeUndefined();
+      const recovered = await b.restart().sync();
+      expect(recovered.status, recovered.error).toBe("ready");
+      expect(await b.assetGit.source(target)).toEqual(source);
+      const revision =
+        kind === "knowledge"
+          ? (await b.stores.getSnapshot(id)).revision
+          : (await b.capabilities.get(id)).manifest.latestRevision;
+      expect(revision).toBe(1);
+    },
+  );
 
   it.each(["input", "executor"] as const)(
     "refreshes imported Automation schedules and resets changed sessions once across journal replay (%s)",

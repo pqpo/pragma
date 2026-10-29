@@ -2,8 +2,12 @@
 
 Desktop replicates published Experts, ExpertTeams, Flows, Automations, RuntimeProfiles, managed ContextStore
 bindings, Knowledge Bases and all user-managed Capabilities, including unreferenced definitions
-and Skills. System-managed Capabilities are excluded. Individual asset Git associations remain
-local. Only `pragma-sync/` belongs to this protocol; other repository paths are preserved.
+and Skills. System-managed Capabilities are excluded. Individual Knowledge Base and Skill Git remotes and resolved branches synchronize as separate
+records grouped with their owning asset. Credentials, Git commits, sync baselines, conflicts and
+in-flight per-asset Git operations remain local. Restoring an association does not clone or push
+its remote; it restores configuration after publishing its asset and resets its local sync baseline.
+Concurrent association edits use the same logical-asset conflict choice as content. Association
+updates use expected-source checks and the core import journal for interrupted restore recovery. Only `pragma-sync/` belongs to this protocol; other repository paths are preserved.
 
 ## Repository format
 
@@ -40,8 +44,10 @@ pragma-sync/
   capabilities/<binding-id>.pragma.yaml
   capability-definitions/<capability-id>.yaml
   knowledge-bases/<store-id>/metadata.yaml
+  knowledge-bases/<store-id>/git.yaml  # optional remote and resolved branch
   knowledge-bases/<store-id>/files/<original-path>.md
   skills/<capability-id>/metadata.yaml
+  skills/<capability-id>/git.yaml  # optional remote and resolved branch
   skills/<capability-id>/files/SKILL.md
   skills/<capability-id>/files/<original-path>
 ```

@@ -1,3 +1,4 @@
+import type { AssetGitService } from "../asset-git/asset-git-service.ts";
 import { inspectAssetReadiness } from "@pragma/local-host/deployment";
 import {
   createAssetTransferService,
@@ -79,6 +80,7 @@ export interface CoreAssetSyncService {
 export function createCoreAssetSyncService(options: {
   readonly configurationPath: string;
   readonly statePath: string;
+  readonly assetGit?: Pick<AssetGitService, "source" | "restoreSource">;
   readonly project: PragmaProjectStore;
   readonly layouts: WorkflowLayoutStore;
   readonly stores: ContextStoreStore;
@@ -155,11 +157,18 @@ export function createCoreAssetSyncService(options: {
         const separator = key.indexOf(":");
         const kind = key.slice(0, separator);
         const id = key.slice(separator + 1);
+        // A readable asset without an association is an intentional unbind.
+        if (
+          (kind === "knowledge-git" && local.has(`knowledge:${id}`)) ||
+          (kind === "skill-git" && local.has(`skill:${id}`))
+        )
+          return;
         if (id.includes(":")) return;
         const exists =
-          kind === "knowledge" && ContextStoreIdSchema.safeParse(id).success
+          (kind === "knowledge" || kind === "knowledge-git") &&
+          ContextStoreIdSchema.safeParse(id).success
             ? await options.stores.exists(id)
-            : (kind === "capability" || kind === "skill") &&
+            : (kind === "capability" || kind === "skill" || kind === "skill-git") &&
                 CapabilityIdSchema.safeParse(id).success
               ? await options.capabilities.exists(id)
               : false;
@@ -1116,6 +1125,11 @@ function missingGitDependencyKeys(
   }
   const missing = new Map<string, string[]>();
   for (const [key, item] of next) {
+    if (item.kind === "knowledge-git" || item.kind === "skill-git") {
+      const authority = `${item.kind === "knowledge-git" ? "knowledge" : "skill"}:${key.slice(item.kind.length + 1)}`;
+      if (!next.has(authority)) missing.set(key, [authority]);
+      continue;
+    }
     const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
     if (!parsed.success) continue;
     const resource = parsed.data;
@@ -1247,6 +1261,12 @@ function logicalAssetIdentity(
       assetKind,
       assetName: resource.metadata.name,
     };
+  }
+  if (item.kind === "knowledge-git" || item.kind === "skill-git") {
+    const kind = item.kind === "knowledge-git" ? "knowledge" : "skill";
+    const id = item.key.slice(item.kind.length + 1);
+    const authority = itemSummaryAt(`${kind}:${id}`, local, remote, cached);
+    return { assetKey: `${kind}:${id}`, assetKind: kind, assetName: authority?.name ?? item.name };
   }
   if (item.kind === "flow-layout") {
     const id = item.key.slice("flow-layout:".length);

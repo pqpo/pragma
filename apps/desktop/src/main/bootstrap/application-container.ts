@@ -758,6 +758,7 @@ export async function createDesktopApplicationContainer(
   assetGitRef.current = assetGit;
   const automationServiceRef: { current?: AutomationService } = {};
   const coreAssetSync = createCoreAssetSyncService({
+    assetGit,
     onAutomationsImported: async (changes, operationId) => {
       const automations = changes.filter(
         (change) => (change.remote ?? change.local)?.kind === "automation",

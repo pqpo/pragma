@@ -61,6 +61,12 @@ const execFileAsync = promisify(execFile);
 const CommitSchema = z.string().regex(/^[a-f0-9]{40,64}$/u);
 type Files = Map<string, Buffer>;
 
+export class AssetGitSourceConflictError extends Error {
+  constructor() {
+    super("The asset Git association changed during restore.");
+  }
+}
+
 export interface AssetGitService {
   status(target: AssetGitTarget): Promise<AssetGitStatus>;
   bind(input: z.input<typeof AssetGitBindSchema>): Promise<AssetGitStatus>;
@@ -71,7 +77,11 @@ export interface AssetGitService {
   sync(target: AssetGitTarget): Promise<AssetGitStatus>;
   source(target: AssetGitTarget): Promise<AssetGitSource | undefined>;
   listTargets(): Promise<readonly AssetGitTarget[]>;
-  restoreSource(target: AssetGitTarget, source: AssetGitSource): Promise<void>;
+  restoreSource(
+    target: AssetGitTarget,
+    source: AssetGitSource | undefined,
+    expected?: AssetGitSource | null,
+  ): Promise<void>;
 }
 
 export function createAssetGitService(options: {
@@ -765,17 +775,25 @@ export function createAssetGitService(options: {
     },
     listTargets,
     source: async (target) => (await readRecord(target))?.source,
-    restoreSource: async (rawTarget, rawSource) => {
+    restoreSource: async (rawTarget, rawSource, expected) => {
       const target = AssetGitTargetSchema.parse(rawTarget);
-      const source = AssetGitSourceSchema.parse(rawSource);
-      if (!source.branch) throw new Error("Restored Git association is missing its branch.");
+      const source = rawSource === undefined ? undefined : AssetGitSourceSchema.parse(rawSource);
+      if (source && !source.branch)
+        throw new Error("Restored Git association is missing its branch.");
       await withTargetLock(target, async () => {
-        await assertExists(target);
         const previous = await readRecord(target);
-        if (previous?.source.remote === source.remote && previous.source.branch === source.branch)
-          return;
+        const same = (a: AssetGitSource | undefined, b: AssetGitSource | undefined) =>
+          a?.remote === b?.remote && a?.branch === b?.branch;
+        if (same(previous?.source, source)) return;
+        if (expected !== undefined && !same(previous?.source, expected ?? undefined))
+          throw new AssetGitSourceConflictError();
         if (await readJournal(target))
           throw new Error("Retry the interrupted Git sync before restoring another address.");
+        if (!source) {
+          await removeAssociationLocked(target);
+          return;
+        }
+        await assertExists(target);
         await withBindingLock(async () => {
           await assertUnique(target, source);
           await saveRecord({

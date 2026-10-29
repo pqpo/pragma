@@ -198,7 +198,7 @@ if (lane !== "host") {
     ["src/main/features/studio-sync/structured-asset-sync.integration.test.ts"],
     [
       "-t",
-      "restores Knowledge, binary Skill|derives Skill descriptions|migrates an interrupted v2 Skill restore|synchronizes Automation definitions|replays interrupted Automation imports|refreshes imported Automation schedules",
+      "restores Knowledge, binary Skill|derives Skill descriptions|migrates an interrupted v2 Skill restore|synchronizes Automation definitions|replays interrupted Automation imports|refreshes imported Automation schedules|Git associations",
     ],
     "skill-script-sync",
   );

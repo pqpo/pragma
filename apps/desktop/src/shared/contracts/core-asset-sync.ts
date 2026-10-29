@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { AssetGitSourceSchema } from "./asset-git.ts";
 
+export const CoreAssetGitSourceSchema = AssetGitSourceSchema.required({ branch: true });
+
 export const CoreAssetSyncKindSchema = z.enum([
   "expert",
   "team",
@@ -12,6 +14,8 @@ export const CoreAssetSyncKindSchema = z.enum([
   "skill",
   "capability",
   "flow-layout",
+  "knowledge-git",
+  "skill-git",
 ]);
 export const CoreAssetLogicalKindSchema = z.enum([
   "expert",

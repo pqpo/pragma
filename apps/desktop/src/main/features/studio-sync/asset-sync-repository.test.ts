@@ -69,6 +69,23 @@ const encode = (...items: CoreAssetSyncItem[]) =>
   encodeSyncRepository(new Map(items.map((entry) => [entry.key, entry])));
 
 describe("structured sync repository", () => {
+  it("validates Git association ownership, resolved branches and credential-free remotes", () => {
+    const source = item("knowledge-git", storeId, "项目规范", {
+      remote: "ssh://git@pragma.test/docs.git",
+      branch: "main",
+    });
+    const files = encode(knowledge(), source);
+    expect(decodeSyncRepository(files).get(source.key)).toEqual(source);
+    files.delete(`knowledge-bases/${storeId}/metadata.yaml`);
+    expect(() => decodeSyncRepository(files)).toThrow("Git association has no asset");
+    for (const data of [
+      { remote: "ssh://git@pragma.test/docs.git" },
+      { remote: "https://user:secret@example.com/docs.git", branch: "main" },
+    ]) {
+      expect(() => encode(knowledge(), { ...source, data })).toThrow();
+    }
+  });
+
   it.each(["pragma.asset-sync-repository/v1", "pragma.asset-sync-repository/v2"])(
     "upgrades historical DSL independently of repository format %s without changing source bytes",
     (schemaVersion) => {
