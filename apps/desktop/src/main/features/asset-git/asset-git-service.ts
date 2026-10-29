@@ -67,6 +67,12 @@ export class AssetGitSourceConflictError extends Error {
   }
 }
 
+export interface AssetGitSourceChange {
+  readonly target: AssetGitTarget;
+  readonly source: AssetGitSource | undefined;
+  readonly expected?: AssetGitSource | null;
+}
+
 export interface AssetGitService {
   status(target: AssetGitTarget): Promise<AssetGitStatus>;
   bind(input: z.input<typeof AssetGitBindSchema>): Promise<AssetGitStatus>;
@@ -77,6 +83,7 @@ export interface AssetGitService {
   sync(target: AssetGitTarget): Promise<AssetGitStatus>;
   source(target: AssetGitTarget): Promise<AssetGitSource | undefined>;
   listTargets(): Promise<readonly AssetGitTarget[]>;
+  restoreSources(changes: readonly AssetGitSourceChange[]): Promise<void>;
   restoreSource(
     target: AssetGitTarget,
     source: AssetGitSource | undefined,
@@ -89,6 +96,7 @@ export function createAssetGitService(options: {
   readonly stores: ContextStoreStore;
   readonly capabilities: CapabilityStore;
   readonly afterPush?: (() => Promise<void>) | undefined;
+  readonly afterSourceRestored?: ((target: AssetGitTarget) => Promise<void>) | undefined;
   readonly onAssociationChanged?: ((target: AssetGitTarget) => void) | undefined;
   readonly onStatusChanged?: ((status: AssetGitStatus) => void) | undefined;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
@@ -153,7 +161,12 @@ export function createAssetGitService(options: {
       }
     }
   };
-  const assertUnique = async (target: AssetGitTarget, source: AssetGitSource): Promise<void> => {
+  const targetKey = (target: AssetGitTarget) => `${target.kind}:${target.id}`;
+  const assertUnique = async (
+    target: AssetGitTarget,
+    source: AssetGitSource,
+    replaced: ReadonlySet<string> = new Set(),
+  ): Promise<void> => {
     for (const kind of ["knowledge", "skill"] as const) {
       let names: string[];
       try {
@@ -163,9 +176,9 @@ export function createAssetGitService(options: {
         throw error;
       }
       for (const name of names.filter((item) => item.endsWith(".json"))) {
-        const other = await state.identity(
-          AssetGitTargetSchema.parse({ kind, id: name.slice(0, -5) }),
-        );
+        const candidate = AssetGitTargetSchema.parse({ kind, id: name.slice(0, -5) });
+        if (replaced.has(targetKey(candidate))) continue;
+        const other = await state.identity(candidate);
         if (!other) continue;
         if (other.target.kind === target.kind && other.target.id === target.id) continue;
         if (other.source.remote === source.remote && other.source.branch === source.branch) {
@@ -762,6 +775,69 @@ export function createAssetGitService(options: {
     }
     return targets;
   };
+  const restoreSources = async (rawChanges: readonly AssetGitSourceChange[]): Promise<void> => {
+    const changes = rawChanges
+      .map((change) => ({
+        target: AssetGitTargetSchema.parse(change.target),
+        source:
+          change.source === undefined
+            ? undefined
+            : AssetGitSourceSchema.required({ branch: true }).parse(change.source),
+        expected: change.expected,
+      }))
+      .sort((a, b) => targetKey(a.target).localeCompare(targetKey(b.target)));
+    const replaced = new Set(changes.map((change) => targetKey(change.target)));
+    if (replaced.size !== changes.length)
+      throw new Error("Duplicate Git association restore target.");
+    const same = (a: AssetGitSource | undefined, b: AssetGitSource | undefined) =>
+      a?.remote === b?.remote && a?.branch === b?.branch;
+    const lockTargets = async (index: number, operation: () => Promise<void>): Promise<void> => {
+      const change = changes[index];
+      if (change)
+        await withTargetLock(change.target, async () => await lockTargets(index + 1, operation));
+      else await operation();
+    };
+    await lockTargets(0, async () => {
+      const pending: typeof changes = [];
+      // Check all expected sources before changing any record. Matches are replayed stages.
+      for (const change of changes) {
+        const previous = await readRecord(change.target);
+        if (same(previous?.source, change.source)) continue;
+        if (change.expected !== undefined && !same(previous?.source, change.expected ?? undefined))
+          throw new AssetGitSourceConflictError();
+        if (await readJournal(change.target))
+          throw new Error("Retry the interrupted Git sync before restoring another address.");
+        if (change.source) await assertExists(change.target);
+        pending.push(change);
+      }
+      await withBindingLock(async () => {
+        const sources = new Set<string>();
+        for (const change of changes) {
+          if (!change.source) continue;
+          const key = JSON.stringify([change.source.remote, change.source.branch]);
+          if (sources.has(key))
+            throw new Error("This Git repository and branch are already associated with an asset.");
+          sources.add(key);
+          await assertUnique(change.target, change.source, replaced);
+        }
+        // Core sync owns the durable import journal. Each atomic record is either
+        // its expected source or its final source after interruption; no temporary
+        // unbind is published. Replaying the remaining records completes a swap.
+        for (const { target, source } of pending) {
+          if (source)
+            await saveRecord({
+              schemaVersion: "pragma.asset-git/v2",
+              knowledgeMetadataVersion: 0,
+              target,
+              source,
+            });
+          else await removeAssociationLocked(target);
+          await options.afterSourceRestored?.(target);
+        }
+      });
+    });
+    for (const change of changes) await publishStatus(change.target);
+  };
   return {
     status,
     bind,
@@ -775,37 +851,9 @@ export function createAssetGitService(options: {
     },
     listTargets,
     source: async (target) => (await readRecord(target))?.source,
-    restoreSource: async (rawTarget, rawSource, expected) => {
-      const target = AssetGitTargetSchema.parse(rawTarget);
-      const source = rawSource === undefined ? undefined : AssetGitSourceSchema.parse(rawSource);
-      if (source && !source.branch)
-        throw new Error("Restored Git association is missing its branch.");
-      await withTargetLock(target, async () => {
-        const previous = await readRecord(target);
-        const same = (a: AssetGitSource | undefined, b: AssetGitSource | undefined) =>
-          a?.remote === b?.remote && a?.branch === b?.branch;
-        if (same(previous?.source, source)) return;
-        if (expected !== undefined && !same(previous?.source, expected ?? undefined))
-          throw new AssetGitSourceConflictError();
-        if (await readJournal(target))
-          throw new Error("Retry the interrupted Git sync before restoring another address.");
-        if (!source) {
-          await removeAssociationLocked(target);
-          return;
-        }
-        await assertExists(target);
-        await withBindingLock(async () => {
-          await assertUnique(target, source);
-          await saveRecord({
-            schemaVersion: "pragma.asset-git/v2",
-            knowledgeMetadataVersion: 0,
-            target,
-            source,
-          });
-        });
-      });
-      await publishStatus(target);
-    },
+    restoreSources,
+    restoreSource: async (target, source, expected) =>
+      await restoreSources([{ target, source, ...(expected === undefined ? {} : { expected }) }]),
   };
 }
 

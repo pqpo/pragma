@@ -84,6 +84,7 @@ function device(
   beforeLayoutSave?: () => Promise<void>,
   verify?: CapabilityVerifier,
   projectHooks?: {
+    afterSourceRestored?: Parameters<typeof createAssetGitService>[0]["afterSourceRestored"];
     onAutomationsImported?: Parameters<
       typeof createCoreAssetSyncService
     >[0]["onAutomationsImported"];
@@ -203,6 +204,7 @@ function device(
     stateRoot: join(root, "state", "asset-git"),
     stores,
     capabilities,
+    afterSourceRestored: projectHooks?.afterSourceRestored,
   });
   const options = {
     assetGit,
@@ -472,6 +474,202 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     expect((await a.service.sync()).status).toBe("ready");
     expect((await b.restart().sync()).status).toBe("ready");
     expect((await b.project.get()).resources).toEqual([]);
+  });
+
+  it.each([false, true])(
+    "restores swapped Git associations across asset kinds (interrupted: %s)",
+    async (interrupt) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      let armed = false;
+      const b = device(join(git.root, "b"), false, undefined, undefined, undefined, {
+        afterSourceRestored: async () => {
+          if (armed) {
+            armed = false;
+            throw new Error("Interrupted source publication");
+          }
+        },
+      });
+      const x = { kind: "knowledge" as const, id: (await addKnowledge(a.stores, "X")).id };
+      const y = {
+        kind: "skill" as const,
+        id: (await addSkill(a.capabilities, a.root, true)).manifest.id,
+      };
+      const sourceX = { remote: "ssh://git@pragma.test/x.git", branch: "main" };
+      const sourceY = { remote: "ssh://git@pragma.test/y.git", branch: "main" };
+      await a.assetGit.restoreSource(x, sourceX);
+      await a.assetGit.restoreSource(y, sourceY);
+      expect((await a.service.configure(configuration)).status).toBe("ready");
+      expect((await b.service.configure(configuration)).status).toBe("ready");
+      await a.assetGit.unbind(x);
+      await a.assetGit.unbind(y);
+      await a.assetGit.restoreSource(x, sourceY);
+      await a.assetGit.restoreSource(y, sourceX);
+      expect((await a.service.sync()).status).toBe("ready");
+      armed = interrupt;
+      if (interrupt) expect((await b.service.sync()).status).toBe("error");
+      const result = await b.restart().sync();
+      expect(result.status, result.error).toBe("ready");
+      expect(await b.assetGit.source(x)).toEqual(sourceY);
+      expect(await b.assetGit.source(y)).toEqual(sourceX);
+      await expect(
+        b.assetGit.restoreSources([
+          { target: x, source: sourceX, expected: sourceY },
+          { target: y, source: sourceY, expected: { ...sourceX, branch: "stale" } },
+        ]),
+      ).rejects.toThrow("changed during restore");
+      expect(await b.assetGit.source(x)).toEqual(sourceY);
+      expect(await b.assetGit.source(y)).toEqual(sourceX);
+      await expect(
+        b.assetGit.restoreSources([
+          { target: x, source: sourceX, expected: sourceY },
+          { target: y, source: sourceX, expected: sourceX },
+        ]),
+      ).rejects.toThrow("already associated");
+      expect(await b.assetGit.source(x)).toEqual(sourceY);
+      expect(await b.assetGit.source(y)).toEqual(sourceX);
+      expect((await b.stores.getSnapshot(x.id)).revision).toBe(1);
+      expect((await b.capabilities.get(y.id)).manifest.latestRevision).toBe(1);
+    },
+  );
+
+  it.each(["broken-json", "future-record", "future-journal"] as const)(
+    "isolates unreadable Git associations (%s) and recovers after repair",
+    async (failure) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const broken = await addKnowledge(a.stores, "Broken config");
+      const healthy = await addKnowledge(a.stores, "Healthy content");
+      const source = { remote: "ssh://git@pragma.test/x.git", branch: "main" };
+      await a.assetGit.restoreSource({ kind: "knowledge", id: broken.id }, source);
+      expect((await a.service.configure(configuration)).status).toBe("ready");
+      const remotePath = `main:pragma-sync/knowledge-bases/${broken.id}/git.yaml`;
+      const remoteBefore = (await exec("git", ["--git-dir", git.bare, "show", remotePath])).stdout;
+      const path =
+        join(a.root, "state", "asset-git", "knowledge", `${broken.id}.json`) +
+        (failure === "future-journal" ? ".journal" : "");
+      const original = failure === "future-journal" ? undefined : await readFile(path);
+      const damaged =
+        failure === "broken-json"
+          ? "{"
+          : JSON.stringify({
+              schemaVersion: `pragma.asset-git${failure === "future-journal" ? "-journal" : ""}/v999`,
+            });
+      await writeFile(path, damaged);
+      const overview = await a.service.overview();
+      expect(overview.status).toBe("error");
+      expect(
+        overview.items.find((item) => item.key === `knowledge-git:${broken.id}`),
+      ).toMatchObject({
+        assetName: "Broken config",
+        status: "error",
+        message: expect.stringContaining("asset_git.source_unavailable"),
+      });
+      const head = await git.head();
+      await append(a.stores, healthy.id, "# Healthy unpublished update");
+      const result = await a.restart().sync();
+      expect(result.status).toBe("error");
+      expect(result.items.find((item) => item.key === `knowledge:${healthy.id}`)?.status).toBe(
+        "synced",
+      );
+      expect(await git.head()).not.toBe(head);
+      expect((await exec("git", ["--git-dir", git.bare, "show", remotePath])).stdout).toBe(
+        remoteBefore,
+      );
+      expect(await readFile(path, "utf8")).toBe(damaged);
+      await a.stores.remove(healthy.id);
+      const removed = await a.restart().sync();
+      expect(removed.status).toBe("error");
+      expect(removed.items.some((item) => item.key === `knowledge:${healthy.id}`)).toBe(false);
+      expect(
+        (
+          await exec("git", [
+            "--git-dir",
+            git.bare,
+            "ls-tree",
+            "-r",
+            "--name-only",
+            "main",
+            `pragma-sync/knowledge-bases/${healthy.id}`,
+          ])
+        ).stdout,
+      ).toBe("");
+      expect(await readFile(path, "utf8")).toBe(damaged);
+      if (original) await writeFile(path, original);
+      else await rm(path);
+      const repaired = await a.restart().sync();
+      expect(repaired.status, repaired.error).toBe("ready");
+      expect(await a.assetGit.source({ kind: "knowledge", id: broken.id })).toEqual(source);
+    },
+  );
+
+  it("defers an unreadable Git association during import replay while publishing unrelated changes", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    let armed = false;
+    const b = device(join(git.root, "b"), false, undefined, undefined, undefined, {
+      afterSourceRestored: async () => {
+        if (armed) {
+          armed = false;
+          throw new Error("Interrupted source publication");
+        }
+      },
+    });
+    const broken = await addKnowledge(a.stores, "Broken config");
+    const healthy = await addKnowledge(a.stores, "Healthy content");
+    const target = { kind: "knowledge" as const, id: broken.id };
+    const source = { remote: "ssh://git@pragma.test/x.git", branch: "main" };
+    await a.assetGit.restoreSource(target, source);
+    await a.service.configure(configuration);
+    await b.service.configure(configuration);
+    const statePath = join(b.root, "state/asset-sync/state.json");
+    const baseline = JSON.parse(await readFile(statePath, "utf8")).bases[
+      `knowledge-git:${broken.id}`
+    ];
+    const changed = { ...source, branch: "release" };
+    await a.assetGit.restoreSource(target, changed);
+    expect((await a.service.sync()).status).toBe("ready");
+    armed = true;
+    expect((await b.service.sync()).status).toBe("error");
+    const path = join(b.root, "state", "asset-git", "knowledge", `${broken.id}.json`);
+    const original = await readFile(path);
+    await writeFile(path, "{");
+    await append(b.stores, healthy.id, "# Unrelated local update");
+    const result = await b.restart().sync();
+    expect(result.status).toBe("error");
+    expect(result.items.find((item) => item.key === `knowledge:${healthy.id}`)?.status).toBe(
+      "synced",
+    );
+    expect(JSON.parse(await readFile(statePath, "utf8")).bases[`knowledge-git:${broken.id}`]).toBe(
+      baseline,
+    );
+    expect(await readFile(path, "utf8")).toBe("{");
+    await writeFile(path, original);
+    const repaired = await b.restart().sync();
+    expect(repaired.status, repaired.error).toBe("ready");
+    expect(await b.assetGit.source(target)).toEqual(changed);
+  });
+
+  it("reports a never-synced unreadable Git association without inventing a baseline", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const broken = await addKnowledge(a.stores, "Broken config");
+    const healthy = await addKnowledge(a.stores, "Healthy content");
+    const path = join(a.root, "state", "asset-git", "knowledge", `${broken.id}.json`);
+    await mkdir(join(a.root, "state", "asset-git", "knowledge"), { recursive: true });
+    await writeFile(path, "{");
+    const result = await a.service.configure(configuration);
+    expect(result.status).toBe("error");
+    expect(result.items.find((item) => item.key === `knowledge-git:${broken.id}`)?.status).toBe(
+      "error",
+    );
+    expect(result.items.find((item) => item.key === `knowledge:${healthy.id}`)?.status).toBe(
+      "synced",
+    );
+    const state = JSON.parse(await readFile(join(a.root, "state/asset-sync/state.json"), "utf8"));
+    expect(state.bases[`knowledge-git:${broken.id}`]).toBeUndefined();
+    expect(state.remoteItems[`knowledge-git:${broken.id}`]).toBeUndefined();
+    expect(await readFile(path, "utf8")).toBe("{");
   });
 
   it.each(["knowledge", "skill"] as const)(

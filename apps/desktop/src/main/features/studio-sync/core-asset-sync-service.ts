@@ -40,6 +40,7 @@ import {
   type CoreAssetLogicalKind,
   type CoreAssetSyncConfiguration,
   type CoreAssetSyncItem,
+  type CoreAssetSyncItemStatus,
   type CoreAssetSyncOverview,
   type DesktopRuntimeAvailability,
   type UpdateCoreAssetSyncConfiguration,
@@ -80,7 +81,7 @@ export interface CoreAssetSyncService {
 export function createCoreAssetSyncService(options: {
   readonly configurationPath: string;
   readonly statePath: string;
-  readonly assetGit?: Pick<AssetGitService, "source" | "restoreSource">;
+  readonly assetGit?: Pick<AssetGitService, "source" | "restoreSources">;
   readonly project: PragmaProjectStore;
   readonly layouts: WorkflowLayoutStore;
   readonly stores: ContextStoreStore;
@@ -149,11 +150,16 @@ export function createCoreAssetSyncService(options: {
   const transfer = createAssetTransferService({ ...options, reportNameResolutionFailure });
   const collect = transfer.collectAssets;
 
-  const unavailableLocalAuthorities = async (local: ItemMap, keys: Iterable<string>) => {
-    const unavailable = new Set<string>();
+  const unavailableLocalAuthorities = async (
+    local: ItemMap,
+    keys: Iterable<string>,
+    unavailableSources: CollectedItems["unavailableSources"],
+  ) => {
+    const selectedKeys = [...keys];
+    const unavailable = new Set(selectedKeys.filter((key) => unavailableSources.has(key)));
     await Promise.all(
-      [...keys].map(async (key) => {
-        if (local.has(key)) return;
+      selectedKeys.map(async (key) => {
+        if (local.has(key) || unavailable.has(key)) return;
         const separator = key.indexOf(":");
         const kind = key.slice(0, separator);
         const id = key.slice(separator + 1);
@@ -299,7 +305,11 @@ export function createCoreAssetSyncService(options: {
       return { schemaVersion: "pragma.asset-sync-overview/v2", status: "unconfigured", items: [] };
     }
     const stored = state ?? (await readState(sourceKey(config)));
-    const { items: local, nameResolutionIssues } = collected ?? (await collect());
+    const {
+      items: local,
+      nameResolutionIssues,
+      unavailableSources,
+    } = collected ?? (await collect());
     const current = upgradeSyncBaselines(stored, [...local.values(), ...(remote?.values() ?? [])]);
     const missing = await readiness(local);
     const knownItems = { ...current.unavailableItems, ...current.remoteItems };
@@ -308,9 +318,27 @@ export function createCoreAssetSyncService(options: {
       ...(remote?.keys() ?? []),
       ...Object.keys(knownItems),
       ...current.conflicts,
+      ...unavailableSources.keys(),
     ]);
-    const unavailable = await unavailableLocalAuthorities(local, keys);
-    const items = [...keys].sort().flatMap((key) => {
+    const unavailable = await unavailableLocalAuthorities(local, keys, unavailableSources);
+    const items = [...keys].sort().flatMap<CoreAssetSyncItemStatus>((key) => {
+      const issue = unavailableSources.get(key);
+      if (issue) {
+        const kind = issue.kind === "knowledge-git" ? "knowledge" : "skill";
+        return [
+          {
+            key,
+            kind: issue.kind,
+            name: issue.name,
+            assetKey: `${kind}:${key.slice(issue.kind.length + 1)}`,
+            assetKind: kind,
+            assetName: issue.name,
+            status: "error" as const,
+            readiness: { status: "needs_attention" as const, message: issue.message },
+            message: issue.message,
+          },
+        ];
+      }
       const item = local.get(key) ?? remote?.get(key) ?? knownItems[key];
       if (item === undefined) return [];
       const remoteItem = remote?.get(key) ?? current.remoteItems[key];
@@ -423,6 +451,7 @@ export function createCoreAssetSyncService(options: {
     };
     const interruptedConflicts = (current: CollectedItems): string[] =>
       journal.changes.flatMap((change) => {
+        if (current.unavailableSources.has(change.key)) return [];
         const actual = current.items.get(change.key)?.fingerprint ?? null;
         if (actual === (change.remote?.fingerprint ?? null)) return [];
         return actual !== journal.expected[change.key] ||
@@ -436,6 +465,7 @@ export function createCoreAssetSyncService(options: {
       const bases = { ...state.bases };
       // Only completed stages advance their baseline. Pending stages are replanned from Git.
       for (const change of journal.changes) {
+        if (current.unavailableSources.has(change.key)) continue;
         if (
           (current.items.get(change.key)?.fingerprint ?? null) !==
           (change.remote?.fingerprint ?? null)
@@ -464,6 +494,12 @@ export function createCoreAssetSyncService(options: {
     if (conflicts.length > 0) {
       await deferConflicts(current, conflicts);
       return "conflict";
+    }
+    if (journal.changes.some((change) => current.unavailableSources.has(change.key))) {
+      // Retain baselines for unreadable sources. Completed stages advance normally;
+      // the remaining work is replanned and isolated with its owner below.
+      await deferConflicts(current, []);
+      return "complete";
     }
     const pending = journal.changes.filter(
       (change) =>
@@ -524,7 +560,12 @@ export function createCoreAssetSyncService(options: {
           const checkout = await checkoutRepository(config);
           try {
             const remote = await readSyncRepository(checkout.root, state.repositoryInitialized);
-            const { items: local, revisions, nameResolutionIssues } = await collect();
+            const {
+              items: local,
+              revisions,
+              nameResolutionIssues,
+              unavailableSources,
+            } = await collect();
             state = upgradeSyncBaselines(state, [...local.values(), ...remote.values()]);
             const knownItems = { ...state.unavailableItems, ...state.remoteItems };
             const nextRemote = new Map(remote);
@@ -552,9 +593,14 @@ export function createCoreAssetSyncService(options: {
               ...Object.keys(bases),
               ...Object.keys(knownItems),
               ...state.restoreConflicts,
+              ...unavailableSources.keys(),
             ]);
             const groups = new Map<string, string[]>();
-            const unavailableAuthorities = await unavailableLocalAuthorities(local, keys);
+            const unavailableAuthorities = await unavailableLocalAuthorities(
+              local,
+              keys,
+              unavailableSources,
+            );
             const deferredUnavailable = new Set(unavailableAuthorities);
             // Diagnostic identities are separate from the current Git inventory.
             const unavailableItems = Object.fromEntries(
@@ -569,7 +615,9 @@ export function createCoreAssetSyncService(options: {
               const item = itemSummaryAt(key, local, remote, knownItems);
               const group = item
                 ? logicalAssetIdentity(item, local, remote, knownItems).assetKey
-                : key;
+                : unavailableSources.has(key)
+                  ? `${unavailableSources.get(key)!.kind === "knowledge-git" ? "knowledge" : "skill"}:${key.slice(unavailableSources.get(key)!.kind.length + 1)}`
+                  : key;
               groups.set(group, [...(groups.get(group) ?? []), key]);
             }
             const deletionKeys =
@@ -1003,7 +1051,13 @@ export function createCoreAssetSyncService(options: {
                 const latest = await collect();
                 if (
                   deletions.some((key) => latest.items.has(key)) ||
-                  (await unavailableLocalAuthorities(latest.items, deletions)).size > 0
+                  (
+                    await unavailableLocalAuthorities(
+                      latest.items,
+                      deletions,
+                      latest.unavailableSources,
+                    )
+                  ).size > 0
                 )
                   throw new LocalHeadChangedError();
               }

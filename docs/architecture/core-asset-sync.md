@@ -7,7 +7,17 @@ records grouped with their owning asset. Credentials, Git commits, sync baseline
 in-flight per-asset Git operations remain local. Restoring an association does not clone or push
 its remote; it restores configuration after publishing its asset and resets its local sync baseline.
 Concurrent association edits use the same logical-asset conflict choice as content. Association
-updates use expected-source checks and the core import journal for interrupted restore recovery. Only `pragma-sync/` belongs to this protocol; other repository paths are preserved.
+updates use expected-source checks and the core import journal for interrupted restore recovery.
+Incoming source changes acquire their target locks in stable order and validate the complete final
+association graph under the binding lock before writing. Sources can move or swap between assets;
+no temporary unbind is published. Each atomic record retains either its expected or final source,
+so the existing core journal completes the remaining records after interruption. Concurrent source
+edits are checked for the whole batch before any record changes.
+An unreadable per-asset source record or journal produces `asset_git.source_unavailable` on its
+logical asset, without treating that source as deleted. Its Git copy and baseline remain intact;
+unrelated assets still synchronize. The diagnostic is rebuilt on each read, including before the
+first successful sync, without inventing a source fingerprint. Repairing the state resumes ordinary
+reconciliation. Interrupted imports likewise retain unreadable stages for later reconciliation. Only `pragma-sync/` belongs to this protocol; other repository paths are preserved.
 
 ## Repository format
 

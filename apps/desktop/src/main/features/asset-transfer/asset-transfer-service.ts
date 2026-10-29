@@ -1,6 +1,7 @@
 import {
   AssetGitSourceConflictError,
   type AssetGitService,
+  type AssetGitSourceChange,
 } from "../asset-git/asset-git-service.ts";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -62,10 +63,16 @@ export interface CoreAssetSyncNameResolutionIssue {
   readonly resourceKind: "capability" | "context-store";
   readonly bindingId: string;
 }
+interface UnavailableSource {
+  readonly kind: "knowledge-git" | "skill-git";
+  readonly name: string;
+  readonly message: string;
+}
 export interface CollectedItems {
   readonly items: ItemMap;
   readonly revisions: ReadonlyMap<string, number>;
   readonly nameResolutionIssues: ReadonlyMap<string, CoreAssetSyncNameResolutionIssue>;
+  readonly unavailableSources: ReadonlyMap<string, UnavailableSource>;
 }
 
 /** Transport payloads are validated independently of the Bundle and Git encodings. */
@@ -99,11 +106,12 @@ export class AssetTransferConflictError extends Error {
   }
 }
 export function createAssetTransferService(options: {
-  readonly assetGit?: Pick<AssetGitService, "source" | "restoreSource">;
+  readonly assetGit?: Pick<AssetGitService, "source" | "restoreSources">;
   readonly project: PragmaProjectStore;
   readonly layouts: WorkflowLayoutStore;
   readonly stores: ContextStoreStore;
   readonly capabilities: CapabilityStore;
+  readonly warn?: (message: string, error: unknown) => void;
   readonly reportNameResolutionFailure: (
     key: string,
     kind: CoreAssetSyncNameResolutionIssue["resourceKind"],
@@ -335,15 +343,30 @@ export function createAssetTransferService(options: {
       }
       add("skill", id, capability.definition.name, skillPayloads.get(id)!);
     }
+    const unavailableSources = new Map<string, UnavailableSource>();
     if (options.assetGit) {
       for (const item of [...result.values()]) {
         if ((item.kind !== "knowledge" && item.kind !== "skill") || isResourceItem(item)) continue;
         const id = item.key.slice(item.kind.length + 1);
-        const source = await options.assetGit.source({ kind: item.kind, id });
-        if (source) add(`${item.kind}-git`, id, item.name, CoreAssetGitSourceSchema.parse(source));
+        try {
+          const source = await options.assetGit.source({ kind: item.kind, id });
+          if (source)
+            add(`${item.kind}-git`, id, item.name, CoreAssetGitSourceSchema.parse(source));
+        } catch (error) {
+          options.warn?.(
+            `asset_git.source_unavailable: Could not read the Git configuration for ${item.name}.`,
+            error,
+          );
+          unavailableSources.set(`${item.kind}-git:${id}`, {
+            kind: `${item.kind}-git`,
+            name: item.name,
+            message:
+              "asset_git.source_unavailable: The local Git configuration cannot be read. Repair its state before synchronizing this asset.",
+          });
+        }
       }
     }
-    return { items: result, revisions, nameResolutionIssues };
+    return { items: result, revisions, nameResolutionIssues, unavailableSources };
   };
 
   const prepareImport = async (
@@ -602,7 +625,8 @@ export function createAssetTransferService(options: {
     const projectRemovals: string[] = [];
     const deferredRemovals: { kind: "knowledge" | "skill" | "capability"; id: string }[] = [];
     const deferredLayouts: (() => Promise<void>)[] = [];
-    const deferredSources: (() => Promise<void>)[] = [];
+    const deferredSources: AssetGitSourceChange[] = [];
+    const sourceChangeKeys: string[] = [];
     const capabilityUpdates: {
       id: string;
       definition: Exclude<z.infer<typeof CapabilityDefinitionSchema>, { kind: "skill" }>;
@@ -622,19 +646,12 @@ export function createAssetTransferService(options: {
         if (!options.assetGit) throw new Error("Asset Git association restoration is unavailable.");
         const current = await options.assetGit.source(target);
         assertExpected(item.key, current);
-        deferredSources.push(async () => {
-          try {
-            await options.assetGit!.restoreSource(
-              target,
-              remote ? CoreAssetGitSourceSchema.parse(remote.data) : undefined,
-              local ? CoreAssetGitSourceSchema.parse(local.data) : null,
-            );
-          } catch (error) {
-            if (error instanceof AssetGitSourceConflictError)
-              throw new AssetTransferConflictError([item.key], error.message);
-            throw error;
-          }
+        deferredSources.push({
+          target,
+          source: remote ? CoreAssetGitSourceSchema.parse(remote.data) : undefined,
+          expected: local ? CoreAssetGitSourceSchema.parse(local.data) : null,
         });
+        sourceChangeKeys.push(item.key);
         continue;
       }
       if (
@@ -1014,7 +1031,15 @@ export function createAssetTransferService(options: {
         }
       }
     }
-    for (const restoreSource of deferredSources) await restoreSource();
+    if (deferredSources.length > 0) {
+      try {
+        await options.assetGit!.restoreSources(deferredSources);
+      } catch (error) {
+        if (error instanceof AssetGitSourceConflictError)
+          throw new AssetTransferConflictError(sourceChangeKeys, error.message);
+        throw error;
+      }
+    }
   };
 
   return { collectAssets, prepareImport, applyImport };

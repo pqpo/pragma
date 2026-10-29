@@ -806,8 +806,10 @@ export async function createDesktopApplicationContainer(
       await assetSync.syncAsset(input.target, async () => await assetGit.resolve(input)),
     source: async (target) => await assetGit.source(target),
     listTargets: async () => await assetGit.listTargets(),
-    restoreSource: async (target, source) =>
-      await assetSync.run(async () => await assetGit.restoreSource(target, source)),
+    restoreSources: async (changes) =>
+      await assetSync.run(async () => await assetGit.restoreSources(changes)),
+    restoreSource: async (target, source, expected) =>
+      await assetSync.run(async () => await assetGit.restoreSource(target, source, expected)),
   };
   const coordinatedCoreAssetSync: CoreAssetSyncService = {
     overview: async () => await coreAssetSync.overview(),
