@@ -1,6 +1,6 @@
 # Core asset Git synchronization
 
-Desktop replicates published Experts, ExpertTeams, Flows, RuntimeProfiles, managed ContextStore
+Desktop replicates published Experts, ExpertTeams, Flows, Automations, RuntimeProfiles, managed ContextStore
 bindings, Knowledge Bases and all user-managed Capabilities, including unreferenced definitions
 and Skills. System-managed Capabilities are excluded. Individual asset Git associations remain
 local. Only `pragma-sync/` belongs to this protocol; other repository paths are preserved.
@@ -33,6 +33,7 @@ pragma-sync/
   experts/<id>.pragma.yaml
   teams/<id>.pragma.yaml
   flows/<id>.pragma.yaml
+  automations/<id>.pragma.yaml
   flow-layouts/<flow-id>.yaml
   runtime-profiles/<id>.pragma.yaml
   context-stores/<binding-id>.pragma.yaml
@@ -79,6 +80,16 @@ RuntimeProfile export includes only harness and model selection accepted by the 
 profile configuration schema. Missing runtimes, models, plugins or authentication produce
 `needs_attention` with the existing readiness diagnostics and configuration actions. SecretStore,
 provider keys, execution state, historical revisions and plugin packages are excluded.
+Automation definitions retain their schedules, enabled flags and executor references. Device-local
+Automation bindings (workspace, model overrides and mounted Context Stores), queues, runs and
+Mission/session state are excluded. A new device must configure its local binding before execution.
+Incoming Automation publication refreshes running local schedules. Changes to execution identity
+rotate the local binding generation through the existing replayable session reset operation, so
+an old Mission cannot receive input intended for a different executor. An optional `operationId`
+in the v4 restore journal identifies these host side effects; older journals acquire it atomically
+before applying those effects. Replay retains the same identity and does not rotate twice.
+Adding Automation is additive: existing repository, checkpoint and journal payloads retain their
+meaning and remain readable without rewriting their versions.
 
 Configuration and private state live in `~/.pragma/state/asset-sync/settings.json` and `state.json`,
 using `pragma.asset-sync-settings/v2` and `pragma.asset-sync-state/v3`. A file lock serializes sync.

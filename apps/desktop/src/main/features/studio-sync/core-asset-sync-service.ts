@@ -4,6 +4,7 @@ import {
   AssetTransferConflictError,
   NAME_RESOLUTION_ERROR_CODE,
   type CollectedItems,
+  type AssetTransferChange,
   type CoreAssetSyncNameResolutionIssue,
 } from "../asset-transfer/asset-transfer-service.ts";
 import type { PluginStore } from "@pragma/local-host/deployment";
@@ -85,6 +86,10 @@ export function createCoreAssetSyncService(options: {
   readonly plugins?: PluginStore;
   readonly getRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
   readonly warn?: (message: string, error: unknown) => void;
+  readonly onAutomationsImported?: (
+    changes: readonly AssetTransferChange[],
+    operationId: string,
+  ) => Promise<void>;
   readonly reportNameResolutionIssue?: (issue: CoreAssetSyncNameResolutionIssue) => void;
 }): CoreAssetSyncService {
   let running = false;
@@ -172,16 +177,22 @@ export function createCoreAssetSyncService(options: {
     const resources = [...items.values()]
       .filter(
         (item) =>
-          ["expert", "team", "flow", "runtime-profile", "capability", "knowledge"].includes(
-            item.kind,
-          ) && item.key.includes(":", item.kind.length + 1),
+          [
+            "expert",
+            "team",
+            "flow",
+            "automation",
+            "runtime-profile",
+            "capability",
+            "knowledge",
+          ].includes(item.kind) && item.key.includes(":", item.kind.length + 1),
       )
       .flatMap((item) => {
         const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
         return parsed.success ? [parsed.data] : [];
       });
     for (const item of items.values()) {
-      if (["expert", "team", "flow"].includes(item.kind)) {
+      if (["expert", "team", "flow", "automation"].includes(item.kind)) {
         const missing = unavailableCoreAssetRuntimeBindings(
           item.key.slice(item.kind.length + 1),
           resources,
@@ -252,7 +263,7 @@ export function createCoreAssetSyncService(options: {
     while (updated) {
       updated = false;
       for (const resource of resources) {
-        const key = `${resource.kind === "Expert" ? "expert" : resource.kind === "ExpertTeam" ? "team" : resource.kind === "Flow" ? "flow" : resource.kind === "RuntimeProfile" ? "runtime-profile" : resource.kind === "Capability" ? "capability" : "knowledge"}:${canonicalPragmaResourceRef(resource)}`;
+        const key = `${resource.kind === "Expert" ? "expert" : resource.kind === "ExpertTeam" ? "team" : resource.kind === "Flow" ? "flow" : resource.kind === "Automation" ? "automation" : resource.kind === "RuntimeProfile" ? "runtime-profile" : resource.kind === "Capability" ? "capability" : "knowledge"}:${canonicalPragmaResourceRef(resource)}`;
         if (unavailable.has(key)) continue;
         const missing = [...referencedPragmaResourceRefs([resource])].find((ref) =>
           [...unavailable.keys()].some((candidate) => candidate.endsWith(`:${ref}`)),
@@ -383,6 +394,24 @@ export function createCoreAssetSyncService(options: {
       await rm(journalPath, { force: true });
       return "complete";
     }
+    // Additive journal metadata gives replayed host side effects a durable identity.
+    // Historical journals remain readable and receive the identity before any side effect.
+    if (
+      journal.operationId === undefined &&
+      journal.changes.some((change) => (change.remote ?? change.local)?.kind === "automation")
+    ) {
+      journal.operationId = randomUUID();
+      await writeAtomic(journalPath, journal);
+    }
+    const refreshImportedAutomations = async (current: CollectedItems) => {
+      const applied = journal.changes.filter(
+        (change) =>
+          (change.remote ?? change.local)?.kind === "automation" &&
+          (current.items.get(change.key)?.fingerprint ?? null) ===
+            (change.remote?.fingerprint ?? null),
+      );
+      if (applied.length > 0) await options.onAutomationsImported?.(applied, journal.operationId!);
+    };
     const interruptedConflicts = (current: CollectedItems): string[] =>
       journal.changes.flatMap((change) => {
         const actual = current.items.get(change.key)?.fingerprint ?? null;
@@ -407,6 +436,7 @@ export function createCoreAssetSyncService(options: {
         if (incomingBase === undefined) delete bases[change.key];
         else bases[change.key] = incomingBase;
       }
+      await refreshImportedAutomations(current);
       await writeState({
         ...state,
         repositoryInitialized:
@@ -432,7 +462,16 @@ export function createCoreAssetSyncService(options: {
         (change.remote?.fingerprint ?? null),
     );
     try {
-      await transfer.applyImport(await transfer.prepareImport(pending));
+      try {
+        await transfer.applyImport(await transfer.prepareImport(pending));
+      } finally {
+        // Project publication may have completed before an interruption. Reconcile
+        // even on replay when every payload already matches, before retiring the journal.
+        if (
+          journal.changes.some((change) => (change.remote ?? change.local)?.kind === "automation")
+        )
+          await refreshImportedAutomations(await collect());
+      }
     } catch (error) {
       if (!(error instanceof AssetTransferConflictError)) throw error;
       current = await collect();
@@ -919,6 +958,7 @@ export function createCoreAssetSyncService(options: {
                 journalPath,
                 JournalSchema.parse({
                   schemaVersion: "pragma.asset-sync-journal/v4",
+                  operationId: randomUUID(),
                   source,
                   changes: prepared,
                   expected: Object.fromEntries(
@@ -1190,7 +1230,7 @@ function logicalAssetIdentity(
   }
   if (
     resource !== undefined &&
-    ["Expert", "ExpertTeam", "Flow", "RuntimeProfile"].includes(resource.kind)
+    ["Expert", "ExpertTeam", "Flow", "Automation", "RuntimeProfile"].includes(resource.kind)
   ) {
     const assetKind =
       resource.kind === "Expert"
@@ -1199,7 +1239,9 @@ function logicalAssetIdentity(
           ? "team"
           : resource.kind === "Flow"
             ? "flow"
-            : "runtime-profile";
+            : resource.kind === "Automation"
+              ? "automation"
+              : "runtime-profile";
     return {
       assetKey: `${assetKind}:${resource.metadata.id}`,
       assetKind,

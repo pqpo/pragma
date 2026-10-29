@@ -22,6 +22,7 @@ import {
   AutomationBindingSchema,
   AutomationAdapterOptionSchema,
   AutomationSummarySchema,
+  AutomationResourceSchema,
   type AutomationAdapterOption,
   type AutomationBinding,
   type AutomationRunRecord,
@@ -49,9 +50,15 @@ const MAX_TIMER_DELAY_MS = 2_147_000_000;
 const MISSED_SCHEDULE_TOLERANCE_MS = 60_000;
 const TERMINAL_EXECUTION_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 
+export interface AutomationImportChange {
+  readonly previous?: PragmaAutomationResource | undefined;
+  readonly current?: PragmaAutomationResource | undefined;
+}
+
 export interface AutomationService {
   start(): Promise<void>;
   stop(): void;
+  refresh(changes: readonly AutomationImportChange[], operationId: string): Promise<void>;
   listAdapters(): readonly AutomationAdapterOption[];
   list(): Promise<AutomationSummary[]>;
   listMissionSources(): Promise<ReadonlyMap<string, string>>;
@@ -500,7 +507,7 @@ export function createAutomationService(options: {
       );
   };
 
-  return {
+  const service: AutomationService = {
     async start() {
       if (running) return;
       running = true;
@@ -511,6 +518,21 @@ export function createAutomationService(options: {
         running = false;
         throw error;
       }
+    },
+    async refresh(changes, operationId) {
+      for (const { previous, current } of changes) {
+        if (!current) continue;
+        const ref = canonicalPragmaResourceRef(current);
+        const binding = await options.store.getBinding(ref);
+        // A first import can reuse a retained local binding after a prior deletion.
+        if (
+          binding &&
+          (!previous ||
+            executionIdentity(previous, binding) !== executionIdentity(current, binding))
+        )
+          await service.resetSession(ref, `asset-sync:${operationId}:${ref}`);
+      }
+      if (running) await reconcile();
     },
     stop() {
       running = false;
@@ -706,7 +728,7 @@ export function createAutomationService(options: {
         input: { action: "reset", ref },
         stateSchema: z
           .object({
-            resource: PragmaAutomationResourceSchema,
+            resource: AutomationResourceSchema,
             previousBinding: AutomationBindingSchema,
             binding: AutomationBindingSchema,
           })
@@ -758,6 +780,7 @@ export function createAutomationService(options: {
       };
     },
   };
+  return service;
 }
 
 export function automationMissionInput(resource: PragmaAutomationResource) {

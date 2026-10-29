@@ -1,5 +1,6 @@
 import {
   PragmaAutomationRefSchema,
+  PragmaForwardCompatibleResourceSchema,
   PragmaAutomationResourceSchema,
   PragmaScheduleTriggerSchema,
 } from "@pragma/interpreter/ast";
@@ -42,10 +43,19 @@ export const AutomationRunRecordSchema = z
   })
   .strict();
 
+// Synced DSL must retain compatible fields added by newer writers.
+export const AutomationResourceSchema = PragmaForwardCompatibleResourceSchema.transform(
+  (resource, context) => {
+    if (resource.kind === "Automation") return resource;
+    context.addIssue({ code: "custom", message: "Expected an Automation resource." });
+    return z.NEVER;
+  },
+);
+
 export const AutomationSummarySchema = z
   .object({
     ref: z.string().min(1),
-    resource: PragmaAutomationResourceSchema,
+    resource: AutomationResourceSchema,
     binding: AutomationBindingSchema.optional(),
     status: z.enum(["scheduled", "disabled", "expired", "needs_attention"]),
     nextRunAt: z.string().datetime().optional(),

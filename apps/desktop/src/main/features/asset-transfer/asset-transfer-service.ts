@@ -194,7 +194,9 @@ export function createAssetTransferService(options: {
       }
       if (resource.kind === "ContextStore")
         return classifyDesktopContextResource(resource) !== undefined;
-      return ["Expert", "ExpertTeam", "Flow", "RuntimeProfile"].includes(resource.kind);
+      return ["Expert", "ExpertTeam", "Flow", "Automation", "RuntimeProfile"].includes(
+        resource.kind,
+      );
     });
     // Use one validated payload snapshot for both the Skill and every bound resource.
     // Historical definitions may retain descriptions that differ from SKILL.md.
@@ -232,11 +234,13 @@ export function createAssetTransferService(options: {
             ? "team"
             : resource.kind === "Flow"
               ? "flow"
-              : resource.kind === "RuntimeProfile"
-                ? "runtime-profile"
-                : resource.kind === "Capability"
-                  ? "capability"
-                  : "knowledge";
+              : resource.kind === "Automation"
+                ? "automation"
+                : resource.kind === "RuntimeProfile"
+                  ? "runtime-profile"
+                  : resource.kind === "Capability"
+                    ? "capability"
+                    : "knowledge";
       let portable: PragmaResource = resource;
       let name = resource.metadata.name;
       if (resource.kind === "ContextStore") {
@@ -585,7 +589,7 @@ export function createAssetTransferService(options: {
       const item = remote ?? local;
       if (item === undefined) continue;
       if (
-        ["expert", "team", "flow", "runtime-profile"].includes(item.kind) ||
+        ["expert", "team", "flow", "automation", "runtime-profile"].includes(item.kind) ||
         (item.kind === "capability" && item.key.startsWith("capability:capability:")) ||
         (item.kind === "knowledge" && item.key.startsWith("knowledge:context-store:"))
       ) {
@@ -967,7 +971,7 @@ export function createAssetTransferService(options: {
 }
 export function isResourceItem(item: CoreAssetSyncItem): boolean {
   return (
-    ["expert", "team", "flow", "runtime-profile"].includes(item.kind) ||
+    ["expert", "team", "flow", "automation", "runtime-profile"].includes(item.kind) ||
     item.key.startsWith("capability:capability:") ||
     item.key.startsWith("knowledge:context-store:")
   );

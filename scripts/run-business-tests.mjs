@@ -174,6 +174,7 @@ if (lane !== "host") {
     "src/main/features/capabilities/capability-store.test.ts",
     "src/main/features/capabilities/skill-revision-service.test.ts",
     "src/main/features/studio-sync/asset-sync-repository.test.ts",
+    "src/renderer/src/pages/settings/core-asset-sync-summary.test.ts",
     "src/main/features/studio-sync/migrations/migrations.test.ts",
     "src/main/features/capabilities/capability-revision-coordinator.test.ts",
     "src/main/features/context-stores/context-store-store.test.ts",
@@ -197,7 +198,7 @@ if (lane !== "host") {
     ["src/main/features/studio-sync/structured-asset-sync.integration.test.ts"],
     [
       "-t",
-      "restores Knowledge, binary Skill|derives Skill descriptions|migrates an interrupted v2 Skill restore",
+      "restores Knowledge, binary Skill|derives Skill descriptions|migrates an interrupted v2 Skill restore|synchronizes Automation definitions|replays interrupted Automation imports|refreshes imported Automation schedules",
     ],
     "skill-script-sync",
   );

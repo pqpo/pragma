@@ -76,7 +76,7 @@ export const settings = {
     navigation: "同步",
     title: "同步",
     description:
-      "通过一个 Git 仓库，以分类 YAML 和原生文件同步专家、专家团、流程、运行配置、上下文绑定、知识库及全部用户能力。",
+      "通过一个 Git 仓库，以分类 YAML 和原生文件同步专家、专家团、流程、自动化、运行配置、上下文绑定、知识库及全部用户能力。",
     settings: "同步设置",
     settingsDescription: "配置 Git 仓库、分支和自动同步策略。",
     cancel: "取消",
@@ -122,6 +122,7 @@ export const settings = {
       expert: "专家",
       team: "专家团",
       flow: "流程",
+      automation: "自动化",
       "runtime-profile": "运行环境绑定",
       knowledge: "知识",
       context: "上下文",

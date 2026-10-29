@@ -81,12 +81,16 @@ import {
   MissionExecutorOptionSchema,
   MissionSchema,
   MissionSummarySchema,
+  AutomationResourceSchema,
   type Mission,
 } from "../../shared/contracts/index.ts";
 import { createStorageCapacityInspection } from "../platform/storage/storage-capacity-inspection.ts";
 
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
-import { createAutomationService } from "../features/automations/automation-service.ts";
+import {
+  createAutomationService,
+  type AutomationService,
+} from "../features/automations/automation-service.ts";
 import { createAutomationStore } from "../features/automations/automation-store.ts";
 import { createLocalHostPragmaAutomationPort } from "@pragma/local-host";
 import { createDesktopPragmaAgentProjectPort } from "../features/built-in-agents/pragma-agent-project-adapter.ts";
@@ -752,7 +756,20 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) => mainLogger.warn("desktop.asset_git_sync_failed", message, { error }),
   });
   assetGitRef.current = assetGit;
+  const automationServiceRef: { current?: AutomationService } = {};
   const coreAssetSync = createCoreAssetSyncService({
+    onAutomationsImported: async (changes, operationId) => {
+      const automations = changes.filter(
+        (change) => (change.remote ?? change.local)?.kind === "automation",
+      );
+      await automationServiceRef.current?.refresh(
+        automations.map((change) => ({
+          previous: change.local ? AutomationResourceSchema.parse(change.local.data) : undefined,
+          current: change.remote ? AutomationResourceSchema.parse(change.remote.data) : undefined,
+        })),
+        operationId,
+      );
+    },
     configurationPath: join(pragmaPaths.stateRoot(), "asset-sync", "settings.json"),
     statePath: join(pragmaPaths.stateRoot(), "asset-sync", "state.json"),
     plugins: pluginStore,
@@ -2145,6 +2162,7 @@ export async function createDesktopApplicationContainer(
     loggerProvider,
     onStorageTrashed: () => trashMaintenance.schedule("automation-storage-trashed"),
   });
+  automationServiceRef.current = automationService;
   installAutomationHandlers(automationService);
   const homeProjects = createHomeProjectStore(join(pragmaPaths.dataRoot(), "home-projects.json"));
   const pragmaAgentMissions = createLocalHostPragmaMissionPort({

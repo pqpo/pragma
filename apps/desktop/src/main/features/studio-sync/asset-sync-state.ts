@@ -35,6 +35,7 @@ const ChangeSchema = z
 export const JournalSchema = z
   .object({
     schemaVersion: z.literal("pragma.asset-sync-journal/v4"),
+    operationId: z.string().uuid().optional(),
     source: z.string(),
     changes: z.array(ChangeSchema),
     expected: z.record(z.string(), z.string().nullable()),

@@ -15,6 +15,23 @@ function item(
 }
 
 describe("core asset sync summary", () => {
+  it("includes Automations in the visible sync groups", () => {
+    const summary = aggregateCoreAssetSyncItems([
+      item({
+        key: "automation:automation:m9a8n9nxvvyb4j01",
+        kind: "automation",
+        assetKey: "automation:m9a8n9nxvvyb4j01",
+        assetKind: "automation",
+        status: "pending",
+      }),
+    ]);
+    expect(summary).toMatchObject({
+      total: 1,
+      pending: 1,
+      groups: [{ kind: "automation", total: 1, pending: 1 }],
+    });
+  });
+
   it("counts multiple synchronization records as one logical asset", () => {
     const summary = aggregateCoreAssetSyncItems([
       item({

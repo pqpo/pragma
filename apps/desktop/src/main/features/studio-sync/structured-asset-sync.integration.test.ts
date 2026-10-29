@@ -1,3 +1,6 @@
+import { PragmaPaths } from "@pragma/core";
+import { createAutomationService } from "../automations/automation-service.ts";
+import { createAutomationStore, createAutomationBinding } from "../automations/automation-store.ts";
 import type { WorkflowLayoutStore } from "@pragma/local-host/deployment";
 import type { CapabilityVerifier } from "@pragma/local-host/deployment";
 import {
@@ -34,7 +37,10 @@ import { createDesktopSystemExpertRegistry } from "../experts/system-expert-regi
 import { createTestSecretStore } from "../credentials/test-secret-store.ts";
 import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
 import { readSyncRepository, writeSyncRepository } from "./asset-sync-repository.ts";
-import { CoreAssetSyncItemSchema } from "../../../shared/contracts/index.ts";
+import {
+  CoreAssetSyncItemSchema,
+  AutomationResourceSchema,
+} from "../../../shared/contracts/index.ts";
 import { appendTransferredKnowledge } from "@pragma/local-host/deployment";
 import { migrateSyncDslItem } from "./migrations/dsl-fingerprints.ts";
 import { journalMigrationChain } from "./migrations/index.ts";
@@ -77,6 +83,9 @@ function device(
   beforeLayoutSave?: () => Promise<void>,
   verify?: CapabilityVerifier,
   projectHooks?: {
+    onAutomationsImported?: Parameters<
+      typeof createCoreAssetSyncService
+    >[0]["onAutomationsImported"];
     beforeGet?: (project: PragmaProjectStore) => Promise<void>;
     afterValidation?: (project: PragmaProjectStore) => Promise<void>;
     beforeApply?: (project: PragmaProjectStore) => Promise<void>;
@@ -190,6 +199,9 @@ function device(
     },
   });
   const options = {
+    ...(projectHooks?.onAutomationsImported
+      ? { onAutomationsImported: projectHooks.onAutomationsImported }
+      : {}),
     configurationPath: join(root, "state", "asset-sync", "settings.json"),
     statePath: join(root, "state", "asset-sync", "state.json"),
     project: importProject,
@@ -342,7 +354,252 @@ async function addSkill(capabilities: CapabilityStore, root: string, arbitrarySc
   return await capabilities.importSkill({ sourcePath });
 }
 
+function automation(): Extract<PragmaResource, { kind: "Automation" }> {
+  return {
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+    kind: "Automation",
+    metadata: { id: "m9a8n9nxvvyb4j01", name: "Daily review", description: "Review", tags: [] },
+    spec: {
+      adapter: "pragma.automation.schedule@v1",
+      binding: "binding:desktop-automation",
+      enabled: true,
+      config: { trigger: { kind: "calendar", frequency: "daily", time: "09:00", timezone: "UTC" } },
+      route: {
+        executor: { ref: "expert:1xddvess309a6gme" },
+        input: { kind: "prompt", value: "Review" },
+      },
+      interaction: { mode: "new-mission" },
+      delivery: { adapter: "pragma.automation.delivery.local@v1" },
+    },
+  };
+}
+
 describe("structured asset sync with real Git and domain stores", { timeout: 60_000 }, () => {
+  it("synchronizes Automation definitions, resolves edits and restores and propagates deletion", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const b = device(join(git.root, "b"));
+    const original = automation();
+    const ref = canonicalPragmaResourceRef(original);
+    const key = `automation:${ref}`;
+    const read = async (owner: typeof a) =>
+      (await owner.project.get()).resources.find(
+        (resource) => canonicalPragmaResourceRef(resource) === ref,
+      );
+    const edit = async (owner: typeof a, name: string) =>
+      owner.project.upsert({
+        baseRevision: (await owner.project.get()).revision,
+        resource: { ...original, metadata: { ...original.metadata, name } },
+      });
+    await a.project.publish({ expectedRevision: 0, resources: [...resources(), original] });
+    expect((await a.service.configure(configuration)).status).toBe("ready");
+    const yaml = (
+      await exec("git", [
+        "--git-dir",
+        git.bare,
+        "show",
+        `main:pragma-sync/automations/${original.metadata.id}.pragma.yaml`,
+      ])
+    ).stdout;
+    expect(parsePragmaYaml(yaml)).toEqual(original);
+    const imported = await b.service.configure(configuration);
+    expect(imported.status, imported.error).toBe("ready");
+    expect(imported.items.find((item) => item.key === key)).toMatchObject({
+      kind: "automation",
+      assetKind: "automation",
+      assetKey: ref,
+      assetName: "Daily review",
+      status: "synced",
+    });
+    expect(await read(b)).toEqual(original);
+    const head = await git.head();
+    expect((await b.service.sync()).status).toBe("ready");
+    expect(await git.head()).toBe(head);
+
+    await edit(a, "From A");
+    await edit(b, "From B");
+    expect((await a.service.sync()).status).toBe("ready");
+    expect((await b.service.sync()).items.find((item) => item.key === key)?.status).toBe(
+      "conflict",
+    );
+    expect((await b.service.resolve(key, "remote")).status).toBe("ready");
+    expect((await read(b))?.metadata.name).toBe("From A");
+    await edit(b, "Return from B");
+    expect((await b.service.sync()).status).toBe("ready");
+    expect((await a.service.automatic()).status).toBe("ready");
+    expect((await read(a))?.metadata.name).toBe("Return from B");
+
+    await a.project.remove({ baseRevision: (await a.project.get()).revision, ref });
+    expect((await a.service.restore(key)).status).toBe("ready");
+    expect((await read(a))?.metadata.name).toBe("Return from B");
+    await a.project.remove({ baseRevision: (await a.project.get()).revision, ref });
+    expect((await a.service.sync()).status).toBe("ready");
+    expect((await b.service.sync()).status).toBe("ready");
+    expect(await read(b)).toBeUndefined();
+    expect((await b.service.overview()).items.some((item) => item.key === key)).toBe(false);
+  });
+
+  it("replays interrupted Automation imports and retains executor dependencies", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const b = device(join(git.root, "b"), "project");
+    const original = automation();
+    await a.project.publish({ expectedRevision: 0, resources: [...resources(), original] });
+    expect((await a.service.configure(configuration)).status).toBe("ready");
+    expect((await b.service.configure(configuration)).status).toBe("error");
+    const revision = (await b.project.get()).revision;
+    const recovered = await b.restart().sync();
+    expect(recovered.status, recovered.error).toBe("ready");
+    expect((await b.project.get()).revision).toBe(revision);
+    expect((await b.project.get()).resources).toContainEqual(original);
+    expect(recovered.items.find((item) => item.kind === "automation")?.readiness?.status).toBe(
+      "needs_attention",
+    );
+    // Remove the entire graph in a single publication, including the executor.
+    await a.project.apply({
+      baseRevision: (await a.project.get()).revision,
+      upserts: [],
+      removals: (await a.project.get()).resources.map(canonicalPragmaResourceRef),
+    });
+    expect((await a.service.sync()).status).toBe("ready");
+    expect((await b.restart().sync()).status).toBe("ready");
+    expect((await b.project.get()).resources).toEqual([]);
+  });
+
+  it.each(["input", "executor"] as const)(
+    "refreshes imported Automation schedules and resets changed sessions once across journal replay (%s)",
+    async (change) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const schedulerRef: { current?: ReturnType<typeof createAutomationService> } = {};
+      let interruptRefresh = false;
+      const b = device(join(git.root, "b"), false, undefined, undefined, undefined, {
+        onAutomationsImported: async (changes, operationId) => {
+          await schedulerRef.current?.refresh(
+            changes.map((change) => ({
+              previous: change.local
+                ? AutomationResourceSchema.parse(change.local.data)
+                : undefined,
+              current: change.remote
+                ? AutomationResourceSchema.parse(change.remote.data)
+                : undefined,
+            })),
+            operationId,
+          );
+          if (interruptRefresh) {
+            interruptRefresh = false;
+            throw new Error("Interrupted after scheduler refresh");
+          }
+        },
+      });
+      let current = automation();
+      current.spec.interaction.mode = "reuse-session";
+      current = PragmaForwardCompatibleResourceSchema.parse({
+        ...current,
+        futureMetadata: { preserved: true },
+      }) as typeof current;
+      const ref = canonicalPragmaResourceRef(current);
+      await a.project.publish({ expectedRevision: 0, resources: [...resources(), current] });
+      await a.service.configure(configuration);
+      await b.service.configure(configuration);
+      const paths = new PragmaPaths({ pragmaHome: b.root });
+      const store = createAutomationStore(paths, b.project.projectId);
+      expect(await store.getBinding(ref)).toBeUndefined();
+      const binding = await store.saveBinding(
+        createAutomationBinding({
+          automationRef: ref,
+          rotateGeneration: true,
+          workspace: { path: b.root, basename: "b" },
+        }),
+      );
+      type Options = Parameters<typeof createAutomationService>[0];
+      const scheduler = createAutomationService({
+        paths,
+        project: b.project,
+        store,
+        missions: {
+          backfillAutomationOrigin: vi.fn(async () => undefined),
+        } as unknown as Options["missions"],
+        creator: {} as Options["creator"],
+        application: {} as Options["application"],
+        now: () => new Date("2026-07-23T08:00:00.000Z"),
+      });
+      schedulerRef.current = scheduler;
+      const publish = async () => {
+        await a.project.upsert({
+          baseRevision: (await a.project.get()).revision,
+          resource: current,
+        });
+        expect((await a.service.sync()).status).toBe("ready");
+      };
+      try {
+        await scheduler.start();
+        await store.updateState(ref, binding.generation, (state) => ({
+          ...state,
+          missionId: "7b143dfa-16d9-45dd-8275-839565ac691f",
+        }));
+        expect((await store.getState(ref, binding.generation)).nextRunAt).toBe(
+          "2026-07-23T09:00:00.000Z",
+        );
+        current = {
+          ...current,
+          spec: {
+            ...current.spec,
+            config: {
+              trigger: { kind: "calendar", frequency: "daily", time: "10:00", timezone: "UTC" },
+            },
+          },
+        };
+        await publish();
+        expect((await b.service.sync()).status).toBe("ready");
+        expect((await store.getBinding(ref))?.generation).toBe(binding.generation);
+        expect((await store.getState(ref, binding.generation)).nextRunAt).toBe(
+          "2026-07-23T10:00:00.000Z",
+        );
+
+        if (change === "executor") {
+          const expert = resources().find((resource) => resource.kind === "Expert")!;
+          await a.project.upsert({
+            baseRevision: (await a.project.get()).revision,
+            resource: {
+              ...expert,
+              metadata: { ...expert.metadata, id: "2xddvess309a6gme", name: "Other writer" },
+            },
+          });
+        }
+        current = {
+          ...current,
+          spec: {
+            ...current.spec,
+            route:
+              change === "input"
+                ? { ...current.spec.route, input: { kind: "prompt", value: "New input" } }
+                : { ...current.spec.route, executor: { ref: "expert:2xddvess309a6gme" } },
+          },
+        };
+        await publish();
+        interruptRefresh = true;
+        expect((await b.service.sync()).status).toBe("error");
+        const rotated = (await store.getBinding(ref))!;
+        expect(rotated.generation).not.toBe(binding.generation);
+        expect(rotated.workspace).toEqual(binding.workspace);
+        expect(
+          (await b.project.get()).resources.find((resource) => resource.kind === "Automation"),
+        ).toHaveProperty("futureMetadata", { preserved: true });
+        expect((await b.restart().sync()).status).toBe("ready");
+        expect((await store.getBinding(ref))?.generation).toBe(rotated.generation);
+        expect((await store.getState(ref, rotated.generation)).missionId).toBeUndefined();
+
+        current = { ...current, spec: { ...current.spec, enabled: false } };
+        await publish();
+        expect((await b.service.sync()).status).toBe("ready");
+        expect((await store.getState(ref, rotated.generation)).nextRunAt).toBeUndefined();
+      } finally {
+        scheduler.stop();
+      }
+    },
+  );
+
   it.each(["unchanged", "local", "remote", "both", "local-delete", "remote-delete"] as const)(
     "retains historical checkpoint semantics across DSL migration with %s changes",
     async (change) => {

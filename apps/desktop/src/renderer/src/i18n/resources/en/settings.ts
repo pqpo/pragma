@@ -80,7 +80,7 @@ export const settings = {
     navigation: "Sync",
     title: "Sync",
     description:
-      "Sync Experts, Teams, Flows, runtime profiles, context bindings, Knowledge Bases, and all user capabilities as YAML and native files in one Git repository.",
+      "Sync Experts, Teams, Flows, Automations, runtime profiles, context bindings, Knowledge Bases, and all user capabilities as YAML and native files in one Git repository.",
     settings: "Sync settings",
     settingsDescription: "Configure the Git repository, branch, and automatic sync policy.",
     cancel: "Cancel",
@@ -127,6 +127,7 @@ export const settings = {
       expert: "Experts",
       team: "Teams",
       flow: "Flows",
+      automation: "Automations",
       "runtime-profile": "Runtime bindings",
       knowledge: "Knowledge",
       context: "Contexts",

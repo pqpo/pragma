@@ -42,6 +42,7 @@ const KIND_ORDER: readonly CoreAssetLogicalKind[] = [
   "expert",
   "team",
   "flow",
+  "automation",
   "runtime-profile",
 ];
 

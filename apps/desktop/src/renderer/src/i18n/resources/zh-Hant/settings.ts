@@ -76,7 +76,7 @@ export const settings = {
     navigation: "同步",
     title: "同步",
     description:
-      "透過一個 Git 儲存庫，以分類 YAML 和原生檔案同步專家、專家團、流程、執行設定、上下文綁定、知識庫與全部使用者能力。",
+      "透過一個 Git 儲存庫，以分類 YAML 和原生檔案同步專家、專家團、流程、自動化、執行設定、上下文綁定、知識庫與全部使用者能力。",
     settings: "同步設定",
     settingsDescription: "設定 Git 儲存庫、分支與自動同步策略。",
     cancel: "取消",
@@ -122,6 +122,7 @@ export const settings = {
       expert: "專家",
       team: "專家團",
       flow: "流程",
+      automation: "自動化",
       "runtime-profile": "執行環境綁定",
       knowledge: "知識",
       context: "上下文",
