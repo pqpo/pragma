@@ -148,6 +148,8 @@ export class KnowledgeRevisionToolError extends Error {
     readonly code: z.infer<typeof PragmaManagementErrorSchema>["code"],
     message: string,
     readonly retryable: boolean,
+    readonly recovery?: z.infer<typeof PragmaManagementErrorSchema>["recovery"],
+    readonly details?: z.infer<typeof PragmaManagementErrorSchema>["details"],
   ) {
     super(message);
     this.name = "KnowledgeRevisionToolError";
@@ -1052,6 +1054,13 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
     });
     return createTextToolResult(JSON.stringify(payload), { details: payload, isError: true });
   }
+  const canRetry =
+    typeof retryable === "boolean"
+      ? retryable
+      : ["invalid_input", "revision_conflict", "cursor_expired", "cursor_invalid"].includes(code) ||
+        (code === "unavailable" &&
+          hostCode !== "invalid_state" &&
+          !/execution_context|mission_unavailable/u.test(rawMessage));
   const payload = PragmaManagementErrorSchema.parse({
     schemaVersion: "pragma.management-error/v1",
     code,
@@ -1059,21 +1068,13 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
       code === "internal_error"
         ? "The management tool failed unexpectedly."
         : rawMessage.slice(0, 2_000),
-    retryable:
-      typeof retryable === "boolean"
-        ? retryable
-        : error instanceof KnowledgeRevisionToolError
-          ? error.retryable
-          : ["revision_conflict", "cursor_expired"].includes(code) ||
-            (code === "unavailable" &&
-              hostCode !== "invalid_state" &&
-              !/execution_context|mission_unavailable/u.test(rawMessage)),
+    retryable: canRetry,
     ...(error instanceof z.ZodError
       ? { details: { issues: error.issues } }
       : validation === undefined
         ? {}
         : { details: { validation } }),
-    ...(code === "invalid_input" && validation !== undefined
+    ...(canRetry && code === "invalid_input" && validation !== undefined
       ? {
           recovery: {
             tool: toolName,
@@ -1081,9 +1082,29 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
           },
         }
       : {}),
-    ...(code === "cursor_expired"
+    ...(canRetry && code === "invalid_input" && error instanceof z.ZodError
+      ? {
+          recovery: {
+            tool: toolName,
+            reason:
+              "Correct the fields listed in details.issues using this tool's input schema, then retry in the same Mission. Preserve draftId and existing edits.",
+          },
+        }
+      : {}),
+    ...(canRetry && code === "revision_conflict" && /^(?:knowledge|skill)_revision_/u.test(toolName)
+      ? {
+          recovery: {
+            tool: toolName.startsWith("skill_")
+              ? SKILL_REVISION_GET_DRAFT_TOOL_NAME
+              : KNOWLEDGE_REVISION_GET_DRAFT_TOOL_NAME,
+            reason:
+              "Inspect the same draftId and current revision before retrying. Preserve edits and submitted work. For Knowledge base conflicts, inspect/rebase the existing draft; do not create a replacement draft to bypass CAS.",
+          },
+        }
+      : {}),
+    ...(canRetry && (code === "cursor_expired" || code === "cursor_invalid")
       ? { recovery: { tool: toolName, reason: "Run the same listing again without cursor." } }
-      : code === "response_too_large"
+      : retryable !== false && code === "response_too_large"
         ? {
             recovery: {
               tool: toolName,
@@ -1091,6 +1112,12 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
             },
           }
         : {}),
+    ...(error instanceof KnowledgeRevisionToolError && error.recovery !== undefined
+      ? { recovery: error.recovery }
+      : {}),
+    ...(error instanceof KnowledgeRevisionToolError && error.details !== undefined
+      ? { details: error.details }
+      : {}),
   });
   return createTextToolResult(JSON.stringify(payload), { details: payload, isError: true });
 }

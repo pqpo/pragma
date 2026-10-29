@@ -225,6 +225,50 @@ describe("Pragma management tools", () => {
     });
   });
 
+  it("lets the Agent correct invalid revision arguments while preserving explicit Host recovery", async () => {
+    const recovery = {
+      tool: "read_learning_target",
+      reason: "Read target 123, then retry the same draft.",
+    };
+    const tools = createPragmaManagementTools({
+      knowledgeRevisions: revisionPort({
+        listTargets: vi.fn(async () => {
+          throw new KnowledgeRevisionToolError("invalid_input", "Target unread", true, recovery);
+        }),
+      }),
+    });
+    const context = {
+      toolCallId: "call",
+      runContext: {
+        attributes: {
+          [EXECUTION_ID_ATTR]: "execution",
+          [INVOCATION_ID_ATTR]: "invocation",
+          [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "0000000000000002",
+        },
+      },
+    };
+    expect(await tools[0]!.call({ limit: -1 }, undefined, context)).toMatchObject({
+      isError: true,
+      details: {
+        code: "invalid_input",
+        retryable: true,
+        recovery: {
+          tool: "knowledge_revision_list_targets",
+          reason: expect.stringContaining("details.issues"),
+        },
+      },
+    });
+    expect(await tools[0]!.call({}, undefined, context)).toMatchObject({
+      isError: true,
+      details: {
+        code: "invalid_input",
+        retryable: true,
+        message: "Target unread",
+        recovery,
+      },
+    });
+  });
+
   it("starts Skill drafts without approval", () => {
     const tools = createPragmaManagementTools({
       skillRevisions: {

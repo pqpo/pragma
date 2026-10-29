@@ -39,6 +39,20 @@ the directory and therefore retires its snapshot without introducing another glo
 
 ## Historical data and boundaries
 
+### Memory extraction extension (2026-10-29)
+
+Direct Knowledge/Skill Memory Missions now use the same first-compilation dependency snapshot owner.
+Desktop previously limited snapshot creation to user-facing origins, leaving these system-memory
+Sessions unable to recover their original definition after Registry changes. Existing Sessions without
+a snapshot still follow the historical path; this extension does not reconstruct absent definitions or
+scan owners at startup. Existing snapshot formats and their adjacent migrations are unchanged.
+
+For a Memory Session with a snapshot, a stale Host compilation-identity summary can be reconciled only
+when the saved Session definition fingerprint and Core's durable execution environment match the current
+pinned compilation. Profile, binding or context-mount changes retain their existing rejection policy.
+
+### Existing data
+
 This is a new, independently versioned file namespace. Existing Mission, Execution and ExpertSession
 schemas are unchanged. Missions with an existing Session and no snapshot keep their historical
 path; no startup scan, inferred old configuration, data deletion or historical migration is performed.

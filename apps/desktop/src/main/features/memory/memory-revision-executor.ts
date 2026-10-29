@@ -18,8 +18,9 @@ import {
   STORE_REVISION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
   KnowledgeRevisionDraftReceiptSchema,
-  SkillRevisionDraftReceiptSchema,
+  KnowledgeRevisionToolError,
   PragmaManagementErrorSchema,
+  SkillRevisionDraftReceiptSchema,
   type KnowledgeRevisionSubmissionPort,
   type SkillRevisionSubmissionPort,
 } from "@pragma/built-in-agents";
@@ -41,6 +42,10 @@ import {
 } from "@pragma/shared";
 import type { createMemoryLearningRevisions } from "./memory-learning-revisions.ts";
 import { createDesktopContextResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
+import {
+  memoryLearningToolFeedback,
+  MemoryLearningToolFeedbackSchema,
+} from "./memory-learning-tool-feedback.ts";
 
 type Input = Parameters<MemoryRevisionExecutor["execute"]>[0];
 type Revisions = ReturnType<typeof createMemoryLearningRevisions>;
@@ -108,6 +113,31 @@ const StateSchema = z
 type State = z.infer<typeof StateSchema>;
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const failure = (code: string) => Object.assign(new Error(code), { code, retryable: false });
+const repairableFailure = (code: string) =>
+  Object.assign(new Error(code), { code, retryable: true, memoryRevisionTransient: true });
+// Distinguish explicitly retryable Host diagnostics without discarding their public cause.
+const retryableReadCodes: Readonly<Record<string, string>> = {
+  memory_revision_read_retryable_invalid_input: "invalid_input",
+  memory_revision_read_retryable_revision_conflict: "revision_conflict",
+  memory_revision_read_retryable_cursor_expired: "cursor_expired",
+  memory_revision_read_retryable_cursor_invalid: "cursor_invalid",
+  memory_revision_read_transient: "unavailable",
+};
+function clearRediscoveredHandles(state: State, tool: string) {
+  if (
+    tool === "find_learning_targets" &&
+    state.readFailures.read_learning_target === "memory_revision_target_denied"
+  )
+    delete state.readFailures.read_learning_target;
+  if (
+    tool === "list_learning_sources" &&
+    state.readFailures.read_learning_source === "memory_revision_source_denied"
+  )
+    delete state.readFailures.read_learning_source;
+  if (tool.endsWith("_revision_list_drafts"))
+    for (const [failedTool, code] of Object.entries(state.readFailures))
+      if (code === "memory_revision_draft_denied") delete state.readFailures[failedTool];
+}
 const sourceHandle = (source: Input["sources"][number]) =>
   `${source.ref.kind}:${source.ref.id}:${source.ref.revision}`;
 
@@ -204,6 +234,8 @@ export function createMemoryRevisionExecutor(options: {
         ? { id: target.id, revision: target.baseRevision, hash: target.snapshotHash }
         : { id: target.id, revision: target.baseRevision, hash: target.contentHash },
     );
+  const targetWasRead = (state: State, id: string, version: string) =>
+    state.readFailures.read_learning_target === undefined && state.targetVersions[id] === version;
   const assertSupport = (state: State, input: Input, create: boolean) => {
     const selected = state.support.map((handle) =>
       input.sources.find((source) => sourceHandle(source) === handle),
@@ -549,8 +581,7 @@ export function createMemoryRevisionExecutor(options: {
               current.continuation = {
                 requestId: randomUUID(),
                 previousExecutionId: current.failureExecutionId!,
-                content:
-                  "Continue this Memory extraction in the original context. Preserve submitted drafts. Inspect current draft/target state, repair unfinished work with the native tools, and submit supported drafts or finish_memory_learning. Never ask the user questions.",
+                content: `Continue this Memory extraction in the original context. Preserve submitted drafts, edits, source selection and consumed budgets. Inspect current draft/target state; finish unfinished owned drafts with the native tools, or call finish_memory_learning with an honest supported no-change decision. Chat text is not a receipt. Read an unread/changed target with read_learning_target before retrying start/submit. Repair failed reads before finalizing. Owned drafts: ${JSON.stringify(current.drafts.map(({ draftId, targetId, submitted }) => ({ draftId, targetId, submitted })))}. Failed reads: ${JSON.stringify(current.readFailures)}. Never ask the user questions or duplicate submitted work.`,
               };
               current.lastClaimRevision = input.claimRevision;
               current.waitForTarget = undefined;
@@ -639,19 +670,29 @@ export function createMemoryRevisionExecutor(options: {
           );
         }
         if (state.waitForTarget !== undefined) throw failure("memory_revision_pending");
-        if (Object.keys(state.readFailures).length > 0)
-          throw failure(
-            state.readFailures.budget ??
-              Object.values(state.readFailures).find((code) =>
-                /^[a-z][a-z0-9_.-]{0,199}$/u.test(code),
-              ) ??
-              "memory_revision_read_failed",
+        if (Object.keys(state.readFailures).length > 0) {
+          if (state.readFailures.budget !== undefined) throw failure(state.readFailures.budget);
+          const correctable = Object.entries(state.readFailures).every(
+            ([tool, code]) =>
+              Object.hasOwn(retryableReadCodes, code) ||
+              (code !== "memory_revision_read_failed" &&
+                memoryLearningToolFeedback(new Error(code), tool, {}).status ===
+                  "needs_correction"),
           );
+          const storedCode =
+            Object.values(state.readFailures).find((code) =>
+              /^[a-z][a-z0-9_.-]{0,199}$/u.test(code),
+            ) ?? "memory_revision_read_failed";
+          const code = Object.hasOwn(retryableReadCodes, storedCode)
+            ? retryableReadCodes[storedCode]!
+            : storedCode;
+          throw (correctable ? repairableFailure : failure)(code);
+        }
         if (state.drafts.some((draft) => !draft.submitted))
-          throw failure("memory_revision_draft_not_submitted");
+          throw repairableFailure("memory_revision_draft_not_submitted");
         const submitted = state.drafts.filter((draft) => draft.submitted);
         if (submitted.length === 0 && state.disposition === undefined)
-          throw failure("memory_revision_receipt_missing");
+          throw repairableFailure("memory_revision_receipt_missing");
         const result: MemoryRevisionExecutionResult = {
           submitted: submitted.length > 0,
           decision: {
@@ -743,7 +784,7 @@ export function createMemoryRevisionExecutor(options: {
                   if (
                     target !== undefined &&
                     !target.pending &&
-                    current.targetVersions[target.id] !== targetVersion(target)
+                    !targetWasRead(current, target.id, targetVersion(target))
                   )
                     throw failure("memory_revision_target_changed_or_unread");
                   if (target?.pending && input.draftId === undefined)
@@ -781,21 +822,28 @@ export function createMemoryRevisionExecutor(options: {
               const currentInput = await inputFor(key),
                 current = (await read(key))!;
               const draft = ownDraft(current, input.draftId);
+              if (draft.submitted && draft.receipt !== undefined)
+                return KnowledgeRevisionDraftReceiptSchema.parse(draft.receipt);
+              const alreadySubmitted = await options.revisions.getDirectKnowledgeDraft(
+                input.draftId,
+              );
               assertSupport(
                 { ...current, support: draft.sources },
                 currentInput,
                 draft.operation === "create",
               );
               if (
+                !alreadySubmitted &&
                 draft.operation === "revise" &&
-                current.targetVersions[draft.targetId] !==
-                  hash(await options.revisions.getDirectDraftVersion(current.kind, draft.draftId))
+                !targetWasRead(
+                  current,
+                  draft.targetId,
+                  hash(await options.revisions.getDirectDraftVersion(current.kind, draft.draftId)),
+                )
               )
                 throw failure("memory_revision_target_changed_or_unread");
-              if (draft.submitted && draft.receipt !== undefined)
-                return KnowledgeRevisionDraftReceiptSchema.parse(draft.receipt);
               let result;
-              if (await options.revisions.getDirectKnowledgeDraft(input.draftId)) {
+              if (alreadySubmitted) {
                 const inspection = await ports.knowledgeRevisions!.getDraft({
                   ...input,
                   fileId: undefined,
@@ -865,7 +913,7 @@ export function createMemoryRevisionExecutor(options: {
                   if (
                     target !== undefined &&
                     !target.pending &&
-                    current.targetVersions[target.id] !== targetVersion(target)
+                    !targetWasRead(current, target.id, targetVersion(target))
                   )
                     throw failure("memory_revision_target_changed_or_unread");
                   if (target?.pending && input.draftId === undefined)
@@ -902,20 +950,25 @@ export function createMemoryRevisionExecutor(options: {
               const currentInput = await inputFor(key),
                 current = (await read(key))!;
               const draft = ownDraft(current, input.draftId);
+              if (draft.submitted && draft.receipt !== undefined)
+                return SkillRevisionDraftReceiptSchema.parse(draft.receipt);
+              const alreadySubmitted = await options.revisions.getDirectSkillDraft(input.draftId);
               assertSupport(
                 { ...current, support: draft.sources },
                 currentInput,
                 draft.operation === "create",
               );
               if (
+                !alreadySubmitted &&
                 draft.operation === "revise" &&
-                current.targetVersions[draft.targetId] !==
-                  hash(await options.revisions.getDirectDraftVersion(current.kind, draft.draftId))
+                !targetWasRead(
+                  current,
+                  draft.targetId,
+                  hash(await options.revisions.getDirectDraftVersion(current.kind, draft.draftId)),
+                )
               )
                 throw failure("memory_revision_target_changed_or_unread");
-              if (draft.submitted && draft.receipt !== undefined)
-                return SkillRevisionDraftReceiptSchema.parse(draft.receipt);
-              const result = (await options.revisions.getDirectSkillDraft(input.draftId))
+              const result = alreadySubmitted
                 ? await ports.skillRevisions!.getDraft({ ...input, limit: 1 }).then(({ draft }) =>
                     SkillRevisionDraftReceiptSchema.parse({
                       draftId: draft.draftId,
@@ -956,6 +1009,7 @@ export function createMemoryRevisionExecutor(options: {
           )
             await update(key, async (current) => {
               delete current.readFailures[name];
+              clearRediscoveredHandles(current, name);
               // A corrected prerequisite may reveal no useful delta; starting a draft is optional.
               const corrected =
                 name === "select_learning_sources"
@@ -969,42 +1023,109 @@ export function createMemoryRevisionExecutor(options: {
             });
           return createTextToolResult(JSON.stringify(result));
         } catch (error) {
+          active.get(key)?.signal.throwIfAborted();
+          const feedback = memoryLearningToolFeedback(error, name, args);
           if (
             (name.startsWith("read_") || name.startsWith("find_") || name.startsWith("list_")) &&
             !(error instanceof Error && error.message === "memory_revision_pending")
           )
             await update(key, async (current) => {
-              current.readFailures[name] =
-                error instanceof Error
-                  ? error.message.slice(0, 200)
-                  : "memory_revision_read_failed";
+              current.readFailures[name] = feedback.error;
             });
-          return createTextToolResult(
-            JSON.stringify({
-              error: error instanceof Error ? error.message : "memory_revision_tool_failed",
-              ...(name === "read_learning_target" &&
-              error instanceof Error &&
-              error.message === "memory_revision_target_denied"
-                ? {
-                    recovery: {
-                      tool: "find_learning_targets",
-                      reason:
-                        "Use the exact returned id as targetId without a resource prefix, then read_learning_target again.",
-                    },
-                  }
-                : {}),
-            }),
-            { isError: true },
-          );
+          return createTextToolResult(JSON.stringify(feedback), {
+            isError: true,
+            details: feedback,
+          });
         }
       },
     });
     const page = z.object({ offset: z.number().int().nonnegative().default(0) }).strict();
+    // Translate task guards before the generic management adapter sanitizes unexpected errors.
+    const withFeedback = async <T>(
+      name: string,
+      args: { targetRef?: string | undefined; draftId?: string | undefined },
+      call: () => Promise<T>,
+    ): Promise<T> => {
+      try {
+        return await call();
+      } catch (error) {
+        if (!(error instanceof Error) || !/^(?:memory_|knowledge_learning_)/u.test(error.message))
+          throw error;
+        const classified = memoryLearningToolFeedback(error, name, args);
+        if (classified.status === "blocked")
+          throw new KnowledgeRevisionToolError(
+            /denied|retired|identity_mismatch|source_changed/u.test(classified.error)
+              ? "permission_denied"
+              : "unavailable",
+            `${classified.error}: ${classified.correction}`,
+            false,
+          );
+        const targetId =
+          error.message !== "memory_revision_target_changed_or_unread"
+            ? undefined
+            : args.draftId === undefined
+              ? (await targets(await inputFor(key))).find(
+                  (target) => target.targetRef === args.targetRef,
+                )?.id
+              : (await read(key))?.drafts.find((draft) => draft.draftId === args.draftId)?.targetId;
+        const feedback = memoryLearningToolFeedback(error, name, args, targetId);
+        throw new KnowledgeRevisionToolError(
+          "invalid_input",
+          feedback.error,
+          true,
+          {
+            tool: [
+              "memory_revision_sources_required",
+              "memory_revision_successful_episode_required",
+              "knowledge_learning_topic_immature",
+            ].includes(feedback.error)
+              ? "select_learning_sources"
+              : feedback.error === "memory_revision_pending"
+                ? "finish_memory_learning"
+                : (feedback.nextCall?.tool ?? name),
+            reason:
+              `${feedback.nextCall === undefined ? "" : `Call ${JSON.stringify(feedback.nextCall)}. `}${feedback.correction}`.slice(
+                0,
+                500,
+              ),
+          },
+          { cause: feedback.error },
+        );
+      }
+    };
     const tools = [
       ...createPragmaManagementTools(
         state.kind === "knowledge"
-          ? { knowledgeRevisions: guardedKnowledge }
-          : { skillRevisions: guardedSkill },
+          ? {
+              knowledgeRevisions:
+                guardedKnowledge === undefined
+                  ? undefined
+                  : {
+                      ...guardedKnowledge,
+                      start: (args) =>
+                        withFeedback("knowledge_revision_start", args, () =>
+                          guardedKnowledge.start(args),
+                        ),
+                      submitDraft: (args) =>
+                        withFeedback("knowledge_revision_submit_draft", args, () =>
+                          guardedKnowledge.submitDraft(args),
+                        ),
+                    },
+            }
+          : {
+              skillRevisions:
+                guardedSkill === undefined
+                  ? undefined
+                  : {
+                      ...guardedSkill,
+                      start: (args) =>
+                        withFeedback("skill_revision_start", args, () => guardedSkill.start(args)),
+                      submitDraft: (args) =>
+                        withFeedback("skill_revision_submit_draft", args, () =>
+                          guardedSkill.submitDraft(args),
+                        ),
+                    },
+            },
       ),
       custom(
         "list_learning_sources",
@@ -1066,10 +1187,11 @@ export function createMemoryRevisionExecutor(options: {
               : path === undefined
                 ? await options.revisions.readSkillTarget(target)
                 : await options.revisions.readSkillTargetFile(target, path);
+          const result = chunk(body, offset);
           await update(key, async (current) => {
             current.targetVersions[target.id] = targetVersion(target);
           });
-          return chunk(body, offset);
+          return result;
         },
       ),
       custom(
@@ -1149,23 +1271,25 @@ export function createMemoryRevisionExecutor(options: {
             });
             if (!reserved) throw failure("memory_revision_read_budget_exhausted");
           }
-          if (
-            typeof args === "object" &&
-            args !== null &&
-            "draftId" in args &&
-            typeof args.draftId === "string"
-          ) {
-            const draft = ownDraft((await read(key))!, args.draftId);
-            if (tool.name.endsWith("discard_draft") && draft.submitted)
-              throw failure("memory_revision_submitted_draft_frozen");
-          }
           const isRead = /^(?:knowledge|skill)_revision_(?:list_|get_|inspect_|read_)/u.test(
             tool.name,
           );
           let result: Awaited<ReturnType<typeof tool.call>>;
           try {
+            if (
+              typeof args === "object" &&
+              args !== null &&
+              "draftId" in args &&
+              typeof args.draftId === "string"
+            ) {
+              const draft = ownDraft((await read(key))!, args.draftId);
+              if (tool.name.endsWith("discard_draft") && draft.submitted)
+                throw failure("memory_revision_submitted_draft_frozen");
+            }
             result = await tool.call(args, signal, context);
           } catch (error) {
+            signal?.throwIfAborted();
+            active.get(key)?.signal.throwIfAborted();
             if (isRead)
               await update(key, async (current) => {
                 const code = error instanceof Error && "code" in error ? error.code : undefined;
@@ -1174,7 +1298,12 @@ export function createMemoryRevisionExecutor(options: {
                     ? code
                     : "memory_revision_read_failed";
               });
-            throw error;
+            const feedback = memoryLearningToolFeedback(error, tool.name, args);
+            if (feedback.status === "blocked") throw error;
+            result = createTextToolResult(JSON.stringify(feedback), {
+              isError: true,
+              details: feedback,
+            });
           }
           if (tool.name.endsWith("_revision_start"))
             await update(key, async (current) => {
@@ -1193,19 +1322,30 @@ export function createMemoryRevisionExecutor(options: {
                   current.readFailures[tool.name] = payload.details.cause;
               } else delete current.readFailures[tool.name];
             });
+          signal?.throwIfAborted();
+          active.get(key)?.signal.throwIfAborted();
           if (isRead)
             await update(key, async (current) => {
               const response = readToolResult(result);
               if (response?.isError) {
-                const diagnostic = PragmaManagementErrorSchema.safeParse(response.details);
-                const cause = diagnostic.success ? diagnostic.data.details?.cause : undefined;
-                current.readFailures[tool.name] =
-                  typeof cause === "string" && /^[a-z][a-z0-9_.-]{0,199}$/u.test(cause)
+                const managed = PragmaManagementErrorSchema.safeParse(response.details);
+                const learning = MemoryLearningToolFeedbackSchema.safeParse(response.details);
+                const cause = managed.success ? managed.data.details?.cause : undefined;
+                current.readFailures[tool.name] = learning.success
+                  ? learning.data.error
+                  : typeof cause === "string" && /^[a-z][a-z0-9_.-]{0,199}$/u.test(cause)
                     ? cause
-                    : diagnostic.success
-                      ? diagnostic.data.code
+                    : managed.success
+                      ? managed.data.retryable
+                        ? (Object.entries(retryableReadCodes).find(
+                            ([, code]) => code === managed.data.code,
+                          )?.[0] ?? managed.data.code)
+                        : managed.data.code
                       : "memory_revision_read_failed";
-              } else delete current.readFailures[tool.name];
+              } else {
+                delete current.readFailures[tool.name];
+                clearRediscoveredHandles(current, tool.name);
+              }
             });
           if (
             tool.name.endsWith("discard_draft") &&

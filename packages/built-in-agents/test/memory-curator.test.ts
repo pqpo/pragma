@@ -15,6 +15,46 @@ import { createBuiltInMemoryCurator } from "../src/memory-curator.ts";
 import { createMemoryCuratorTools } from "../src/memory-curator-tools.ts";
 import { memoryCuratorResource } from "../src/builtin.ts";
 const roots: string[] = [];
+
+it.each([
+  ["get_extraction_status", { candidateOffset: 9999 }, "memory_curator_cursor_invalid", {}],
+  ["read_evidence", { evidence: "e1", cursor: 999999 }, "memory_curator_cursor_invalid", {}],
+] as const)(
+  "returns an executable recovery call for %s cursor mistakes",
+  async (name, args, code, corrected) => {
+    const session = await createMemoryExtractionSessionStore({ pragmaHome: await home() }).create({
+      module: "semantic",
+      input: input(),
+      watermark: "cursor",
+    });
+    const tools = createMemoryCuratorTools(session);
+    const failed = await tools.find((tool) => tool.name === name)!.call(args, undefined);
+    expect(failed).toMatchObject({
+      isError: true,
+      details: { code, status: "needs_correction", nextCall: { tool: name, args: corrected } },
+    });
+    const feedback = MemoryExtractionFeedbackSchema.parse(failed.details);
+    const repaired = await tools
+      .find((tool) => tool.name === feedback.nextCall!.tool)!
+      .call(feedback.nextCall!.args, undefined);
+    expect(repaired.isError).not.toBe(true);
+  },
+);
+
+it("never delivers an executable repair after the task authorization guard fails", async () => {
+  const session = await createMemoryExtractionSessionStore({ pragmaHome: await home() }).create({
+    module: "semantic",
+    input: input(),
+    watermark: "guard",
+  });
+  const tools = createMemoryCuratorTools(session, async () => {
+    throw new Error("memory_curator_cursor_invalid");
+  });
+  const result = await tools.find((tool) => tool.name === "read_evidence")!.call({}, undefined);
+  expect(result.details).toMatchObject({ status: "blocked" });
+  expect(result.details).not.toHaveProperty("nextCall");
+});
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });

@@ -63,6 +63,8 @@ const hints: Readonly<Record<string, string>> = {
     "Search current accessible Memory again; do not reuse the stale handle.",
   memory_curator_type_unavailable:
     "Only submit or finish the requested types shown in Feedback.progress.",
+  memory_curator_type_required:
+    "Supply the requested type explicitly. Use get_extraction_status to inspect pending types, then finish or skip each type independently.",
   memory_curator_type_already_finished:
     "Preserve the saved receipt; continue the other unfinished type.",
   memory_curator_recall_denied:
@@ -133,12 +135,14 @@ export function createMemoryCuratorTools(
           const hint =
             code === "memory_curator_subject_ref_invalid"
               ? `Use these exact subject aliases: ${JSON.stringify(session.subjectAliases)}.`
-              : (hints[code] ??
-                (code.startsWith("embedding_")
-                  ? "Use mode=hybrid or keyword; do not repeat the unavailable vector request."
-                  : invalid
-                    ? descriptions[tool]
-                    : undefined));
+              : code === "memory_curator_cursor_invalid"
+                ? `Restart ${tool} at its default cursor, keeping the exact returned memory/candidate handle when required. Follow the next returned cursor; never guess offsets.`
+                : (hints[code] ??
+                  (code.startsWith("embedding_")
+                    ? "Use mode=hybrid or keyword; do not repeat the unavailable vector request."
+                    : invalid
+                      ? descriptions[tool]
+                      : undefined));
           const correctable = canCorrect && hint !== undefined;
           const requiredFields = invalid
             ? [...new Set(error.issues.map((issue) => issue.path.join(".")).filter(Boolean))]
@@ -156,16 +160,39 @@ export function createMemoryCuratorTools(
             Object.hasOwn(EPISODE_PART_EXAMPLES, part)
               ? EPISODE_PART_EXAMPLES[part as keyof typeof EPISODE_PART_EXAMPLES]
               : undefined;
+          let nextCall: MemoryExtractionFeedbackInput["nextCall"];
+          if (
+            code === "memory_curator_evidence_incomplete" ||
+            (code === "memory_curator_cursor_invalid" && tool === "read_evidence")
+          )
+            nextCall = { tool: "read_evidence", args: {} };
+          else if (
+            code === "memory_curator_candidate_ref_invalid" ||
+            (code === "memory_curator_cursor_invalid" && tool === "get_extraction_status")
+          )
+            nextCall = { tool: "get_extraction_status", args: {} };
+          else if (typeof args === "object" && args !== null) {
+            if (code === "memory_curator_cursor_stale" && tool === "list_existing_memory")
+              nextCall = {
+                tool,
+                args: Object.fromEntries(
+                  Object.entries(args).filter(([key]) => key !== "pageCursor"),
+                ),
+              };
+            else if (
+              code === "memory_curator_cursor_invalid" &&
+              (tool === "read_existing_memory" || tool === "read_staged_candidate")
+            )
+              nextCall = { tool, args: { ...args, cursor: 0 } };
+            else if (code.startsWith("embedding_") && tool === "find_existing_memory")
+              nextCall = { tool, args: { ...args, mode: "keyword" } };
+          }
           const feedback: MemoryExtractionFeedbackInput = {
             status: correctable ? "needs_correction" : "blocked",
             code,
             ...(requiredFields.length ? { requiredFields } : {}),
             ...(example === undefined ? {} : { example }),
-            ...(code === "memory_curator_evidence_incomplete"
-              ? { nextCall: { tool: "read_evidence", args: {} } }
-              : code === "memory_curator_candidate_ref_invalid"
-                ? { nextCall: { tool: "get_extraction_status", args: {} } }
-                : {}),
+            ...(correctable && nextCall !== undefined ? { nextCall } : {}),
           };
           const detail = invalid
             ? error.issues

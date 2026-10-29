@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createPragma,
+  createFileExpertSessionStore,
   createStaticRuntimeResolver,
   defineExpert,
   defineFlow,
@@ -27,8 +28,169 @@ import {
 } from "../../src/missions/repository/mission-store.ts";
 import { SKILL_REVISION_EXPERT_REF, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
+import { createIntegrationError } from "@pragma/shared/integration";
 
 describe("execution service composition", () => {
+  it.each(["before-dispatch", "after-dispatch", "incomplete-prompts"] as const)(
+    "recovers a rejected Memory continuation only with authoritative no-dispatch proof (%s)",
+    async (failure) => {
+      const home = await mkdtemp(join(tmpdir(), "pragma-rejected-memory-continuation-"));
+      const executions = createSqliteExecutionStore({ pragmaHome: home });
+      const sessions = createFileExpertSessionStore({ pragmaHome: home, executions });
+      const missions = createMissionStore({ missionsPath: join(home, "missions") });
+      const dispatched = vi.fn(async () => ({ outputText: "done", runtimeSessionId: "native" }));
+      const runtimes = createStaticRuntimeResolver({
+        defaultRuntimeId: "fake",
+        runtimes: [
+          defineRuntimeTestDriver({
+            descriptor: { id: "fake", kind: "test", displayName: "Fixture" },
+            createSession: () => ({}),
+            readSession: () => ({ runtimeSessionId: "native" }),
+            startTurn: dispatched,
+            mapEvent: () => ({ events: [] }),
+          }),
+        ],
+      });
+      const app = createPragma({
+        pragmaHome: home,
+        executionStore: executions,
+        expertSessionStore: sessions,
+        runtimes,
+      });
+      const expert = await defineExpert({
+        id: STORE_REVISION_EXPERT_REF.slice(7),
+        name: "Revision",
+        description: "Fixture",
+        tags: [],
+        scope: "Memory",
+        workspace: home,
+      });
+      const session = await app.experts.createSession(expert);
+      const first = await session.prompt("Read the source");
+      await first.result;
+      const originalSession = (await sessions.get(session.sessionId))!;
+      const originalContext = originalSession.contexts[originalSession.rootContextId]!;
+      const mission = await missions.create({
+        workspace: { path: home, basename: "workspace" },
+        goal: "Extract",
+        project: { id: "studio", revision: 1 },
+        executor: { kind: "expert", ref: STORE_REVISION_EXPERT_REF, name: "Revision" },
+        origin: { type: "system-memory", jobId: `knowledge-revision:${"b".repeat(64)}` },
+      });
+      await missions.updateExecution(mission.id, {
+        id: first.executionId,
+        sessionId: session.sessionId,
+        inputMessageId: mission.initialMessageId,
+        status: "succeeded",
+        startedAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString(),
+      });
+      const controller = createMissionControllerStore({
+        missionsPath: join(home, "missions"),
+        missionPath: missions.storagePath,
+      });
+      const apply = vi.fn(
+        async ({
+          command,
+        }: Parameters<
+          import("../../src/missions/controller/mission-controller-store.ts").MissionCommandConsumer["apply"]
+        >[0]) => {
+          if (apply.mock.calls.length === 1) {
+            if (failure === "after-dispatch") {
+              const turn = await session.prompt("Continue", {
+                requestId: command.request.requestId,
+              });
+              await turn.result;
+            }
+            throw createIntegrationError({
+              code: "COMMAND_REJECTED",
+              category: "conflict",
+              message: "Preparation rejected",
+            });
+          }
+          const turn = await session.prompt("Continue", { requestId: command.request.requestId });
+          await turn.result;
+          return { result: { executionId: turn.executionId } };
+        },
+      );
+      const control = createMissionControlApplication({
+        controller,
+        ownerScope: createMissionOwnerScope({ controller }),
+        consumer: { apply },
+        assertMission: async (id) => {
+          await missions.get(id);
+        },
+      });
+      const open = () => {
+        const service = createLocalHostMissionExecutionService({
+          pragmaHome: home,
+          executionStore: executions,
+          expertSessionStore: sessions,
+          executionOwner: new MissionExecutionOwner(),
+          missions,
+          runtimes,
+          resourcePorts: {
+            createCompileService: () => ({}),
+          } as LocalHostMissionExecutionResourcePorts,
+        });
+        service.missionControl.bindApplication(control);
+        return service;
+      };
+      const input = {
+        id: mission.id,
+        requestId: crypto.randomUUID(),
+        previousExecutionId: first.executionId,
+        content: "Continue",
+      };
+      try {
+        await expect(open().continueInternalMemoryMission(input)).rejects.toThrow(
+          "Preparation rejected",
+        );
+        const original = await controller.getOperation({
+          missionId: mission.id,
+          requestId: input.requestId,
+        });
+        expect(original?.state).toBe("rejected");
+        if (failure === "incomplete-prompts")
+          vi.spyOn(sessions, "listPrompts").mockResolvedValueOnce([]);
+        if (failure === "before-dispatch") {
+          await expect(
+            open().continueInternalMemoryMission({ ...input, content: "Changed prompt" }),
+          ).rejects.toThrow("payload_changed");
+          const [continued, concurrent] = await Promise.all([
+            open().continueInternalMemoryMission(input),
+            open().continueInternalMemoryMission(input),
+          ]);
+          expect(concurrent).toEqual(continued);
+          expect(continued.executionId).not.toBe(first.executionId);
+          expect(await open().continueInternalMemoryMission(input)).toEqual(continued);
+          expect(apply).toHaveBeenCalledTimes(2);
+          expect(dispatched).toHaveBeenCalledTimes(2);
+          expect(apply.mock.calls[1]![0].command.request.requestId).not.toBe(input.requestId);
+          const retained = (await sessions.get(session.sessionId))!;
+          expect(retained.rootContextId).toBe(originalSession.rootContextId);
+          expect(retained.contexts[retained.rootContextId]!.snapshot).toEqual(
+            originalContext.snapshot,
+          );
+        } else {
+          await expect(open().continueInternalMemoryMission(input)).rejects.toThrow(
+            "dispatch_unconfirmed",
+          );
+          expect(apply).toHaveBeenCalledOnce();
+          expect(dispatched).toHaveBeenCalledTimes(failure === "after-dispatch" ? 2 : 1);
+        }
+        expect(
+          await controller.getOperation({ missionId: mission.id, requestId: input.requestId }),
+        ).toEqual(original);
+      } finally {
+        vi.restoreAllMocks();
+        await control.stopOwner(mission.id);
+        await session.close();
+        await executions.close();
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+  );
   it.each(
     [
       { ref: MEMORY_CURATOR_REF, jobId: "job", allowed: true },

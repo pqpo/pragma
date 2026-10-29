@@ -203,6 +203,61 @@ those inputs before cancellation. The stop definition must retain the original S
 fingerprint. Failed cancellation preserves the retired record and job index so idle maintenance
 can replay cancellation and deletion after restart without admitting another model turn.
 
+Correctable learning-tool failures return `needs_correction`, a stable error code, concrete guidance
+and an executable `nextCall` when its arguments are known. Revision start/submission guards translate
+unread or changed targets, missing support and pending targets before the generic management error
+adapter can sanitize them as `internal_error`. `retryable` on tool feedback means correct the call
+in the current turn, not repeat the same failing arguments. Permission, identity and exhausted-budget
+failures remain blocked. Invalid read arguments cannot silently become a no-change outcome; a successful
+corrected read clears the failure. Correctable unfinished reads, missing final receipts and unsubmitted
+owned drafts can use the existing four-admission job budget (first turn plus three continuations,
+five seconds apart), retaining consumed budgets, the original Native context and submitted work across
+restart. Unknown failed reads and explicit nonretryable Runtime failures remain failures.
+
+Read diagnostics retain the Host's explicit retry decision and stable public cause across reopening.
+Wrapped learning feedback keeps its correction classification instead of becoming an unknown read
+failure. Successful authorized source/target/draft rediscovery can clear only invalid-handle blockers;
+it cannot clear permission, I/O, budget or other failed-read diagnostics. Explicitly nonretryable Host
+errors do not receive inferred retry guidance. Existing prerequisite blockers still require their
+matching successful read/source selection or revision start before a no-draft finish.
+Target versions are marked read only after validating the requested content range. An unresolved
+target-read failure cannot satisfy the start/submission guard, including records left by older writers.
+
+Submission replay first returns a saved receipt; a target version change after a committed submission
+does not invalidate that receipt. If only the authority submission survived, its current receipt is
+reconciled without applying the draft again or requiring the old target version.
+
+Mission compilation uses the same saved system-definition fingerprints as its pinned resources.
+Registry/prompt updates therefore cannot change only the identity and block a compatible cold Memory
+continuation. Live execution-profile changes retain their existing policy; absent historical definitions
+or uncertain ownership never authorize replacing the Native conversation.
+Desktop creates these snapshots for new direct Knowledge/Skill Memory Missions as well as user-facing
+Missions, before first compilation. A historical compilation summary that drifted from an existing
+snapshot can be reconciled only when the original definition fingerprint and Core's durable execution
+environment both match the compiled pinned definition. Changed profiles/bindings, missing Core receipts
+and historical Sessions without a snapshot remain blocked; no original definition is invented.
+
+A previously rejected continuation command is immutable. Local Host can derive a deterministic UUID v4
+child command from the caller's reserved root and the rejected command identity only after checking
+the original Session/context, original execution membership, the complete per-Session prompt ledger,
+and absence of a Core prompt for that rejected request. The original command and error remain intact.
+Reopening follows the same chain and reuses an accepted child. Changed prompt payloads, missing prompt
+records or any possible prior dispatch block this repair. Traversal is capped at 32 rejected preparation
+records; this does not increase the Module's model-admission budget or start a new conversation.
+
+The tool review boundaries are:
+
+| Tools                                                           | Correction/recovery boundary                                                                                                                                        |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_learning_sources`, `read_learning_source`                 | Exact authorized handles, bounded pages, invalid-argument/offset correction; changed authority stops access.                                                        |
+| `find_learning_targets`, `read_learning_target`                 | Rediscover stale identities, reread changed targets, follow package-file pages, wait for a related pending target.                                                  |
+| `select_learning_sources`, `finish_memory_learning`             | Repair unsupported handles/support and invalid waits; tool/read failures cannot become a no-value decision.                                                         |
+| Knowledge/Skill revision list/get/inspect/read                  | Validation/CAS/cursor feedback, owned-draft filtering, bounded calls/bytes and explicit transient-read handling.                                                    |
+| Knowledge/Skill revision start/submit/discard/rebase            | Read-before-start/version guards, explicit correction tools, owned-draft protection, durable submission replay; submitted drafts cannot be discarded by extraction. |
+| Curator evidence/discovery/status/candidate reads               | Executable cursor restart and unavailable-vector keyword fallback; authorization failures never advertise a repair call.                                            |
+| Curator fact/episode staging and finish/skip                    | Existing branch examples, evidence/reference correction, candidate reuse and per-type durable receipts; no skip for budget/tool failures.                           |
+| Federated `memory` Context list/search/read and mutation denial | Scoped read-only projections, exact item routing and bounded content ranges; search rechecks scope after retrieval, and add/edit/delete stay explicitly denied.     |
+
 Legacy task compatibility is a drain, not another new-task path. Existing cached plans finish their
 old handoff, and registered Planner Missions are only observed/read. No new Planner or correction is
 admitted. A durable business decision precedes the legacy settlement marker and cleanup. Missing owner,
