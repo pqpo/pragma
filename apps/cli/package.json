@@ -32,7 +32,7 @@
     "test:adapters:prepared": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@napi-rs/keyring": "2.1.1",
+    "@napi-rs/keyring": "2.1.2",
     "@silvia-odwyer/photon-node": "0.3.4",
     "@pragma/local-host": "workspace:*",
     "@pragma/runtime-antigravity": "workspace:*",
@@ -45,7 +45,7 @@
     "commander": "14.0.3"
   },
   "devDependencies": {
-    "@cfworker/json-schema": "4.1.1",
+    "@cfworker/json-schema": "4.1.6",
     "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
     "acorn": "8.19.0",
